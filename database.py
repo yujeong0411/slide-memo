@@ -155,6 +155,20 @@ class MemoDatabase:
         )
         self.conn.commit()
 
+    def get_setting_str(self, key: str, default: str = "") -> str:
+        row = self.conn.execute(
+            "SELECT value FROM settings WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row is not None else default
+
+    def set_setting_str(self, key: str, value: str) -> None:
+        self.conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, str(value)),
+        )
+        self.conn.commit()
+
     @staticmethod
     def _now() -> str:
         return datetime.now().isoformat(timespec="seconds")
