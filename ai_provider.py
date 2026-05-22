@@ -6,13 +6,15 @@ from typing import Any
 
 import logging
 
+logging.getLogger("LiteLLM").setLevel(logging.ERROR)
+logging.getLogger("litellm").setLevel(logging.ERROR)
+
 import keyring
 import keyring.errors
 import litellm
 
 litellm.suppress_debug_info = True
 litellm.set_verbose = False
-logging.getLogger("LiteLLM").setLevel(logging.ERROR)
 
 KEYRING_SERVICE = "memo_slide_ai"
 

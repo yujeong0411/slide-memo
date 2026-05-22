@@ -30,6 +30,7 @@ from PyQt6.QtGui import (
     QPixmap,
     QShortcut,
     QTextCharFormat,
+    QTextCursor,
     QTextImageFormat,
     QTextListFormat,
     QTextTableFormat,
@@ -130,6 +131,17 @@ STYLE = """
 #trashBtn:hover {
     background-color: rgba(69, 71, 90, 0.95);
     color: #f38ba8;
+}
+#settingsBtn {
+    background-color: rgba(49, 50, 68, 0.85);
+    color: #cdd6f4;
+    border: none;
+    border-radius: 5px;
+    font-size: 11pt;
+}
+#settingsBtn:hover {
+    background-color: rgba(69, 71, 90, 0.95);
+    color: #89b4fa;
 }
 QScrollBar:vertical {
     background: transparent;
@@ -320,6 +332,21 @@ def body_stylesheet(t: dict[str, str]) -> str:
     QToolButton#fmtBtn::menu-indicator {{
         width: 0;
         height: 0;
+    }}
+    QPushButton#aiFeatureBtn {{
+        background-color: rgba(0,0,0,0.06);
+        color: {t["text"]};
+        border: 1px solid {t["border"]};
+        border-radius: 4px;
+        font-size: 8pt;
+        padding: 2px 7px;
+    }}
+    QPushButton#aiFeatureBtn:hover {{
+        background-color: rgba(0,0,0,0.13);
+        border: 1px solid {t["focus"]};
+    }}
+    QPushButton#aiFeatureBtn:pressed {{
+        background-color: rgba(0,0,0,0.20);
     }}
     """
 
@@ -638,7 +665,7 @@ class FormatToolbar(QWidget):
         btn.setFixedSize(28, 24)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        icon_path = _resource_path(svg_name)
+        icon_path = _asset(svg_name)
         if icon_path.exists():
             btn.setIcon(QIcon(str(icon_path)))
             btn.setIconSize(QSize(16, 16))
@@ -654,7 +681,7 @@ class FormatToolbar(QWidget):
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        icon_path = _resource_path("calendar_icon.svg")
+        icon_path = _asset("calendar_icon.svg")
         if icon_path.exists():
             btn.setIcon(QIcon(str(icon_path)))
             btn.setIconSize(QSize(16, 16))
@@ -777,27 +804,26 @@ class DragGrip(QWidget):
         self.setToolTip("드래그하여 세로 위치 이동")
         self._press_global = None
         self._start_geom = None
-        icon_path = _resource_path("logo.png")
-        self._icon_pixmap: QPixmap | None = None
+        self._drag_icon: QIcon | None = None
+        icon_path = _asset("drag_indicator.svg")
         if icon_path.exists():
-            pm = QPixmap(str(icon_path))
-            if not pm.isNull():
-                self._icon_pixmap = pm.scaled(
-                    30, 30,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
+            self._drag_icon = QIcon(str(icon_path))
 
     def paintEvent(self, event) -> None:  # noqa: N802
+        from PyQt6.QtCore import QRect
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if self._icon_pixmap is not None:
-            x = (self.width() - self._icon_pixmap.width()) // 2
-            y = (self.height() - self._icon_pixmap.height()) // 2
-            painter.drawPixmap(x, y, self._icon_pixmap)
+        # 다른 탭 버튼과 동일한 어두운 배경
+        painter.setBrush(QColor(49, 50, 68, 216))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(self.rect(), 5, 5)
+        if self._drag_icon is not None and not self._drag_icon.isNull():
+            icon_size = 22
+            x = (self.width() - icon_size) // 2
+            y = (self.height() - icon_size) // 2
+            self._drag_icon.paint(painter, QRect(x, y, icon_size, icon_size))
         else:
-            painter.setBrush(QColor("#6c7086"))
-            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#cdd6f4"))
             cx = self.width() / 2
             cy = self.height() / 2
             for dx in (-5, 0, 5):
@@ -920,6 +946,8 @@ class SlideMemoWindow(QWidget):
         self.trash_mode = False
         self._trash_preview_id: int | None = None  # 휴지통에서 미리보기 중인 메모
         self._quitting = False
+        self._ai_worker: object | None = None
+        self._ai_pending: str | None = None  # 진행 중인 feature_key
         # 0=오른쪽, 1=왼쪽 가장자리
         self.side = "left" if db.get_setting_int("side", 0) == 1 else "right"
 
@@ -938,6 +966,7 @@ class SlideMemoWindow(QWidget):
         self.handle_bottom.hide()
         self._position_collapsed()
         self._refresh_memo_tabs(select_first=True)
+        self._refresh_ai_bar()
 
     # ----- setup -----
     def _setup_window(self) -> None:
@@ -1032,6 +1061,8 @@ class SlideMemoWindow(QWidget):
         self.editor.setFont(self.editor_font)
         self.editor.setAcceptRichText(True)  # 이미지 붙여넣기 + 서식 지원
         self.editor.textChanged.connect(self._on_text_changed)
+        self.editor.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.editor.customContextMenuRequested.connect(self._show_editor_context_menu)
 
         # 서식바: 좌측 = 서식 버튼 / 우측 = 색상 dot + 복사 버튼
         self.format_toolbar = FormatToolbar(self.editor)
@@ -1056,8 +1087,8 @@ class SlideMemoWindow(QWidget):
         self.custom_color_btn.clicked.connect(self._on_custom_color)
         fmt_layout.addWidget(self.custom_color_btn)
         fmt_layout.addSpacing(6)
-        self._copy_icon = QIcon(str(_resource_path("content_copy.svg")))
-        self._check_icon = QIcon(str(_resource_path("check.svg")))
+        self._copy_icon = QIcon(str(_asset("content_copy.svg")))
+        self._check_icon = QIcon(str(_asset("check.svg")))
         self.copy_btn = QPushButton()
         self.copy_btn.setObjectName("iconBtn")
         self.copy_btn.setToolTip("메모 본문 전체 복사 (Ctrl+Shift+C)")
@@ -1071,7 +1102,46 @@ class SlideMemoWindow(QWidget):
         ep.addWidget(self.format_toolbar)
         ep.addWidget(self.editor, stretch=1)
 
+        # AI 기능 바 (에디터 하단, AI 활성 시만 표시)
+        self._ai_bar = QWidget()
+        ai_bar_layout = QHBoxLayout(self._ai_bar)
+        ai_bar_layout.setContentsMargins(0, 2, 0, 2)
+        ai_bar_layout.setSpacing(4)
+        from ai_features import AI_FEATURES
+        for _key, _info in AI_FEATURES.items():
+            _btn = QPushButton(_info["label"])
+            _btn.setObjectName("aiFeatureBtn")
+            _btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            _btn.setToolTip(f"{_info['label']}")
+            _btn.clicked.connect(lambda _checked, k=_key: self._run_ai_feature(k))
+            ai_bar_layout.addWidget(_btn)
+        ai_bar_layout.addStretch(1)
+        self._ai_bar.hide()
+        ep.addWidget(self._ai_bar)
+
+        # AI 진행 상태 표시줄 (에디터 하단, 평소엔 숨김)
+        self._ai_status_lbl = QLabel()
+        self._ai_status_lbl.setObjectName("aiStatusLbl")
+        self._ai_status_lbl.setStyleSheet(
+            "background: rgba(0,0,0,0.06); color: #5c5f77;"
+            " font-size: 9pt; padding: 2px 6px; border-radius: 3px;"
+        )
+        self._ai_status_lbl.hide()
+        ep.addWidget(self._ai_status_lbl)
+
         body_layout.addWidget(editor_panel, stretch=1)
+
+        # 토스트 메시지 (body 하단 중앙, 평소엔 숨김)
+        self._toast_lbl = QLabel(self.body)
+        self._toast_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._toast_lbl.setStyleSheet(
+            "background: rgba(30,30,46,0.82); color: #cdd6f4;"
+            " font-size: 9pt; padding: 4px 10px; border-radius: 6px;"
+        )
+        self._toast_lbl.hide()
+        self._toast_timer = QTimer(self)
+        self._toast_timer.setSingleShot(True)
+        self._toast_timer.timeout.connect(self._toast_lbl.hide)
 
         # ---- 우측 탭 컬럼 (항상 보임) ----
         self.tab_column = QWidget(self.container)
@@ -1106,12 +1176,24 @@ class SlideMemoWindow(QWidget):
         self.tab_scroll.setWidget(self.tabs_container)
         col_layout.addWidget(self.tab_scroll, stretch=1)
 
-        # 하단: 휴지통 버튼 + 새 메모 버튼
-        self.trash_btn = QPushButton("🗑")
+        # 하단: 설정 + 휴지통 + 새 메모 버튼
+        self.settings_btn = QPushButton()
+        self.settings_btn.setObjectName("settingsBtn")
+        self.settings_btn.setFixedHeight(NEW_TAB_HEIGHT)
+        self.settings_btn.setToolTip("설정")
+        self.settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.settings_btn.setIcon(QIcon(str(_asset("settings_icon.svg"))))
+        self.settings_btn.setIconSize(QSize(20, 20))
+        self.settings_btn.clicked.connect(self._open_settings)
+        col_layout.addWidget(self.settings_btn)
+
+        self.trash_btn = QPushButton()
         self.trash_btn.setObjectName("trashBtn")
         self.trash_btn.setFixedHeight(NEW_TAB_HEIGHT)
         self.trash_btn.setToolTip("휴지통")
         self.trash_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.trash_btn.setIcon(QIcon(str(_asset("delete_icon.svg"))))
+        self.trash_btn.setIconSize(QSize(20, 20))
         self.trash_btn.clicked.connect(self._enter_trash_mode)
         col_layout.addWidget(self.trash_btn)
 
@@ -1201,9 +1283,25 @@ class SlideMemoWindow(QWidget):
             self.setGeometry(self._collapsed_geometry())
             self._update_handles()
 
+    def _open_settings(self) -> None:
+        from settings_dialog import SettingsDialog
+        dlg = SettingsDialog(self.db, self)
+        dlg.exec()
+        self._refresh_ai_bar()
+
+    def _refresh_ai_bar(self) -> None:
+        enabled = self.db.get_setting_str("ai_enabled", "0") == "1"
+        self._ai_bar.setVisible(enabled)
+
+    def _on_escape(self) -> None:
+        if self._ai_pending is not None:
+            self._cancel_ai()
+        else:
+            self.collapse()
+
     def _setup_shortcuts(self) -> None:
         for keys, slot in [
-            ("Escape", self.collapse),
+            ("Escape", self._on_escape),
             ("Ctrl+N", self.create_new_memo),
             ("Ctrl+F", self.focus_search),
             ("Ctrl+S", self.save_now),
@@ -1221,6 +1319,15 @@ class SlideMemoWindow(QWidget):
             ("Ctrl+Shift+H", lambda: self.format_toolbar.insert_datetime("korean")),
             # 미리보기
             ("Ctrl+P", self._show_preview),
+            # AI 기능
+            ("Ctrl+Alt+S", lambda: self._run_ai_feature("summarize")),
+            ("Ctrl+Alt+R", lambda: self._run_ai_feature("rewrite")),
+            ("Ctrl+Alt+T", lambda: self._run_ai_feature("translate")),
+            ("Ctrl+Alt+P", lambda: self._run_ai_feature("spellcheck")),
+            ("Ctrl+Alt+H", lambda: self._run_ai_feature("title")),
+            ("Ctrl+Alt+O", lambda: self._run_ai_feature("outline")),
+            ("Ctrl+Alt+K", lambda: self._run_ai_feature("keywords")),
+            ("Ctrl+Alt+Space", lambda: self._run_ai_feature("continue")),
         ]:
             sc = QShortcut(QKeySequence(keys), self)
             sc.activated.connect(slot)
@@ -1247,6 +1354,180 @@ class SlideMemoWindow(QWidget):
         close_btn.clicked.connect(dlg.close)
         layout.addWidget(close_btn)
         dlg.exec()
+
+    # ----- AI 컨텍스트 메뉴 -----
+    def _show_editor_context_menu(self, pos) -> None:
+        from ai_features import AI_FEATURES
+
+        menu = self.editor.createStandardContextMenu()
+
+        ai_enabled = self.db.get_setting_str("ai_enabled", "0") == "1"
+        if ai_enabled:
+            menu.addSeparator()
+            ai_menu = menu.addMenu("✨ AI")
+            for key, info in AI_FEATURES.items():
+                act = QAction(info["label"], ai_menu)
+                act.triggered.connect(lambda _checked, k=key: self._run_ai_feature(k))
+                ai_menu.addAction(act)
+
+            if self._ai_pending is not None:
+                menu.addSeparator()
+                cancel_act = QAction("AI 취소 (ESC)", menu)
+                cancel_act.triggered.connect(self._cancel_ai)
+                menu.addAction(cancel_act)
+
+        menu.exec(self.editor.mapToGlobal(pos))
+
+    # ----- AI 실행 -----
+    def _run_ai_feature(self, feature_key: str) -> None:
+        from ai_features import AI_FEATURES, AIWorker
+
+        if self.db.get_setting_str("ai_enabled", "0") != "1":
+            self._show_toast("AI 기능이 비활성화되어 있습니다. 설정에서 활성화하세요.")
+            return
+
+        if self._ai_worker is not None and self._ai_worker.isRunning():
+            self._show_toast("AI가 이미 작업 중입니다. 잠시 후 다시 시도하세요.")
+            return
+
+        feature = AI_FEATURES.get(feature_key)
+        if not feature:
+            return
+
+        # 텍스트 수집: 선택 영역 우선, 없으면 전체 본문
+        cursor = self.editor.textCursor()
+        text = cursor.selectedText() if cursor.hasSelection() else self.editor.toPlainText()
+        text = text.strip()
+        if not text:
+            self._show_toast("처리할 텍스트가 없습니다.")
+            return
+
+        provider = self.db.get_setting_str("ai_provider", "anthropic")
+        model = self.db.get_setting_str("ai_model", "")
+        if not model:
+            from ai_provider import PROVIDERS
+            model = PROVIDERS.get(provider, {}).get("default_model", "")
+
+        show_preview = self.db.get_setting_str("ai_show_preview", "0") == "1"
+
+        self._ai_pending = feature_key
+        self._show_ai_progress(f"⏳ AI {feature['label']} 중...")
+
+        self._ai_worker = AIWorker(feature_key, provider, model, text, parent=self)
+        self._ai_worker.finished.connect(
+            lambda k, r, t: self._on_ai_finished(k, r, t, show_preview)
+        )
+        self._ai_worker.errored.connect(self._on_ai_error)
+        self._ai_worker.progress.connect(self._show_ai_progress)
+        self._ai_worker.start()
+
+    def _cancel_ai(self) -> None:
+        if self._ai_worker is not None:
+            self._ai_worker.cancel()
+        self._ai_pending = None
+        self._ai_status_lbl.hide()
+        self._show_toast("AI 작업이 취소되었습니다.")
+
+    def _on_ai_finished(self, feature_key: str, result: str, tokens: int, show_preview: bool) -> None:
+        self._ai_pending = None
+        self._ai_status_lbl.hide()
+
+        # 토큰 사용량 누적
+        prev = int(self.db.get_setting_str("ai_usage_tokens", "0") or "0")
+        self.db.set_setting_str("ai_usage_tokens", str(prev + tokens))
+
+        if show_preview:
+            self._show_ai_preview(feature_key, result)
+        else:
+            self._apply_ai_result(feature_key, result)
+
+    def _on_ai_error(self, feature_key: str, msg: str) -> None:
+        self._ai_pending = None
+        self._ai_status_lbl.hide()
+        self._show_toast(f"AI 오류: {msg}")
+
+    def _show_ai_preview(self, feature_key: str, result: str) -> None:
+        from ai_features import AI_FEATURES
+
+        feature = AI_FEATURES.get(feature_key, {})
+        label = feature.get("label", feature_key)
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"AI {label} — 미리보기")
+        dlg.resize(480, 360)
+        dlg.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        info_lbl = QLabel(f"<b>{label}</b> 결과를 적용하시겠습니까?")
+        layout.addWidget(info_lbl)
+
+        preview = QTextBrowser()
+        preview.setPlainText(result)
+        layout.addWidget(preview, stretch=1)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.button(QDialogButtonBox.StandardButton.Ok).setText("적용")
+        btns.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        layout.addWidget(btns)
+
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._apply_ai_result(feature_key, result)
+
+    def _apply_ai_result(self, feature_key: str, result: str) -> None:
+        from ai_features import AI_FEATURES
+
+        feature = AI_FEATURES.get(feature_key, {})
+        output = feature.get("output", "replace")
+        cursor = self.editor.textCursor()
+
+        if output == "title":
+            self.title_input.setText(result)
+            self._show_toast(f"✓ 제목이 생성되었습니다.")
+        elif output == "replace":
+            if cursor.hasSelection():
+                cursor.insertText(result)
+            else:
+                cursor.select(QTextCursor.SelectionType.Document)
+                cursor.insertText(result)
+            self.editor.setTextCursor(cursor)
+        elif output == "append":
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            cursor.insertText(f"\n\n{result}")
+            self.editor.setTextCursor(cursor)
+        elif output == "insert":
+            # 커서 위치에 이어 쓰기 (현재 위치 기준)
+            if not cursor.hasSelection():
+                cursor.movePosition(QTextCursor.MoveOperation.End)
+            cursor.insertText(f" {result}")
+            self.editor.setTextCursor(cursor)
+
+        self.editor.setFocus()
+
+    def _show_ai_progress(self, msg: str) -> None:
+        self._ai_status_lbl.setText(msg)
+        self._ai_status_lbl.show()
+
+    def _show_toast(self, msg: str, duration_ms: int = 2500) -> None:
+        self._toast_lbl.setText(msg)
+        self._toast_lbl.adjustSize()
+        # body 하단 중앙 위치
+        bw = self.body.width()
+        bh = self.body.height()
+        tw = self._toast_lbl.width() + 20
+        th = self._toast_lbl.height()
+        self._toast_lbl.setFixedSize(max(tw, 160), th + 6)
+        x = (bw - self._toast_lbl.width()) // 2
+        y = bh - self._toast_lbl.height() - 12
+        self._toast_lbl.move(x, y)
+        self._toast_lbl.raise_()
+        self._toast_lbl.show()
+        self._toast_timer.start(duration_ms)
 
     def _setup_autosave(self) -> None:
         self.autosave_timer = QTimer(self)
@@ -1412,8 +1693,7 @@ class SlideMemoWindow(QWidget):
 
     def _update_trash_btn(self) -> None:
         n = self.db.count_trashed()
-        self.trash_btn.setText(f"🗑\n{n}" if n else "🗑")
-        self.trash_btn.setToolTip(f"휴지통 ({n})")
+        self.trash_btn.setToolTip(f"휴지통 ({n})" if n else "휴지통")
 
     # ----- 휴지통 모드 -----
     def _enter_trash_mode(self) -> None:
@@ -1652,10 +1932,33 @@ class SlideMemoWindow(QWidget):
             )
             if reply != QMessageBox.StandardButton.Yes:
                 return
+            is_current = bool(self.current_memo and self.current_memo.id == memo_id)
+
+            # 삭제 전에 이웃 메모 확인
+            neighbor: Memo | None = None
+            if is_current:
+                all_memos = self.db.list_all(sort=self._current_sort_key())
+                ids = [m.id for m in all_memos]
+                if memo_id in ids:
+                    idx = ids.index(memo_id)
+                    if idx > 0:
+                        neighbor = all_memos[idx - 1]
+                    elif len(all_memos) > 1:
+                        neighbor = all_memos[1]
+
             self.db.soft_delete(memo_id)
-            if self.current_memo and self.current_memo.id == memo_id:
-                self._clear_editor()
-            self._refresh_memo_tabs()
+
+            if is_current:
+                self.current_memo = None
+                self._refresh_memo_tabs()
+                if neighbor is not None:
+                    self._load_memo(neighbor)
+                    self._update_tabs_selected()
+                else:
+                    self.collapse()   # body 숨긴 뒤 clear → 노란 화면 안 보임
+                    self._clear_editor()
+            else:
+                self._refresh_memo_tabs()
 
     # ----- text change / autosave -----
     def _on_text_changed(self) -> None:
@@ -1790,6 +2093,11 @@ def _resource_path(name: str) -> Path:
     return base / name
 
 
+def _asset(name: str) -> Path:
+    """assets/ 폴더 내 리소스 경로."""
+    return _resource_path(f"assets/{name}")
+
+
 def load_app_icon() -> QIcon | None:
     """루트의 logo.ico/logo.png을 QIcon으로 로드. 없으면 None."""
     for name in ("logo.ico", "logo.png"):
@@ -1834,7 +2142,11 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
     menu.addAction(side_act)
     menu.addSeparator()
     settings_act = QAction("⚙ 설정", menu)
-    settings_act.triggered.connect(lambda: SettingsDialog(window.db, window).exec())
+    def _open_settings_from_tray() -> None:
+        SettingsDialog(window.db, window).exec()
+        window._refresh_ai_bar()
+
+    settings_act.triggered.connect(_open_settings_from_tray)
     menu.addAction(settings_act)
     menu.addSeparator()
     quit_act = QAction("종료", menu)
