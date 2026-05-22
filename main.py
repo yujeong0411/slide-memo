@@ -14,10 +14,12 @@ from PyQt6.QtCore import (
     QRect,
     QSize,
     QTimer,
+    QUrl,
 )
 from PyQt6.QtGui import (
     QAction,
     QColor,
+    QDesktopServices,
     QFont,
     QFontDatabase,
     QGuiApplication,
@@ -30,21 +32,31 @@ from PyQt6.QtGui import (
     QTextCharFormat,
     QTextImageFormat,
     QTextListFormat,
+    QTextTableFormat,
 )
 from PyQt6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QColorDialog,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QFrame,
     QGraphicsOpacityEffect,
     QHBoxLayout,
+    QInputDialog,
+    QLabel,
     QLineEdit,
     QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QSystemTrayIcon,
+    QTextBrowser,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -66,6 +78,8 @@ MIN_W = 280
 MIN_H = 200
 RESIZE_GRIP = 6  # 가장자리 드래그 핸들 두께(px)
 
+WEEKDAYS_KO = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
+
 COLORS = {
     "ivory":    "#FFEF9F",
     "blush":    "#F5CBCB",
@@ -75,7 +89,7 @@ COLORS = {
     "lavender": "#F4EEFF",
     "mint":     "#BADFDB",
 }
-COLOR_ORDER = ["ivory", "blush", "peach", "cream", "olive", "lavender", "mint"]
+COLOR_ORDER = ["ivory", "blush", "mint"]
 
 # 정렬 옵션: (db sort 키, 드롭다운 표시 라벨)
 SORT_OPTIONS = [
@@ -147,10 +161,10 @@ QMenu::item:selected {
     background-color: #45475a;
 }
 QToolTip {
-    background-color: #313244;
-    color: #cdd6f4;
-    border: 1px solid #45475a;
-    padding: 4px 6px;
+    background-color: #ffffff;
+    color: #1e1e2e;
+    border: 1px solid #ccc;
+    padding: 4px 8px;
 }
 """
 
@@ -289,19 +303,23 @@ def body_stylesheet(t: dict[str, str]) -> str:
         selection-background-color: #45475a;
         outline: 0;
     }}
-    QPushButton#fmtBtn {{
+    QPushButton#fmtBtn, QToolButton#fmtBtn {{
         background-color: transparent;
         color: {t["text"]};
         border: 1px solid transparent;
         border-radius: 3px;
         font-size: 10pt;
     }}
-    QPushButton#fmtBtn:hover {{
+    QPushButton#fmtBtn:hover, QToolButton#fmtBtn:hover {{
         background-color: rgba(0,0,0,0.10);
         border: 1px solid {t["border"]};
     }}
-    QPushButton#fmtBtn:pressed {{
+    QPushButton#fmtBtn:pressed, QToolButton#fmtBtn:pressed {{
         background-color: rgba(0,0,0,0.18);
+    }}
+    QToolButton#fmtBtn::menu-indicator {{
+        width: 0;
+        height: 0;
     }}
     """
 
@@ -461,6 +479,67 @@ class RichPasteTextEdit(QTextEdit):
         self.textCursor().insertImage(fmt)
 
 
+class LinkDialog(QDialog):
+    """링크 삽입 다이얼로그 (표시 텍스트 + URL)."""
+
+    def __init__(self, display_text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("링크 삽입")
+        self.setMinimumWidth(320)
+        layout = QFormLayout(self)
+        self.text_edit = QLineEdit(display_text)
+        self.text_edit.setPlaceholderText("표시 텍스트")
+        self.url_edit = QLineEdit()
+        self.url_edit.setPlaceholderText("https://...")
+        layout.addRow("표시 텍스트:", self.text_edit)
+        layout.addRow("URL:", self.url_edit)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def values(self) -> tuple[str, str]:
+        return self.text_edit.text().strip(), self.url_edit.text().strip()
+
+
+class TableDialog(QDialog):
+    """표 삽입 다이얼로그 (행/열/헤더)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("표 삽입")
+        layout = QVBoxLayout(self)
+        size_row = QHBoxLayout()
+        size_row.addWidget(QLabel("행:"))
+        self.rows_spin = QSpinBox()
+        self.rows_spin.setRange(1, 20)
+        self.rows_spin.setValue(3)
+        size_row.addWidget(self.rows_spin)
+        size_row.addSpacing(12)
+        size_row.addWidget(QLabel("열:"))
+        self.cols_spin = QSpinBox()
+        self.cols_spin.setRange(1, 10)
+        self.cols_spin.setValue(3)
+        size_row.addWidget(self.cols_spin)
+        size_row.addStretch(1)
+        layout.addLayout(size_row)
+        self.header_check = QCheckBox("헤더 행 포함")
+        self.header_check.setChecked(True)
+        layout.addWidget(self.header_check)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("삽입")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def values(self) -> tuple[int, int, bool]:
+        return self.rows_spin.value(), self.cols_spin.value(), self.header_check.isChecked()
+
+
 class FormatToolbar(QWidget):
     """리치텍스트 서식바: 굵게/기울임/밑줄/취소선 + 불릿/번호 리스트."""
 
@@ -471,12 +550,16 @@ class FormatToolbar(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
 
-        self._add_btn("B", "굵게 (Ctrl+B)", self.toggle_bold, bold=True)
-        self._add_btn("I", "기울임 (Ctrl+I)", self.toggle_italic, italic=True)
-        self._add_btn("U", "밑줄 (Ctrl+U)", self.toggle_underline, underline=True)
-        self._add_btn("S", "취소선", self.toggle_strike, strike=True)
-        self._add_btn("•", "불릿 목록", self.bullet_list)
-        self._add_btn("1.", "번호 목록", self.numbered_list)
+        self._add_icon_btn("fmt_bold.svg", "굵게 (Ctrl+B)", self.toggle_bold)
+        self._add_icon_btn("fmt_italic.svg", "기울임 (Ctrl+I)", self.toggle_italic)
+        self._add_icon_btn("fmt_underline.svg", "밑줄 (Ctrl+U)", self.toggle_underline)
+        self._add_icon_btn("fmt_strike.svg", "취소선", self.toggle_strike)
+        self._add_icon_btn("fmt_bullet.svg", "불릿 목록", self.bullet_list)
+        self._add_icon_btn("fmt_numbered.svg", "번호 목록", self.numbered_list)
+        self._add_sep()
+        self._add_icon_btn("link_icon.svg", "링크 삽입 (Ctrl+K)", self.insert_link)
+        self._add_icon_btn("fmt_table.svg", "표 삽입", self.insert_table)
+        self._add_datetime_btn()
         layout.addStretch(1)
 
     def _add_btn(
@@ -539,6 +622,150 @@ class FormatToolbar(QWidget):
         self.editor.textCursor().createList(QTextListFormat.Style.ListDecimal)
         self.editor.setFocus()
 
+    # ----- 구분선 / 드롭다운 헬퍼 -----
+    def _add_sep(self) -> None:
+        sep = QFrame(self)
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFixedWidth(1)
+        sep.setFixedHeight(18)
+        sep.setStyleSheet("color: rgba(0,0,0,0.15);")
+        self.layout().addWidget(sep)
+
+    def _add_icon_btn(self, svg_name: str, tip: str, slot) -> QToolButton:
+        btn = QToolButton(self)
+        btn.setObjectName("fmtBtn")
+        btn.setToolTip(tip)
+        btn.setFixedSize(28, 24)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        icon_path = _resource_path(svg_name)
+        if icon_path.exists():
+            btn.setIcon(QIcon(str(icon_path)))
+            btn.setIconSize(QSize(16, 16))
+        btn.clicked.connect(slot)
+        self.layout().addWidget(btn)
+        return btn
+
+    def _add_datetime_btn(self) -> None:
+        btn = QToolButton(self)
+        btn.setObjectName("fmtBtn")
+        btn.setToolTip("날짜/시간 삽입")
+        btn.setFixedSize(28, 24)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        icon_path = _resource_path("calendar_icon.svg")
+        if icon_path.exists():
+            btn.setIcon(QIcon(str(icon_path)))
+            btn.setIconSize(QSize(16, 16))
+        menu = QMenu(btn)
+        menu.addAction("윈도우 메모장 포맷  (F5)", lambda: self.insert_datetime("notepad"))
+        menu.addAction("날짜만  (Ctrl+;)", lambda: self.insert_datetime("date"))
+        menu.addAction("시간만  (Ctrl+Shift+;)", lambda: self.insert_datetime("time"))
+        menu.addAction("ISO 형식  (Ctrl+Alt+;)", lambda: self.insert_datetime("iso"))
+        menu.addAction("한국식  (Ctrl+Shift+H)", lambda: self.insert_datetime("korean"))
+        btn.setMenu(menu)
+        self.layout().addWidget(btn)
+
+    # ----- 링크 삽입 -----
+    def insert_link(self) -> None:
+        cursor = self.editor.textCursor()
+        selected = cursor.selectedText().strip()
+
+        if selected:
+            url, ok = QInputDialog.getText(
+                self, "링크 삽입", "URL:", text=""
+            )
+            if not ok or not url.strip():
+                self.editor.setFocus()
+                return
+            url = url.strip()
+            display = selected
+        else:
+            dlg = LinkDialog(parent=self)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                self.editor.setFocus()
+                return
+            display, url = dlg.values()
+            if not url:
+                self.editor.setFocus()
+                return
+
+        if url and not url.startswith(("http://", "https://", "ftp://", "mailto:")):
+            url = "https://" + url
+
+        fmt = QTextCharFormat()
+        fmt.setAnchor(True)
+        fmt.setAnchorHref(url)
+        fmt.setForeground(QColor("#89b4fa"))
+        fmt.setFontUnderline(True)
+
+        cursor = self.editor.textCursor()
+        if selected:
+            cursor.mergeCharFormat(fmt)
+        else:
+            cursor.insertText(display if display else url, fmt)
+
+        # 링크 삽입 후 서식 초기화
+        reset = QTextCharFormat()
+        reset.setAnchor(False)
+        reset.setAnchorHref("")
+        reset.setForeground(self.editor.palette().windowText().color())
+        reset.setFontUnderline(False)
+        self.editor.setCurrentCharFormat(reset)
+        self.editor.setFocus()
+
+    # ----- 표 삽입 -----
+    def insert_table(self) -> None:
+        dlg = TableDialog(parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            self.editor.setFocus()
+            return
+
+        rows, cols, has_header = dlg.values()
+
+        fmt = QTextTableFormat()
+        fmt.setCellPadding(4)
+        fmt.setCellSpacing(0)
+        fmt.setBorderStyle(QTextTableFormat.BorderStyle.BorderStyle_Solid)
+        fmt.setBorder(1)
+        fmt.setWidth(QTextTableFormat.WidthType.PercentageWidth if False else fmt.width())
+
+        cursor = self.editor.textCursor()
+        table = cursor.insertTable(rows, cols, fmt)
+
+        if has_header:
+            header_fmt = QTextCharFormat()
+            header_fmt.setFontWeight(QFont.Weight.Bold)
+            for col in range(cols):
+                cell = table.cellAt(0, col)
+                cell_cursor = cell.firstCursorPosition()
+                cell_cursor.mergeCharFormat(header_fmt)
+                cell_cursor.insertText(f"헤더{col + 1}")
+
+        # 첫 셀로 커서 이동
+        first_cell = table.cellAt(0, 0).firstCursorPosition()
+        self.editor.setTextCursor(first_cell)
+        self.editor.setFocus()
+
+    # ----- 날짜/시간 삽입 -----
+    def insert_datetime(self, fmt_key: str) -> None:
+        now = datetime.now()
+        if fmt_key == "notepad":
+            raw = now.strftime("%p %I:%M %Y-%m-%d")
+            text = raw.replace("AM", "오전").replace("PM", "오후")
+        elif fmt_key == "date":
+            text = now.strftime("%Y-%m-%d")
+        elif fmt_key == "time":
+            text = now.strftime("%H:%M")
+        elif fmt_key == "iso":
+            text = now.strftime("%Y-%m-%dT%H:%M:%S")
+        else:  # korean
+            text = f"{now.strftime('%Y년 %m월 %d일')} {WEEKDAYS_KO[now.weekday()]}"
+
+        self.editor.textCursor().insertText(text)
+        self.editor.setFocus()
+
 
 class DragGrip(QWidget):
     """탭 컬럼 상단의 세로 이동 그립 (크기 변경 없이 y 위치만 이동)."""
@@ -550,7 +777,7 @@ class DragGrip(QWidget):
         self.setToolTip("드래그하여 세로 위치 이동")
         self._press_global = None
         self._start_geom = None
-        icon_path = _resource_path("icon.png")
+        icon_path = _resource_path("logo.png")
         self._icon_pixmap: QPixmap | None = None
         if icon_path.exists():
             pm = QPixmap(str(icon_path))
@@ -984,9 +1211,42 @@ class SlideMemoWindow(QWidget):
             ("Ctrl+B", self.format_toolbar.toggle_bold),
             ("Ctrl+I", self.format_toolbar.toggle_italic),
             ("Ctrl+U", self.format_toolbar.toggle_underline),
+            # 링크
+            ("Ctrl+K", self.format_toolbar.insert_link),
+            # 날짜/시간
+            ("F5", lambda: self.format_toolbar.insert_datetime("notepad")),
+            ("Ctrl+;", lambda: self.format_toolbar.insert_datetime("date")),
+            ("Ctrl+Shift+;", lambda: self.format_toolbar.insert_datetime("time")),
+            ("Ctrl+Alt+;", lambda: self.format_toolbar.insert_datetime("iso")),
+            ("Ctrl+Shift+H", lambda: self.format_toolbar.insert_datetime("korean")),
+            # 미리보기
+            ("Ctrl+P", self._show_preview),
         ]:
             sc = QShortcut(QKeySequence(keys), self)
             sc.activated.connect(slot)
+
+    def _show_preview(self) -> None:
+        html = self.editor.toHtml()
+        dlg = QDialog(self)
+        dlg.setWindowTitle("미리보기")
+        dlg.resize(560, 500)
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(8, 8, 8, 8)
+        browser = QTextBrowser()
+        browser.setOpenLinks(False)
+        browser.setHtml(html)
+        browser.anchorClicked.connect(
+            lambda url: QDesktopServices.openUrl(url)
+        )
+        # 링크 색상 오버라이드
+        browser.document().setDefaultStyleSheet(
+            "a { color: #89b4fa; text-decoration: underline; }"
+        )
+        layout.addWidget(browser)
+        close_btn = QPushButton("닫기")
+        close_btn.clicked.connect(dlg.close)
+        layout.addWidget(close_btn)
+        dlg.exec()
 
     def _setup_autosave(self) -> None:
         self.autosave_timer = QTimer(self)
@@ -1531,8 +1791,8 @@ def _resource_path(name: str) -> Path:
 
 
 def load_app_icon() -> QIcon | None:
-    """루트의 icon.ico/icon.png을 QIcon으로 로드. 없으면 None."""
-    for name in ("icon.ico", "icon.png"):
+    """루트의 logo.ico/logo.png을 QIcon으로 로드. 없으면 None."""
+    for name in ("logo.ico", "logo.png"):
         p = _resource_path(name)
         if p.exists():
             return QIcon(str(p))
@@ -1558,6 +1818,8 @@ def _fallback_tray_icon() -> QIcon:
 
 
 def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSystemTrayIcon:
+    from settings_dialog import SettingsDialog
+
     if icon is None:
         icon = load_app_icon() or _fallback_tray_icon()
     tray = QSystemTrayIcon(icon, window)
@@ -1570,6 +1832,10 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
     side_act = QAction("왼쪽 / 오른쪽 가장자리 전환", menu)
     side_act.triggered.connect(window.toggle_side)
     menu.addAction(side_act)
+    menu.addSeparator()
+    settings_act = QAction("⚙ 설정", menu)
+    settings_act.triggered.connect(lambda: SettingsDialog(window.db, window).exec())
+    menu.addAction(settings_act)
     menu.addSeparator()
     quit_act = QAction("종료", menu)
     quit_act.triggered.connect(window.request_quit)
