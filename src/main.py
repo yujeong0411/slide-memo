@@ -159,6 +159,22 @@ def is_gradient(name: str | None) -> bool:
     return isinstance(name, str) and name in GRADIENTS
 
 
+def _darken_hex(hex_color: str, factor: float = 0.4) -> str:
+    """hex 색의 lightness만 줄여 더 진한 같은 계열 색을 반환.
+    factor=0.4면 원래 lightness의 40%로 (60% 어두워짐)."""
+    import colorsys
+    h = hex_color.lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    try:
+        r, g, b = (int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    except ValueError:
+        return "#4a4a52"
+    hh, l, s = colorsys.rgb_to_hls(r, g, b)
+    nr, ng, nb = colorsys.hls_to_rgb(hh, l * factor, s)
+    return f"#{int(nr * 255):02x}{int(ng * 255):02x}{int(nb * 255):02x}"
+
+
 def _hex_to_rgba(hex_color: str, alpha: float) -> str:
     """#RRGGBB → 'rgba(r, g, b, alpha)' (QSS 친화 표현)."""
     h = hex_color.lstrip("#")
@@ -205,35 +221,35 @@ STYLE = """
     border: none;
 }
 #newTabBtn {
-    background-color: rgba(49, 50, 68, 0.6);
-    color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.75);
+    color: #5c5c66;
     border: none;
     font-size: 14pt;
     font-weight: bold;
 }
 #newTabBtn:hover {
-    background-color: rgba(69, 71, 90, 0.75);
-    color: #89b4fa;
+    background-color: rgba(255, 255, 255, 0.95);
+    color: #4a4a52;
 }
 #trashBtn {
-    background-color: rgba(49, 50, 68, 0.6);
-    color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.75);
+    color: #5c5c66;
     border: none;
     font-size: 9pt;
 }
 #trashBtn:hover {
-    background-color: rgba(69, 71, 90, 0.75);
-    color: #f38ba8;
+    background-color: rgba(255, 255, 255, 0.95);
+    color: #d85a7a;
 }
 #settingsBtn {
-    background-color: rgba(49, 50, 68, 0.6);
-    color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.75);
+    color: #5c5c66;
     border: none;
     font-size: 11pt;
 }
 #settingsBtn:hover {
-    background-color: rgba(69, 71, 90, 0.75);
-    color: #89b4fa;
+    background-color: rgba(255, 255, 255, 0.95);
+    color: #4a4a52;
 }
 QScrollBar:vertical {
     background: transparent;
@@ -485,7 +501,6 @@ class MemoTabButton(QPushButton):
     app_font_family: str = ""  # 글로벌 폰트 family (회전 텍스트에 사용)
 
     SEL_BAR_WIDTH = 4  # 선택 인디케이터 띠 굵기 (px)
-    SEL_BAR_COLOR = "#4a4a52"  # 어두운 회색 (검정보다 부드럽게)
     BG_ALPHA = 0.85  # 메모 인덱스 배경 알파 (조금 투명)
 
     def __init__(self, memo: Memo, parent: QWidget | None = None) -> None:
@@ -498,10 +513,15 @@ class MemoTabButton(QPushButton):
                 memo.color, coords=(0, 0, 0, 1), alpha=MemoTabButton.BG_ALPHA
             )
             self._fg = "#1e1e2e"
+            # 선택 인디케이터 색: 그라데이션의 대표색을 어둡게 (같은 hue 계열)
+            self._sel_bar_color = _darken_hex(
+                GRADIENTS[memo.color]["representative"], 0.35
+            )
         else:
             hex_color = resolve_color(memo.color)
             self._bg = _hex_to_rgba(hex_color, MemoTabButton.BG_ALPHA)
             self._fg = _text_color_for(hex_color)
+            self._sel_bar_color = _darken_hex(hex_color, 0.35)
         self.memo_title = memo.title.strip() or "(제목 없음)"
         self.is_pinned = memo.is_pinned
         # 메모별 폰트 (없으면 글로벌 default = 클래스 변수)
@@ -529,7 +549,7 @@ class MemoTabButton(QPushButton):
                 bar_rect = QRect(0, 0, bar_w, self.height())
             else:
                 bar_rect = QRect(self.width() - bar_w, 0, bar_w, self.height())
-            painter.fillRect(bar_rect, QColor(MemoTabButton.SEL_BAR_COLOR))
+            painter.fillRect(bar_rect, QColor(self._sel_bar_color))
 
         # 2) 고정 표시 (회전 전, 탭 상단 중앙)
         pin_h = 0
@@ -1384,8 +1404,8 @@ class DragGrip(QWidget):
         from PyQt6.QtCore import QRect
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        # 다른 탭 버튼과 동일한 어두운 배경 (알파 0.6 ≈ 153)
-        painter.setBrush(QColor(49, 50, 68, 153))
+        # 컬럼 버튼들과 같은 톤 — 라이트 배경 (알파 0.75 ≈ 191)
+        painter.setBrush(QColor(255, 255, 255, 191))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRect(self.rect())
         if self._drag_icon is not None and not self._drag_icon.isNull():
@@ -1839,6 +1859,7 @@ class SlideMemoWindow(QWidget):
         self.editor.setObjectName("editor")
         self.editor.setFont(self.editor_font)
         self.editor.setAcceptRichText(True)  # 이미지 붙여넣기 + 서식 지원
+        self.editor.setPlaceholderText("여기에 메모를 적어볼까요? ✨")
         self.editor.textChanged.connect(self._on_text_changed)
         self.editor.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.editor.customContextMenuRequested.connect(self._show_editor_context_menu)
