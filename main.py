@@ -84,7 +84,7 @@ AUTOSAVE_DELAY = 600
 MEMO_TAB_HEIGHT = 116   # 인덱스 세로 (기본값; 설정에서 조절)
 MEMO_TAB_HEIGHT_MIN = 60
 MEMO_TAB_HEIGHT_MAX = 200
-NEW_TAB_HEIGHT = 44
+NEW_TAB_HEIGHT = 38
 
 # 8-4 표시 방식: tray=트레이만(Tool 플래그) / taskbar=작업표시줄만 / both=둘 다
 DISPLAY_MODE_DEFAULT = "tray"
@@ -159,11 +159,32 @@ def is_gradient(name: str | None) -> bool:
     return isinstance(name, str) and name in GRADIENTS
 
 
-def gradient_qss(name: str, *, coords: tuple[float, float, float, float] | None = None) -> str:
-    """qlineargradient(...) QSS 문자열. coords로 좌표 오버라이드 가능 (탭 등 짧은 영역)."""
+def _hex_to_rgba(hex_color: str, alpha: float) -> str:
+    """#RRGGBB → 'rgba(r, g, b, alpha)' (QSS 친화 표현)."""
+    h = hex_color.lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    try:
+        r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    except ValueError:
+        r, g, b = 255, 255, 255
+    return f"rgba({r}, {g}, {b}, {alpha})"
+
+
+def gradient_qss(
+    name: str,
+    *,
+    coords: tuple[float, float, float, float] | None = None,
+    alpha: float = 1.0,
+) -> str:
+    """qlineargradient(...) QSS 문자열. coords로 좌표 오버라이드 가능 (탭 등 짧은 영역).
+    alpha < 1.0이면 stop의 색상에 알파 채널 적용."""
     g = GRADIENTS[name]
     x1, y1, x2, y2 = coords if coords is not None else g["coords"]
-    stops = ", ".join(f"stop:{s} {c}" for s, c in g["stops"])
+    if alpha < 1.0:
+        stops = ", ".join(f"stop:{s} {_hex_to_rgba(c, alpha)}" for s, c in g["stops"])
+    else:
+        stops = ", ".join(f"stop:{s} {c}" for s, c in g["stops"])
     return f"qlineargradient(x1:{x1}, y1:{y1}, x2:{x2}, y2:{y2}, {stops})"
 
 # 정렬 옵션: (db sort 키, 드롭다운 표시 라벨)
@@ -184,37 +205,34 @@ STYLE = """
     border: none;
 }
 #newTabBtn {
-    background-color: rgba(49, 50, 68, 0.85);
-    color: #cdd6f4;
+    background-color: rgba(49, 50, 68, 0.6);
+    color: #ffffff;
     border: none;
-    border-radius: 5px;
     font-size: 14pt;
     font-weight: bold;
 }
 #newTabBtn:hover {
-    background-color: rgba(69, 71, 90, 0.95);
+    background-color: rgba(69, 71, 90, 0.75);
     color: #89b4fa;
 }
 #trashBtn {
-    background-color: rgba(49, 50, 68, 0.85);
-    color: #cdd6f4;
+    background-color: rgba(49, 50, 68, 0.6);
+    color: #ffffff;
     border: none;
-    border-radius: 5px;
     font-size: 9pt;
 }
 #trashBtn:hover {
-    background-color: rgba(69, 71, 90, 0.95);
+    background-color: rgba(69, 71, 90, 0.75);
     color: #f38ba8;
 }
 #settingsBtn {
-    background-color: rgba(49, 50, 68, 0.85);
-    color: #cdd6f4;
+    background-color: rgba(49, 50, 68, 0.6);
+    color: #ffffff;
     border: none;
-    border-radius: 5px;
     font-size: 11pt;
 }
 #settingsBtn:hover {
-    background-color: rgba(69, 71, 90, 0.95);
+    background-color: rgba(69, 71, 90, 0.75);
     color: #89b4fa;
 }
 QScrollBar:vertical {
@@ -319,12 +337,28 @@ def theme_for(color: str | None) -> dict[str, str]:
     }
 
 
-def body_stylesheet(t: dict[str, str]) -> str:
+def body_stylesheet(t: dict[str, str], side: str = "right") -> str:
+    # side와 만나는 면(side=right면 body 우측, side=left면 body 좌측)은 라운드 0 →
+    # 인덱스 컬럼과 한 덩어리처럼 붙어 보이게.
+    if side == "right":
+        body_radius = (
+            "border-top-left-radius: 8px;"
+            "border-bottom-left-radius: 8px;"
+            "border-top-right-radius: 0;"
+            "border-bottom-right-radius: 0;"
+        )
+    else:
+        body_radius = (
+            "border-top-right-radius: 8px;"
+            "border-bottom-right-radius: 8px;"
+            "border-top-left-radius: 0;"
+            "border-bottom-left-radius: 0;"
+        )
     return f"""
     #bodyPanel {{
         background: {t["bg"]};
         border: 1px solid {t["border"]};
-        border-radius: 8px;
+        {body_radius}
     }}
     QLineEdit#searchInput {{
         background-color: {t["input_bg"]};
@@ -452,6 +486,7 @@ class MemoTabButton(QPushButton):
 
     SEL_BAR_WIDTH = 4  # 선택 인디케이터 띠 굵기 (px)
     SEL_BAR_COLOR = "#4a4a52"  # 어두운 회색 (검정보다 부드럽게)
+    BG_ALPHA = 0.85  # 메모 인덱스 배경 알파 (조금 투명)
 
     def __init__(self, memo: Memo, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -459,11 +494,14 @@ class MemoTabButton(QPushButton):
         self.color_name = memo.color
         if is_gradient(memo.color):
             # 탭은 세로로 길쭉 → 위→아래 짧은 그라데이션으로 표현
-            self._bg = gradient_qss(memo.color, coords=(0, 0, 0, 1))
+            self._bg = gradient_qss(
+                memo.color, coords=(0, 0, 0, 1), alpha=MemoTabButton.BG_ALPHA
+            )
             self._fg = "#1e1e2e"
         else:
-            self._bg = resolve_color(memo.color)
-            self._fg = _text_color_for(self._bg)
+            hex_color = resolve_color(memo.color)
+            self._bg = _hex_to_rgba(hex_color, MemoTabButton.BG_ALPHA)
+            self._fg = _text_color_for(hex_color)
         self.memo_title = memo.title.strip() or "(제목 없음)"
         self.is_pinned = memo.is_pinned
         self._selected = False
@@ -525,41 +563,16 @@ class MemoTabButton(QPushButton):
         painter.end()
 
     def update_style(self, selected: bool) -> None:
-        # stylesheet은 배경 + 둥근 모서리만 담당. 선택 인디케이터는 paintEvent에서 직접 그림.
+        # stylesheet은 배경만 담당. 선택 인디케이터는 paintEvent에서 직접 그림.
+        # 라운드는 0 — 메모 탭들을 한 띠로 보이게 한다.
         self._selected = selected
-        bg = self._bg
-        # accent 반대쪽만 둥글게 (선택 시), 미선택 시는 균일 5px
-        accent = "left" if MemoTabButton.side == "right" else "right"
-        if selected:
-            if accent == "left":
-                radius = (
-                    "border-top-left-radius: 0;"
-                    "border-bottom-left-radius: 0;"
-                    "border-top-right-radius: 5px;"
-                    "border-bottom-right-radius: 5px;"
-                )
-            else:
-                radius = (
-                    "border-top-right-radius: 0;"
-                    "border-bottom-right-radius: 0;"
-                    "border-top-left-radius: 5px;"
-                    "border-bottom-left-radius: 5px;"
-                )
-            self.setStyleSheet(
-                f"QPushButton {{"
-                f"  background: {bg};"
-                f"  border: none;"
-                f"  {radius}"
-                f"}}"
-            )
-        else:
-            self.setStyleSheet(
-                f"QPushButton {{"
-                f"  background: {bg};"
-                f"  border: none;"
-                f"  border-radius: 5px;"
-                f"}}"
-            )
+        self.setStyleSheet(
+            f"QPushButton {{"
+            f"  background: {self._bg};"
+            f"  border: none;"
+            f"  border-radius: 0;"
+            f"}}"
+        )
         self.update()
 
 
@@ -1226,7 +1239,7 @@ class DragGrip(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setFixedHeight(40)
+        self.setFixedHeight(34)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
         self.setToolTip("드래그하여 세로 위치 이동")
         self._press_global = None
@@ -1240,10 +1253,10 @@ class DragGrip(QWidget):
         from PyQt6.QtCore import QRect
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        # 다른 탭 버튼과 동일한 어두운 배경
-        painter.setBrush(QColor(49, 50, 68, 216))
+        # 다른 탭 버튼과 동일한 어두운 배경 (알파 0.6 ≈ 153)
+        painter.setBrush(QColor(49, 50, 68, 153))
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(self.rect(), 5, 5)
+        painter.drawRect(self.rect())
         if self._drag_icon is not None and not self._drag_icon.isNull():
             # tab_column 폭에 비례 — 너무 작으면 안 보이고 너무 크면 그립 영역 초과
             icon_size = max(12, min(int(self.width() * 0.55), 32))
@@ -1658,8 +1671,8 @@ class SlideMemoWindow(QWidget):
         self.tabs_container = QWidget()
         self.tabs_container.setObjectName("tabsContainer")
         self.tabs_layout = QVBoxLayout(self.tabs_container)
-        self.tabs_layout.setContentsMargins(2, 4, 2, 4)
-        self.tabs_layout.setSpacing(5)  # 각 인덱스가 떨어져 보이게
+        self.tabs_layout.setContentsMargins(0, 0, 0, 0)
+        self.tabs_layout.setSpacing(0)  # 인덱스를 하나의 띠처럼 붙임
         self.tabs_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.tab_scroll.setWidget(self.tabs_container)
         col_layout.addWidget(self.tab_scroll, stretch=1)
@@ -2069,6 +2082,9 @@ class SlideMemoWindow(QWidget):
         self._update_handles()
         self._refresh_memo_tabs()
         self._update_tabs_selected()
+        # body의 비대칭 라운드 (side 면 쪽만 라운드 0) 다시 적용
+        if self.current_memo is not None:
+            self._apply_memo_theme(self.current_memo.color)
 
     def apply_display_mode_settings(self) -> None:
         """display_mode 재로드 후 윈도우 플래그/트레이 가시성 즉시 갱신."""
@@ -2153,6 +2169,8 @@ class SlideMemoWindow(QWidget):
         self._update_handles()
         self._refresh_memo_tabs()
         self._update_tabs_selected()
+        if self.current_memo is not None:
+            self._apply_memo_theme(self.current_memo.color)
 
     def expand(self) -> None:
         if not self.isVisible():
@@ -2432,7 +2450,7 @@ class SlideMemoWindow(QWidget):
     def _apply_memo_theme(self, color_name: str | None) -> None:
         """선택된 메모 색을 본문(메모장) 배경/입력 요소에 반영."""
         t = theme_for(color_name)
-        self.body.setStyleSheet(body_stylesheet(t))
+        self.body.setStyleSheet(body_stylesheet(t, self.side))
         # 색상 점 버튼은 항상 자기 색깔 유지하므로 별도 처리 없음.
 
     def _update_color_buttons(self, current_color: str) -> None:
