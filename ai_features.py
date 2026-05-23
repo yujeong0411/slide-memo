@@ -22,14 +22,6 @@ AI_FEATURES: dict[str, dict] = {
         "max_tokens": 512,
         "output": "replace",  # replace selection or full content
     },
-    "rewrite": {
-        "label": "다시 쓰기",
-        "system": "You are a skilled editor. Rewrite the text to be clearer and more natural, preserving meaning. Use the same language. Output only the rewritten text.",
-        "user_template": "Rewrite the following text:\n\n{{text}}",
-        "needs_selection": False,
-        "max_tokens": 1024,
-        "output": "replace",
-    },
     "translate": {
         "label": "번역 (한↔영)",
         "system": "You are a professional translator. If the input is Korean, translate to English. If English, translate to Korean. Output only the translation.",
@@ -54,14 +46,6 @@ AI_FEATURES: dict[str, dict] = {
         "max_tokens": 64,
         "output": "title",  # put result in title field
     },
-    "outline": {
-        "label": "개요 작성",
-        "system": "You are an outline creator. Create a structured outline for the given content. Use the same language. Output only the outline as a bullet list.",
-        "user_template": "Create an outline for:\n\n{{text}}",
-        "needs_selection": False,
-        "max_tokens": 512,
-        "output": "append",  # append after current content
-    },
     "keywords": {
         "label": "키워드 추출",
         "system": "You are a keyword extractor. Extract 5-10 key terms or phrases from the text. Use the same language. Output only a comma-separated list of keywords.",
@@ -69,14 +53,6 @@ AI_FEATURES: dict[str, dict] = {
         "needs_selection": False,
         "max_tokens": 128,
         "output": "append",
-    },
-    "continue": {
-        "label": "이어 쓰기",
-        "system": "You are a creative writing assistant. Continue the given text naturally, matching its style and language. Write 2-4 sentences. Output only the continuation (no leading newline needed).",
-        "user_template": "Continue this text:\n\n{{text}}",
-        "needs_selection": False,
-        "max_tokens": 256,
-        "output": "insert",  # insert at cursor position
     },
 }
 

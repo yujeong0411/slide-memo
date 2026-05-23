@@ -78,7 +78,7 @@ TAB_WIDTH = 30          # 인덱스 가로 (기본값; 설정에서 조절)
 TAB_WIDTH_MIN = 24
 TAB_WIDTH_MAX = 60
 EXPANDED_WIDTH = 520
-HEIGHT_RATIO = 0.70
+HEIGHT_RATIO = 0.55
 ANIM_DURATION = 150  # body 페이드 시간
 AUTOSAVE_DELAY = 600
 MEMO_TAB_HEIGHT = 116   # 인덱스 세로 (기본값; 설정에서 조절)
@@ -1826,13 +1826,10 @@ class SlideMemoWindow(QWidget):
             ("Ctrl+Shift+H", lambda: self.format_toolbar.insert_datetime("korean")),
             # AI 기능
             ("Ctrl+Alt+S", lambda: self._run_ai_feature("summarize")),
-            ("Ctrl+Alt+R", lambda: self._run_ai_feature("rewrite")),
             ("Ctrl+Alt+T", lambda: self._run_ai_feature("translate")),
             ("Ctrl+Alt+P", lambda: self._run_ai_feature("spellcheck")),
             ("Ctrl+Alt+H", lambda: self._run_ai_feature("title")),
-            ("Ctrl+Alt+O", lambda: self._run_ai_feature("outline")),
             ("Ctrl+Alt+K", lambda: self._run_ai_feature("keywords")),
-            ("Ctrl+Alt+Space", lambda: self._run_ai_feature("continue")),
         ]:
             sc = QShortcut(QKeySequence(keys), self)
             sc.activated.connect(slot)
@@ -2027,6 +2024,12 @@ class SlideMemoWindow(QWidget):
         rect = self._screen_rect()
         default_h = int(rect.height() * HEIGHT_RATIO)
         default_y = rect.y() + (rect.height() - default_h) // 2
+        # 기본 세로 비율을 0.70 → 0.55로 줄이면서 기존 사용자의 저장된 user_height를
+        # 한 번만 새 기본값으로 리셋. 이후 사용자가 드래그한 값은 그대로 유지된다.
+        if not self.db.get_setting_int("height_ratio_v2_migrated", 0):
+            self.db.set_setting_int("window_height", default_h)
+            self.db.set_setting_int("window_y", default_y)
+            self.db.set_setting_int("height_ratio_v2_migrated", 1)
         self.user_width = self.db.get_setting_int("window_width", EXPANDED_WIDTH)
         self.user_height = self.db.get_setting_int("window_height", default_h)
         self.user_y = self.db.get_setting_int("window_y", default_y)
@@ -2767,6 +2770,9 @@ def main() -> int:
     # 30일 지난 휴지통 항목 자동 영구삭제 (+ 첨부 이미지 정리)
     for removed in db.cleanup_old_trash(days=30):
         _delete_memo_images(removed.content)
+    # 활성 메모가 하나도 없으면 빈 메모 1개를 자동 생성 (첫 실행 / 모두 삭제 직후 모두 포함)
+    if not db.list_all():
+        db.create()
 
     window = SlideMemoWindow(db)
     if app_icon is not None:
