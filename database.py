@@ -50,6 +50,8 @@ class Memo:
     updated_at: str
     is_pinned: bool = False
     deleted_at: str | None = None
+    font_family: str = ""  # 빈 문자열이면 글로벌 default 사용
+    font_size: int = 0     # 0이면 글로벌 default 사용
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Memo":
@@ -63,6 +65,8 @@ class Memo:
             updated_at=row["updated_at"],
             is_pinned=bool(row["is_pinned"]) if "is_pinned" in keys else False,
             deleted_at=row["deleted_at"] if "deleted_at" in keys else None,
+            font_family=(row["font_family"] or "") if "font_family" in keys else "",
+            font_size=int(row["font_size"] or 0) if "font_size" in keys else 0,
         )
 
 
@@ -89,6 +93,8 @@ class MemoDatabase:
                 color TEXT NOT NULL DEFAULT 'ivory',
                 is_pinned INTEGER NOT NULL DEFAULT 0,
                 deleted_at TEXT DEFAULT NULL,
+                font_family TEXT NOT NULL DEFAULT '',
+                font_size INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -132,6 +138,18 @@ class MemoDatabase:
                 "ALTER TABLE memos ADD COLUMN deleted_at TEXT DEFAULT NULL"
             )
             added.append("deleted_at")
+        if "font_family" not in cols:
+            self._backup_db()
+            self.conn.execute(
+                "ALTER TABLE memos ADD COLUMN font_family TEXT NOT NULL DEFAULT ''"
+            )
+            added.append("font_family")
+        if "font_size" not in cols:
+            self._backup_db()
+            self.conn.execute(
+                "ALTER TABLE memos ADD COLUMN font_size INTEGER NOT NULL DEFAULT 0"
+            )
+            added.append("font_size")
         if added:
             self.conn.commit()
             print(f"[migrate] memos 테이블에 컬럼 추가: {', '.join(added)}")
@@ -202,6 +220,8 @@ class MemoDatabase:
         title: str | None = None,
         content: str | None = None,
         color: str | None = None,
+        font_family: str | None = None,
+        font_size: int | None = None,
     ) -> Memo:
         fields: list[str] = []
         values: list[object] = []
@@ -214,6 +234,12 @@ class MemoDatabase:
         if color is not None:
             fields.append("color = ?")
             values.append(normalize_color(color))
+        if font_family is not None:
+            fields.append("font_family = ?")
+            values.append(font_family)
+        if font_size is not None:
+            fields.append("font_size = ?")
+            values.append(int(font_size))
         if not fields:
             return self.get(memo_id)
         fields.append("updated_at = ?")

@@ -376,7 +376,6 @@ def body_stylesheet(t: dict[str, str], side: str = "right") -> str:
         color: {t["text"]};
         border: none;
         border-bottom: 1px solid {t["border"]};
-        font-size: 13pt;
         font-weight: bold;
         padding: 4px;
     }}
@@ -483,6 +482,7 @@ class MemoTabButton(QPushButton):
 
     side = "right"  # 클래스 변수: 윈도우가 좌/우 전환 시 갱신
     button_height = MEMO_TAB_HEIGHT  # 클래스 변수: 설정에서 조절 시 갱신
+    app_font_family: str = ""  # 글로벌 폰트 family (회전 텍스트에 사용)
 
     SEL_BAR_WIDTH = 4  # 선택 인디케이터 띠 굵기 (px)
     SEL_BAR_COLOR = "#4a4a52"  # 어두운 회색 (검정보다 부드럽게)
@@ -504,6 +504,8 @@ class MemoTabButton(QPushButton):
             self._fg = _text_color_for(hex_color)
         self.memo_title = memo.title.strip() or "(제목 없음)"
         self.is_pinned = memo.is_pinned
+        # 메모별 폰트 (없으면 글로벌 default = 클래스 변수)
+        self._font_family = memo.font_family or MemoTabButton.app_font_family
         self._selected = False
         self.setFixedHeight(MemoTabButton.button_height)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -547,7 +549,11 @@ class MemoTabButton(QPushButton):
         #    고정 표시가 있으면 그만큼 아래로 내려서 중앙 정렬
         painter.translate(self.width() / 2, (self.height() + pin_h) / 2)
         painter.rotate(90)
-        font = self.font()
+        # 메모별 family + 작은 8pt + bold (좁은 회전 영역이라 크기는 고정)
+        if self._font_family:
+            font = QFont(self._font_family)
+        else:
+            font = self.font()
         font.setPointSize(8)
         font.setBold(True)
         painter.setFont(font)
@@ -875,6 +881,7 @@ class FormatToolbar(QWidget):
         self._add_icon_btn("fmt_italic.svg", "기울임 (Ctrl+I)", self.toggle_italic)
         self._add_icon_btn("fmt_underline.svg", "밑줄 (Ctrl+U)", self.toggle_underline)
         self._add_icon_btn("fmt_strike.svg", "취소선", self.toggle_strike)
+        self._add_font_btn()
         self._add_color_menu_btn("fmt_text_color.svg", "글자색", kind="text")
         self._add_color_menu_btn("fmt_bg_color.svg", "배경색", kind="bg")
         self._add_sep()
@@ -1029,6 +1036,121 @@ class FormatToolbar(QWidget):
         )
         if chosen.isValid():
             self.apply_bg_color(chosen.name())
+
+    def _add_font_btn(self) -> QToolButton:
+        """Aa▾ 드롭다운 — 글꼴(family) + 크기(size) 메뉴."""
+        btn = QToolButton(self)
+        btn.setObjectName("fmtBtn")
+        btn.setText("Aa")
+        btn.setToolTip("글꼴 / 크기")
+        btn.setFixedSize(32, 24)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._font_menu = self._build_font_menu()
+        btn.setMenu(self._font_menu)
+        self.layout().addWidget(btn)
+        return btn
+
+    _FONT_COMBO_STYLE = (
+        # 콤보 박스 자체: 어두운 메뉴 배경에 어울리는 톤
+        "QComboBox { color: #cdd6f4; background: #45475a;"
+        " border: 1px solid #585b70; border-radius: 3px;"
+        " padding: 2px 6px; font-size: 8pt; }"
+        "QComboBox::drop-down { border: none; width: 16px; }"
+        # 드롭다운(목록)은 라이트 — 글꼴 이름이 또렷이 보이게
+        "QComboBox QAbstractItemView { color: #1e1e2e;"
+        " background: #ffffff; outline: 0;"
+        " selection-background-color: #cdd6f4; selection-color: #1e1e2e; }"
+        "QComboBox QAbstractItemView QScrollBar:vertical {"
+        " background: #f0f0f0; width: 12px; margin: 0; }"
+        "QComboBox QAbstractItemView QScrollBar::handle:vertical {"
+        " background: #888888; border-radius: 4px; min-height: 20px; }"
+        "QComboBox QAbstractItemView QScrollBar::add-line:vertical,"
+        " QComboBox QAbstractItemView QScrollBar::sub-line:vertical { height: 0; }"
+    )
+
+    def _build_font_menu(self) -> QMenu:
+        menu = QMenu(self)
+        widget = QWidget()
+        form = QFormLayout(widget)
+        form.setContentsMargins(8, 8, 8, 8)
+        form.setVerticalSpacing(6)
+
+        # 라벨 색: 어두운 QMenu 배경 위 라이트 톤
+        label_style = "color: #cdd6f4; font-size: 9pt;"
+        family_lbl = QLabel("글꼴:")
+        family_lbl.setStyleSheet(label_style)
+        size_lbl = QLabel("크기:")
+        size_lbl.setStyleSheet(label_style)
+
+        self._font_family_combo = QComboBox()
+        self._font_family_combo.setEditable(False)
+        self._font_family_combo.setMaxVisibleItems(15)
+        self._font_family_combo.setFixedWidth(150)
+        self._font_family_combo.setStyleSheet(self._FONT_COMBO_STYLE)
+        try:
+            families = sorted(set(QFontDatabase.families()))
+        except Exception:
+            families = []
+        self._font_family_combo.addItems(families)
+        self._font_family_combo.currentTextChanged.connect(self._apply_font_family)
+        form.addRow(family_lbl, self._font_family_combo)
+
+        self._font_size_combo = QComboBox()
+        self._font_size_combo.setEditable(True)
+        self._font_size_combo.setFixedWidth(42)
+        self._font_size_combo.setStyleSheet(self._FONT_COMBO_STYLE)
+        for s in (8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 48):
+            self._font_size_combo.addItem(str(s))
+        self._font_size_combo.currentTextChanged.connect(self._apply_font_size)
+        form.addRow(size_lbl, self._font_size_combo)
+
+        # 메뉴가 열릴 때마다 현재 글로벌 폰트로 콤보 동기화
+        menu.aboutToShow.connect(self._sync_font_combos)
+
+        action = QWidgetAction(menu)
+        action.setDefaultWidget(widget)
+        menu.addAction(action)
+        return menu
+
+    def _sync_font_combos(self) -> None:
+        cur = self.editor.font()
+        self._font_family_combo.blockSignals(True)
+        idx = self._font_family_combo.findText(cur.family())
+        if idx >= 0:
+            self._font_family_combo.setCurrentIndex(idx)
+        self._font_family_combo.blockSignals(False)
+        self._font_size_combo.blockSignals(True)
+        self._font_size_combo.setCurrentText(str(int(cur.pointSize() or 11)))
+        self._font_size_combo.blockSignals(False)
+
+    def _apply_font_family(self, family: str) -> None:
+        if not family:
+            return
+        win = self.editor.window()
+        if hasattr(win, "_apply_app_font"):
+            try:
+                size = int(float(self._font_size_combo.currentText()))
+            except ValueError:
+                size = self.editor.font().pointSize() or 11
+            win._apply_app_font(family, size)
+        self.editor.setFocus()
+        self._font_menu.close()
+
+    def _apply_font_size(self, size_str: str) -> None:
+        try:
+            size = int(float(size_str))
+        except ValueError:
+            return
+        if size <= 0:
+            return
+        win = self.editor.window()
+        if hasattr(win, "_apply_app_font"):
+            family = self._font_family_combo.currentText() or self.editor.font().family()
+            win._apply_app_font(family, size)
+        self.editor.setFocus()
+        self._font_menu.close()
 
     def _add_color_menu_btn(self, svg_name: str, tip: str, *, kind: str) -> QToolButton:
         """kind='text' or 'bg'. 클릭 시 8색 그리드 + 사용자 정의 메뉴 팝업."""
@@ -1500,10 +1622,64 @@ class SlideMemoWindow(QWidget):
 
     def _setup_fonts(self) -> None:
         families = set(QFontDatabase.families())
-        if "D2Coding" in families:
-            self.editor_font = QFont("D2Coding", 11)
+        saved_family = self.db.get_setting_str("app_font_family", "")
+        saved_size = self.db.get_setting_int("app_font_size", 11)
+        if saved_family and saved_family in families:
+            self.editor_font = QFont(saved_family, saved_size)
+        elif "D2Coding" in families:
+            self.editor_font = QFont("D2Coding", saved_size)
         else:
-            self.editor_font = QFont("Consolas", 11)
+            self.editor_font = QFont("Consolas", saved_size)
+        # 메모 탭의 회전 텍스트도 같은 family 사용 (크기는 paintEvent에서 작게 고정)
+        MemoTabButton.app_font_family = self.editor_font.family()
+
+    def _apply_app_font(self, family: str, size: int) -> None:
+        """글꼴/크기 메뉴에서 변경 시 **현재 메모만** 적용.
+        본문은 selectAll + mergeCharFormat (HTML inline style로 저장),
+        제목/탭은 위젯 폰트 + DB 컬럼 저장. 다른 메모는 영향 없음.
+        앱 기본값(새 메모)은 app_font_family/size 설정 키 갱신."""
+        if not family or size <= 0:
+            return
+        if self.current_memo is None:
+            return
+        # 앱 default 갱신 (새 메모 만들 때 사용)
+        self.db.set_setting_str("app_font_family", family)
+        self.db.set_setting_int("app_font_size", size)
+        # 본문: 모든 문자에 char format 적용 (커서 위치 보존)
+        cursor = self.editor.textCursor()
+        anchor = cursor.anchor()
+        position = cursor.position()
+        self.editor.blockSignals(True)
+        sel = QTextCursor(self.editor.document())
+        sel.select(QTextCursor.SelectionType.Document)
+        fmt = QTextCharFormat()
+        fmt.setFontFamily(family)
+        fmt.setFontPointSize(size)
+        sel.mergeCharFormat(fmt)
+        # 커서 복원
+        restored = QTextCursor(self.editor.document())
+        restored.setPosition(anchor)
+        restored.setPosition(position, QTextCursor.MoveMode.KeepAnchor)
+        self.editor.setTextCursor(restored)
+        self.editor.blockSignals(False)
+        # 위젯 기본 폰트 (새 입력에도 적용)
+        memo_font = QFont(family, size)
+        self.editor.setFont(memo_font)
+        # 제목 — bold 유지하며 적용
+        title_font = QFont(family, size)
+        title_font.setBold(True)
+        self.title_input.setFont(title_font)
+        # 메모 객체 + DB 저장 + 탭 갱신
+        self.current_memo.font_family = family
+        self.current_memo.font_size = size
+        self.current_memo = self.db.update(
+            self.current_memo.id,
+            content=self.editor.toHtml(),
+            font_family=family,
+            font_size=size,
+        )
+        self._refresh_memo_tabs()
+        self._update_tabs_selected()
 
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
@@ -1628,6 +1804,10 @@ class SlideMemoWindow(QWidget):
         self.title_input.setObjectName("titleInput")
         self.title_input.setPlaceholderText("제목")
         self.title_input.textChanged.connect(self._on_text_changed)
+        # 제목 폰트: 글로벌 family + bold
+        title_font = QFont(self.editor_font.family(), self.editor_font.pointSize())
+        title_font.setBold(True)
+        self.title_input.setFont(title_font)
 
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
@@ -2740,6 +2920,14 @@ class SlideMemoWindow(QWidget):
         self.title_input.blockSignals(True)
         self.editor.blockSignals(True)
         self.title_input.setText(memo.title)
+        # 메모별 폰트 적용 (없으면 글로벌 default)
+        family = memo.font_family or self.editor_font.family()
+        size = memo.font_size or self.editor_font.pointSize() or 11
+        editor_font = QFont(family, size)
+        self.editor.setFont(editor_font)
+        title_font = QFont(family, size)
+        title_font.setBold(True)
+        self.title_input.setFont(title_font)
         # content가 HTML이면 setHtml, 옛 plain text 메모면 setPlainText
         if memo.content and Qt.mightBeRichText(memo.content):
             self.editor.setHtml(memo.content)
@@ -2751,6 +2939,8 @@ class SlideMemoWindow(QWidget):
         self.current_memo.content = self.editor.toHtml()
         self._update_color_buttons(memo.color)
         self._apply_memo_theme(memo.color)
+        # 메모 탭의 회전 텍스트도 그 메모의 family를 따라가도록 클래스 변수 갱신
+        MemoTabButton.app_font_family = family
 
     def _clear_editor(self) -> None:
         self.current_memo = None
