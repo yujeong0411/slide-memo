@@ -385,8 +385,8 @@ class SettingsDialog(QDialog):
         layout.addWidget(QLabel("PyQt6 기반 Windows 슬라이드 메모장"))
         layout.addSpacing(8)
         copyright_lbl = QLabel(
-            "© 2026 최유정. All Rights Reserved.<br>"
-            "무단 복제·배포·수정을 금합니다."
+            "© 2026 최유정 (Choi Yujeong)<br>"
+            "MIT License"
         )
         copyright_lbl.setStyleSheet("font-size: 9pt; color: #555;")
         copyright_lbl.setWordWrap(True)

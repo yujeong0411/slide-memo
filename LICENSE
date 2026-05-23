@@ -1,35 +1,21 @@
-Copyright (c) 2026 최유정 (yujeong0411). All Rights Reserved.
+MIT License
 
-본 소프트웨어("Slide Memo")와 관련된 모든 파일은 저작권자의 독점적 자산입니다.
+Copyright (c) 2026 최유정 (Choi Yujeong)
 
-저작권자의 사전 서면 동의 없이 본 소프트웨어의 어떤 부분도 다음 행위의
-대상이 될 수 없습니다:
-  - 복제 (Reproduction)
-  - 배포 (Distribution)
-  - 수정 (Modification)
-  - 역공학 (Reverse Engineering)
-  - 상업적 사용 (Commercial Use)
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-본 소프트웨어는 "있는 그대로(AS IS)" 제공되며, 명시적이든 묵시적이든
-어떠한 보증도 제공되지 않습니다. 저작권자는 본 소프트웨어의 사용으로
-인한 어떠한 손해에 대해서도 책임을 지지 않습니다.
-
-문의: choiyujeong0411@gmail.com
-
----
-
-Copyright (c) 2026 Choi Yujeong (yujeong0411). All Rights Reserved.
-
-This software ("Slide Memo") and all associated files are the proprietary
-property of the copyright holder.
-
-No part of this software may be reproduced, distributed, modified, reverse
-engineered, or used for commercial purposes without prior written permission
-of the copyright holder.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. THE COPYRIGHT HOLDER
-SHALL NOT BE LIABLE FOR ANY DAMAGES ARISING FROM THE USE OF THIS SOFTWARE.
-
-Contact: choiyujeong0411@gmail.com
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
