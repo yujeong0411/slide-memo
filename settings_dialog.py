@@ -133,6 +133,10 @@ class SettingsDialog(QDialog):
             unsupported_note.setStyleSheet("color: gray; font-size: 9pt;")
             outer.addWidget(unsupported_note)
 
+        # 클립보드 자동 캡쳐
+        self._clipboard_capture_chk = QCheckBox("메모 앱 펼칠 때 클립보드 자동 감지")
+        outer.addWidget(self._clipboard_capture_chk)
+
         outer.addStretch(1)
         return w
 
@@ -324,6 +328,11 @@ class SettingsDialog(QDialog):
         if autostart.is_supported():
             self._autostart_chk.setChecked(autostart.is_enabled())
 
+        # 클립보드 자동 캡쳐 (기본 켜짐)
+        self._clipboard_capture_chk.setChecked(
+            self.db.get_setting_int("clipboard_capture_enabled", 1) == 1
+        )
+
         # AI
         enabled = self.db.get_setting_str(AI_KEY_ENABLED, "0") == "1"
         provider = self.db.get_setting_str(AI_KEY_PROVIDER, "anthropic")
@@ -466,5 +475,11 @@ class SettingsDialog(QDialog):
                 ok, msg = autostart.set_enabled(want)
                 if not ok:
                     QMessageBox.warning(self, "자동 실행", msg)
+
+        # 클립보드 자동 캡쳐
+        self.db.set_setting_int(
+            "clipboard_capture_enabled",
+            1 if self._clipboard_capture_chk.isChecked() else 0,
+        )
 
         self.accept()

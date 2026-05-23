@@ -1509,6 +1509,58 @@ class SlideMemoWindow(QWidget):
         body_layout.setSpacing(6)
         root.addWidget(self.body, stretch=1)
 
+        # 클립보드 자동 캡쳐 알림 배너 (검색창 위, 평소엔 숨김)
+        self._clipboard_banner = QWidget()
+        self._clipboard_banner.setObjectName("clipboardBanner")
+        self._clipboard_banner.setStyleSheet(
+            "#clipboardBanner {"
+            "  background: rgba(30, 30, 46, 0.85);"
+            "  border-radius: 4px;"
+            "}"
+            "#clipboardBanner QLabel {"
+            "  color: #ffffff; font-size: 9pt; padding: 0 6px;"
+            "}"
+            "#clipboardBanner QPushButton#clipboardAddBtn {"
+            "  background: #a6e3a1; color: #1e1e2e;"
+            "  border: none; border-radius: 3px; padding: 3px 10px;"
+            "  font-size: 9pt; font-weight: bold;"
+            "}"
+            "#clipboardBanner QPushButton#clipboardAddBtn:hover {"
+            "  background: #94e2d5;"
+            "}"
+            "#clipboardBanner QPushButton#clipboardCloseBtn {"
+            "  background: transparent; color: #cdd6f4;"
+            "  border: none; font-size: 11pt;"
+            "}"
+            "#clipboardBanner QPushButton#clipboardCloseBtn:hover {"
+            "  color: #f38ba8;"
+            "}"
+        )
+        banner_layout = QHBoxLayout(self._clipboard_banner)
+        banner_layout.setContentsMargins(6, 4, 6, 4)
+        banner_layout.setSpacing(4)
+        self._clipboard_banner_label = QLabel()
+        banner_layout.addWidget(self._clipboard_banner_label, stretch=1)
+        self._clipboard_add_btn = QPushButton("새 메모로")
+        self._clipboard_add_btn.setObjectName("clipboardAddBtn")
+        self._clipboard_add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._clipboard_add_btn.clicked.connect(self._on_clipboard_new_memo)
+        banner_layout.addWidget(self._clipboard_add_btn)
+        self._clipboard_close_btn = QPushButton("✕")
+        self._clipboard_close_btn.setObjectName("clipboardCloseBtn")
+        self._clipboard_close_btn.setFixedSize(22, 22)
+        self._clipboard_close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._clipboard_close_btn.clicked.connect(self._on_clipboard_ignore)
+        banner_layout.addWidget(self._clipboard_close_btn)
+        self._clipboard_banner.hide()
+        body_layout.addWidget(self._clipboard_banner)
+        # 캡쳐 상태 (메모리만, 세션 한정)
+        self._clipboard_capture_kind: str | None = None
+        self._clipboard_capture_text: str | None = None
+        self._clipboard_capture_image: QImage | None = None
+        self._last_self_copy: str | None = None
+        self._last_ignored_clipboard: str | None = None
+
         # 상단: 검색바 (일반 모드) / 돌아가기 버튼 (휴지통 모드)
         top = QHBoxLayout()
         top.setSpacing(4)
@@ -2178,6 +2230,7 @@ class SlideMemoWindow(QWidget):
         if self.is_expanded:
             self.raise_()
             self.activateWindow()
+            self._check_clipboard()
             return
         self.is_expanded = True
         # 윈도우 폭/위치는 즉시 펼침 사이즈로 (tab_column 위치는 변함 없음)
@@ -2193,6 +2246,8 @@ class SlideMemoWindow(QWidget):
         self.fade_anim.setStartValue(self.body_opacity.opacity())
         self.fade_anim.setEndValue(1.0)
         self.fade_anim.start()
+        # 클립보드 자동 캡쳐 알림
+        self._check_clipboard()
         self.raise_()
         self.activateWindow()
 
@@ -2613,9 +2668,93 @@ class SlideMemoWindow(QWidget):
         # 현재 메모 본문 전체를 plain text로 클립보드에 복사 (빈 메모도 안전)
         text = self.editor.toPlainText()
         QApplication.clipboard().setText(text)
+        # 자기 자신이 복사한 내용은 클립보드 캡쳐 알림으로 다시 띄우지 않게 기록
+        self._last_self_copy = text
         # 1초간 체크 아이콘 피드백
         self.copy_btn.setIcon(self._check_icon)
         QTimer.singleShot(1000, lambda: self.copy_btn.setIcon(self._copy_icon))
+
+    # ----- 클립보드 자동 캡쳐 -----
+    def _check_clipboard(self) -> None:
+        """expand() 시점에 호출. 조건 만족하면 배너 표시, 아니면 숨김."""
+        if self.db.get_setting_int("clipboard_capture_enabled", 1) != 1:
+            self._clipboard_banner.hide()
+            return
+        if self.trash_mode:
+            self._clipboard_banner.hide()
+            return
+        try:
+            mime = QApplication.clipboard().mimeData()
+        except Exception:
+            self._clipboard_banner.hide()
+            return
+        if mime is None:
+            self._clipboard_banner.hide()
+            return
+
+        # 텍스트 우선
+        if mime.hasText():
+            text = mime.text()
+            if (
+                len(text) >= 5
+                and text != self._last_self_copy
+                and text != self._last_ignored_clipboard
+            ):
+                self._clipboard_capture_kind = "text"
+                self._clipboard_capture_text = text
+                self._clipboard_capture_image = None
+                self._clipboard_banner_label.setText(
+                    f"📋 복사한 내용으로 새 메모 만들기  ({len(text):,}자)"
+                )
+                self._clipboard_banner.show()
+                return
+
+        # 이미지
+        if mime.hasImage():
+            image = mime.imageData()
+            if isinstance(image, QImage) and not image.isNull():
+                self._clipboard_capture_kind = "image"
+                self._clipboard_capture_image = QImage(image)  # 안전한 복사
+                self._clipboard_capture_text = None
+                self._clipboard_banner_label.setText(
+                    f"📸 클립보드 이미지로 새 메모 만들기  ({image.width()}×{image.height()})"
+                )
+                self._clipboard_banner.show()
+                return
+
+        self._clipboard_banner.hide()
+
+    def _on_clipboard_new_memo(self) -> None:
+        kind = self._clipboard_capture_kind
+        text = self._clipboard_capture_text
+        image = self._clipboard_capture_image
+        self._clipboard_banner.hide()
+        # 클립보드 내용을 메모로 흡수했으니 다음 expand에서 같은 내용은 안 띄움
+        if kind == "text" and text:
+            self._last_self_copy = text
+
+        if self.trash_mode:
+            self._exit_trash_mode()
+        self.save_now()
+        memo = self.db.create()
+        self._load_memo(memo)
+        self._refresh_memo_tabs()
+        self._update_tabs_selected()
+        self.expand()
+
+        if kind == "text" and text:
+            self.editor.setPlainText(text)
+        elif kind == "image" and image is not None:
+            # RichPasteTextEdit의 이미지 삽입 로직 재사용
+            self.editor._insert_image(image)
+
+        self.title_input.setFocus()
+
+    def _on_clipboard_ignore(self) -> None:
+        if self._clipboard_capture_kind == "text":
+            self._last_ignored_clipboard = self._clipboard_capture_text
+        # 이미지는 식별 키가 마땅치 않아 무시 기억은 텍스트만 (이미지는 매번 알림)
+        self._clipboard_banner.hide()
 
     # ----- search -----
     def _on_search_changed(self, _text: str) -> None:
