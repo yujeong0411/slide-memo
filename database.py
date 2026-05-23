@@ -12,9 +12,12 @@ APP_DIR = Path.home() / ".memo_slide"
 DB_PATH = APP_DIR / "memos.db"
 IMAGES_DIR = APP_DIR / "images"
 
-COLOR_SEQUENCE = ["ivory", "blush", "peach", "cream", "olive", "lavender", "mint"]
+COLOR_SEQUENCE = [
+    "sunrise", "blossom",
+    "ivory", "blush", "peach", "cream", "olive", "lavender", "mint",
+]
 VALID_COLORS = set(COLOR_SEQUENCE)
-DEFAULT_COLOR = "ivory"
+DEFAULT_COLOR = "sunrise"
 
 # 사용자 지정 색상: #RGB 또는 #RRGGBB hex 코드
 _HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")

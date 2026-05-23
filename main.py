@@ -90,7 +90,43 @@ COLORS = {
     "lavender": "#F4EEFF",
     "mint":     "#BADFDB",
 }
-COLOR_ORDER = ["ivory", "blush", "mint"]
+
+# 그라데이션 프리셋: (x1,y1,x2,y2) + [(stop, hex), ...]
+# - sunrise: 로고와 매칭되는 135도 대각선 4색
+# - blossom: 180도 위→아래 핑크→크림 2색
+GRADIENTS = {
+    "sunrise": {
+        "coords": (0, 0, 1, 1),
+        "stops": [
+            (0.0,  "#C6EBD0"),
+            (0.35, "#B3D6FB"),
+            (0.65, "#DDE4F7"),
+            (1.0,  "#FEDB9E"),
+        ],
+        "representative": "#B3D6FB",  # 탭 색 매핑용 대표색
+    },
+    "blossom": {
+        "coords": (0, 0, 0, 1),
+        "stops": [
+            (0.0, "#F8C7D9"),
+            (1.0, "#FFE3B3"),
+        ],
+        "representative": "#F8C7D9",
+    },
+}
+COLOR_ORDER = ["sunrise", "blossom", "ivory", "blush", "mint"]
+
+
+def is_gradient(name: str | None) -> bool:
+    return isinstance(name, str) and name in GRADIENTS
+
+
+def gradient_qss(name: str, *, coords: tuple[float, float, float, float] | None = None) -> str:
+    """qlineargradient(...) QSS 문자열. coords로 좌표 오버라이드 가능 (탭 등 짧은 영역)."""
+    g = GRADIENTS[name]
+    x1, y1, x2, y2 = coords if coords is not None else g["coords"]
+    stops = ", ".join(f"stop:{s} {c}" for s, c in g["stops"])
+    return f"qlineargradient(x1:{x1}, y1:{y1}, x2:{x2}, y2:{y2}, {stops})"
 
 # 정렬 옵션: (db sort 키, 드롭다운 표시 라벨)
 SORT_OPTIONS = [
@@ -184,12 +220,17 @@ _HEX_COLOR_RE = re.compile(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})")
 
 
 def resolve_color(value: str | None) -> str:
-    """색 이름(프리셋) 또는 hex 코드를 실제 hex 문자열로 변환."""
+    """색 이름(프리셋) 또는 hex 코드를 실제 hex 문자열로 변환.
+    그라데이션 키면 그 그라데이션의 대표색을 반환 (탭 등 hex가 필요한 곳용)."""
     if value in COLORS:
         return COLORS[value]
+    if is_gradient(value):
+        return GRADIENTS[value]["representative"]
     if isinstance(value, str) and _HEX_COLOR_RE.fullmatch(value.strip()):
         return value.strip()
-    return COLORS[DEFAULT_COLOR]
+    if DEFAULT_COLOR in COLORS:
+        return COLORS[DEFAULT_COLOR]
+    return GRADIENTS[DEFAULT_COLOR]["representative"]
 
 
 def _text_color_for(hex_color: str) -> str:
@@ -206,7 +247,18 @@ def _text_color_for(hex_color: str) -> str:
 
 
 # 프리셋은 라이트 톤이라 어두운 글자, 커스텀 다크 색이면 밝은 글자로 전환.
+# 그라데이션은 라이트 톤 가정 → 어두운 글자 + 에디터 투명 처리(bodyPanel 한 장에 그라데이션이 비쳐 보이게).
 def theme_for(color: str | None) -> dict[str, str]:
+    if is_gradient(color):
+        return {
+            "bg": gradient_qss(color),
+            "editor_bg": "transparent",
+            "text": "#1e1e2e",
+            "text_sub": "rgba(30, 30, 46, 0.55)",
+            "border": "rgba(0, 0, 0, 0.15)",
+            "focus": "#1e1e2e",
+            "input_bg": "rgba(255, 255, 255, 0.35)",
+        }
     base = resolve_color(color)
     if _text_color_for(base) == "#1e1e2e":
         return {
@@ -232,7 +284,7 @@ def theme_for(color: str | None) -> dict[str, str]:
 def body_stylesheet(t: dict[str, str]) -> str:
     return f"""
     #bodyPanel {{
-        background-color: {t["bg"]};
+        background: {t["bg"]};
         border: 1px solid {t["border"]};
         border-radius: 8px;
     }}
@@ -266,6 +318,9 @@ def body_stylesheet(t: dict[str, str]) -> str:
         border-radius: 4px;
         padding: 6px;
         selection-background-color: {t["focus"]};
+    }}
+    QTextEdit#editor QWidget {{
+        background-color: {t["editor_bg"]};
     }}
     QTextEdit#editor:focus {{
         border: 1px solid {t["focus"]};
@@ -360,8 +415,13 @@ class MemoTabButton(QPushButton):
         super().__init__(parent)
         self.memo_id = memo.id
         self.color_name = memo.color
-        self._bg = resolve_color(memo.color)
-        self._fg = _text_color_for(self._bg)
+        if is_gradient(memo.color):
+            # 탭은 세로로 길쭉 → 위→아래 짧은 그라데이션으로 표현
+            self._bg = gradient_qss(memo.color, coords=(0, 0, 0, 1))
+            self._fg = "#1e1e2e"
+        else:
+            self._bg = resolve_color(memo.color)
+            self._fg = _text_color_for(self._bg)
         self.memo_title = memo.title.strip() or "(제목 없음)"
         self.is_pinned = memo.is_pinned
         self.setFixedHeight(MEMO_TAB_HEIGHT)
@@ -432,7 +492,7 @@ class MemoTabButton(QPushButton):
                 )
             self.setStyleSheet(
                 f"QPushButton {{"
-                f"  background-color: {bg};"
+                f"  background: {bg};"
                 f"  border: none;"
                 f"  border-{accent}: 3px solid {fg};"
                 f"  {radius}"
@@ -441,7 +501,7 @@ class MemoTabButton(QPushButton):
         else:
             self.setStyleSheet(
                 f"QPushButton {{"
-                f"  background-color: {bg};"
+                f"  background: {bg};"
                 f"  border: none;"
                 f"  border-{accent}: 3px solid transparent;"
                 f"  border-radius: 5px;"
@@ -466,9 +526,12 @@ class ColorDot(QPushButton):
     def set_selected(self, selected: bool) -> None:
         border_color = "#1e1e2e" if selected else "rgba(0,0,0,0.25)"
         border_w = 2 if selected else 1
-        bg = COLORS[self.color_name]
+        if is_gradient(self.color_name):
+            bg = gradient_qss(self.color_name)
+        else:
+            bg = COLORS[self.color_name]
         self.setStyleSheet(
-            f"background-color: {bg};"
+            f"background: {bg};"
             f" border: {border_w}px solid {border_color};"
             f" border-radius: 8px;"
         )
@@ -1863,7 +1926,7 @@ class SlideMemoWindow(QWidget):
         # 색상 점 버튼은 항상 자기 색깔 유지하므로 별도 처리 없음.
 
     def _update_color_buttons(self, current_color: str) -> None:
-        is_preset = current_color in COLORS
+        is_preset = current_color in COLORS or is_gradient(current_color)
         for name, btn in self.color_buttons.items():
             btn.set_selected(name == current_color)
         # 커스텀(+) 버튼: 프리셋이 아니면 그 색을 칠하고 선택 강조
