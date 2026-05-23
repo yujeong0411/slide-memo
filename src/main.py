@@ -29,6 +29,7 @@ from PyQt6.QtGui import (
     QKeySequence,
     QPainter,
     QPixmap,
+    QRegion,
     QShortcut,
     QTextBlockFormat,
     QTextCharFormat,
@@ -1577,7 +1578,9 @@ class SlideMemoWindow(QWidget):
         self._setup_autosave()
         self._apply_memo_theme(DEFAULT_COLOR)  # 초기 테마
         self._load_user_size()  # DB에서 사용자 사이즈 로드 (없으면 기본값)
-        self.body.hide()  # 시작은 접힘 상태 → body는 숨김
+        # body는 항상 visible 유지 — layout 자리 차지하게 두고 opacity(0)로만
+        # 가리고, 시각/클릭 차단은 setMask로 처리. hide()는 layout 자리를 줄여
+        # tab_column 위치가 변동되니 쓰지 않는다.
         self.handle_left.hide()
         self.handle_right.hide()
         self.handle_top.hide()
@@ -2092,10 +2095,10 @@ class SlideMemoWindow(QWidget):
         self.fade_anim.finished.connect(self._on_fade_done)
 
     def _on_fade_done(self) -> None:
-        # 접힘 fade-out 종료 → body hide + 윈도우 즉시 축소 + 핸들 갱신
+        # 접힘 fade-out 종료 → setMask로 tab_column만 노출. 윈도우 폭은 그대로
+        # (펼친 폭). setGeometry 호출 없음 → layered window 깜빡임 없음.
         if not self.is_expanded:
-            self.body.hide()
-            self.setGeometry(self._collapsed_geometry())
+            self.setMask(self._collapsed_mask_region())
             self._update_handles()
 
     def _open_settings(self) -> None:
@@ -2524,10 +2527,12 @@ class SlideMemoWindow(QWidget):
             return
         self.side = new_side
         self._apply_side_layout()
-        self.setGeometry(
-            self._expanded_geometry() if self.is_expanded
-            else self._collapsed_geometry()
-        )
+        self.setGeometry(self._expanded_geometry())
+        if not self.is_expanded:
+            # 좌/우 side 따라 mask 위치 다름 → 다시 적용
+            self.setMask(self._collapsed_mask_region())
+        else:
+            self.clearMask()
         self._update_handles()
         self._refresh_memo_tabs()
         self._update_tabs_selected()
@@ -2552,10 +2557,11 @@ class SlideMemoWindow(QWidget):
                 tray.show()
         # setWindowFlags 호출 후엔 윈도우가 hide되므로 show 재호출 + geometry 복구
         if was_visible:
-            if self.is_expanded:
-                self.setGeometry(self._expanded_geometry())
+            self.setGeometry(self._expanded_geometry())
+            if not self.is_expanded:
+                self.setMask(self._collapsed_mask_region())
             else:
-                self.setGeometry(self._collapsed_geometry())
+                self.clearMask()
             self.show()
             self._update_handles()
 
@@ -2574,9 +2580,10 @@ class SlideMemoWindow(QWidget):
         MemoTabButton.button_height = self.memo_tab_height
         self._refresh_memo_tabs()
         self._update_tabs_selected()
-        # 접힌 상태만 즉시 반영. 펼친 상태는 _collapsed_geometry가 다음 접기 때 새 값 사용.
+        # 접힌 상태면 mask 영역(tab_width 변경 반영)도 다시 적용
         if not self.is_expanded:
             self.setGeometry(self._collapsed_geometry())
+            self.setMask(self._collapsed_mask_region())
         self._update_handles()
 
     def _expanded_geometry(self) -> QRect:
@@ -2588,16 +2595,22 @@ class SlideMemoWindow(QWidget):
         return QRect(x, self.user_y, self.user_width, self.user_height)
 
     def _collapsed_geometry(self) -> QRect:
-        rect = self._screen_rect()
-        # 폭 자체를 tab_width로 만들어 화면 가장자리에 탭만 노출.
+        # 윈도우 자체 크기는 펼친 폭으로 고정 — 시각적 접힘은 setMask로 처리.
+        # setGeometry로 폭이 갑자기 변할 때 layered window가 깜빡이던 문제를
+        # 방지한다 (mask는 paint를 차단할 뿐 native window resize 안 일으킴).
+        return self._expanded_geometry()
+
+    def _collapsed_mask_region(self) -> QRegion:
+        """접힘 상태에서 보일 영역(tab_column 부분)만 마스크로 노출."""
         if self.side == "right":
-            x = rect.right() - self.tab_width + 1
+            x = self.user_width - self.tab_width
         else:
-            x = rect.x()
-        return QRect(x, self.user_y, self.tab_width, self.user_height)
+            x = 0
+        return QRegion(QRect(x, 0, self.tab_width, self.user_height))
 
     def _position_collapsed(self) -> None:
         self.setGeometry(self._collapsed_geometry())
+        self.setMask(self._collapsed_mask_region())
 
     # ----- expand / collapse -----
     def toggle(self) -> None:
@@ -2611,10 +2624,11 @@ class SlideMemoWindow(QWidget):
         self.side = "left" if self.side == "right" else "right"
         self.db.set_setting_int("side", 1 if self.side == "left" else 0)
         self._apply_side_layout()
-        self.setGeometry(
-            self._expanded_geometry() if self.is_expanded
-            else self._collapsed_geometry()
-        )
+        self.setGeometry(self._expanded_geometry())
+        if not self.is_expanded:
+            self.setMask(self._collapsed_mask_region())
+        else:
+            self.clearMask()
         self._update_handles()
         self._refresh_memo_tabs()
         self._update_tabs_selected()
@@ -2632,16 +2646,10 @@ class SlideMemoWindow(QWidget):
         self.is_expanded = True
         # 펼침 — 현재 메모의 인디케이터 다시 표시
         self._update_tabs_selected()
-        # body를 먼저 show + layout activate해 자식 위젯 위치를 확정한 다음
-        # 윈도우 폭을 확장. 순서가 반대면 native window가 새 폭으로 paint될 때
-        # tab_column이 아직 옛 위치라 "공중부양"으로 보인다.
-        self.body.layout().activate()
-        self.body.show()
-        self.setGeometry(self._expanded_geometry())
+        # setMask 해제 → body 영역도 보이게 됨. 윈도우 폭은 이미 펼친 폭이라
+        # setGeometry 호출 불필요 (mask만으로 시각적 펼침).
+        self.clearMask()
         self._update_handles()
-        # 명시적으로 tab_column을 최상위로 + 즉시 repaint
-        self.tab_column.raise_()
-        self.container.repaint()
         # body opacity 0 → 1 페이드 인
         self.fade_anim.stop()
         self.fade_anim.setStartValue(self.body_opacity.opacity())
