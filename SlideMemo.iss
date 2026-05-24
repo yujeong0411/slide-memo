@@ -4,7 +4,7 @@
 
 #define MyAppName "Slide Memo"
 #define MyAppVersion "0.2.0"
-#define MyAppPublisher "Choi Yujeong"
+#define MyAppPublisher "nursecoder"
 #define MyAppExeName "SlideMemo.exe"
 
 [Setup]
