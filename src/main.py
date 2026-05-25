@@ -56,11 +56,13 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMenu,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QSpacerItem,
     QSpinBox,
+    QSplashScreen,
     QStyle,
     QSystemTrayIcon,
     QTextBrowser,
@@ -3467,6 +3469,32 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("Slide Memo")
+
+    # 로딩 splash — 마퀴 progress bar로 'import + 초기화 진행 중' 신호.
+    # QApplication 이후에야 뜨므로 그 이전 부트로더/import 구간은 가리지 못함.
+    splash_pix = QPixmap(str(_resource_path("assets/splash.png")))
+    splash = QSplashScreen(
+        splash_pix,
+        Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.FramelessWindowHint,
+    )
+    splash.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    _bar_margin = 24
+    _bar_h = 6
+    _bar = QProgressBar(splash)
+    _bar.setGeometry(
+        _bar_margin,
+        splash_pix.height() - _bar_margin - _bar_h,
+        splash_pix.width() - 2 * _bar_margin,
+        _bar_h,
+    )
+    _bar.setRange(0, 0)  # indeterminate / 마퀴 모드
+    _bar.setTextVisible(False)
+    _bar.setStyleSheet(
+        "QProgressBar { background: rgba(0,0,0,0.06); border: none; border-radius: 3px; }"
+        " QProgressBar::chunk { background: #7AD0C2; border-radius: 3px; }"
+    )
+    splash.show()
+    app.processEvents()
     # 앱 전역 UI 폰트 — assets/fonts/의 번들 Pretendard를 우선 등록.
     # 시스템에도 없고 번들도 못 찾으면 Qt가 OS 기본으로 fallback.
     _fonts_dir = _resource_path("assets/fonts")
@@ -3503,13 +3531,7 @@ def main() -> int:
     tray.show()
     window._tray = tray  # 참조 유지
 
-    # PyInstaller 부트로더 splash 닫기 (exe 빌드일 때만 존재)
-    try:
-        import pyi_splash  # type: ignore[import-not-found]
-        pyi_splash.close()
-    except (ImportError, RuntimeError):
-        pass
-
+    splash.finish(window)
     return app.exec()
 
 
