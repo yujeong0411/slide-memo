@@ -3461,6 +3461,12 @@ def _set_windows_app_user_model_id() -> None:
 
 
 def main() -> int:
+    try:
+        import pyi_splash  # type: ignore[import]
+        pyi_splash.close()
+    except ImportError:
+        pass
+
     # HiDPI 환경에서 좌표/스케일 어긋남 방지 (QApplication 생성 전에 호출)
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
