@@ -1,9 +1,9 @@
-; Slide Memo 인스톨러 스크립트 (Inno Setup)
+﻿; Slide Memo 인스톨러 스크립트 (Inno Setup)
 ; 빌드:  "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" SlideMemo.iss
 ; 결과:  installer\SlideMemo-Setup.exe
 
 #define MyAppName "Slide Memo"
-#define MyAppVersion "1.0.2"
+#define MyAppVersion "1.0.3"
 #define MyAppPublisher "nursecoder"
 #define MyAppExeName "SlideMemo.exe"
 
