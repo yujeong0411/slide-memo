@@ -658,7 +658,7 @@ class RichPasteTextEdit(QTextEdit):
                 self._insert_image(image)
                 return
         if source is not None and source.hasText():
-            self.textCursor().insertText(source.text())
+            self.textCursor().insertText(source.text(), QTextCharFormat())
             return
         super().insertFromMimeData(source)
 
