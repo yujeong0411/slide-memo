@@ -75,7 +75,6 @@ from PyQt6.QtWidgets import (
     QToolButton,
     QVBoxLayout,
     QWidget,
-    QWidgetAction,
 )
 
 from database import DEFAULT_COLOR, IMAGES_DIR, Memo, MemoDatabase
@@ -1080,7 +1079,7 @@ class FormatToolbar(QWidget):
             self.apply_bg_color(chosen.name())
 
     def _add_font_btn(self) -> QToolButton:
-        """Aa▾ 드롭다운 — 글꼴(family) + 크기(size) 메뉴."""
+        """Aa▾ 드롭다운 — 글꼴(family) + 크기(size) 팝업."""
         btn = QToolButton(self)
         btn.setObjectName("fmtBtn")
         btn.setText("Aa")
@@ -1088,9 +1087,8 @@ class FormatToolbar(QWidget):
         btn.setFixedSize(32, 24)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self._font_menu = self._build_font_menu()
-        btn.setMenu(self._font_menu)
+        self._font_popup = self._build_font_popup()
+        btn.clicked.connect(lambda: self._toggle_popup(btn, self._font_popup))
         self.layout().addWidget(btn)
         return btn
 
@@ -1116,52 +1114,40 @@ class FormatToolbar(QWidget):
         " QComboBox QAbstractItemView QScrollBar::sub-line:vertical { height: 0; }"
     )
 
-    def _build_font_menu(self) -> QMenu:
-        menu = QMenu(self)
-        widget = QWidget()
-        form = QFormLayout(widget)
+    def _build_font_popup(self) -> QFrame:
+        popup = QFrame(None, Qt.WindowType.Popup)
+        popup.setObjectName("fontPopup")
+        popup.setStyleSheet(
+            "QFrame#fontPopup { background: #313244; border: 1px solid #45475a;"
+            " border-radius: 6px; padding: 2px; }"
+            "QLabel { color: #cdd6f4; font-size: 9pt; background: transparent; border: none; }"
+            + self._FONT_COMBO_STYLE
+        )
+        form = QFormLayout(popup)
         form.setContentsMargins(8, 8, 8, 8)
         form.setVerticalSpacing(6)
 
-        # 라벨 색: 어두운 QMenu 배경 위 라이트 톤
-        label_style = "color: #cdd6f4; font-size: 9pt;"
-        family_lbl = QLabel("글꼴:")
-        family_lbl.setStyleSheet(label_style)
-        size_lbl = QLabel("크기:")
-        size_lbl.setStyleSheet(label_style)
-
-        self._font_family_combo = QComboBox()
+        self._font_family_combo = QComboBox(popup)
         self._font_family_combo.setEditable(False)
         self._font_family_combo.setMaxVisibleItems(15)
         self._font_family_combo.setFixedWidth(150)
-        self._font_family_combo.setStyleSheet(self._FONT_COMBO_STYLE)
         try:
             families = sorted(set(QFontDatabase.families()))
         except Exception:
             families = []
         self._font_family_combo.addItems(families)
         self._font_family_combo.currentTextChanged.connect(self._apply_font_family)
-        form.addRow(family_lbl, self._font_family_combo)
+        form.addRow("글꼴:", self._font_family_combo)
 
-        self._font_size_combo = QComboBox()
-        # QMenu 안의 editable 콤보는 키 입력을 메뉴가 가로채 직접 입력 불가
-        # → 비편집 모드 + 사이즈 옵션 촘촘 + 아래 "직접 입력..." 액션으로 보조
+        self._font_size_combo = QComboBox(popup)
         self._font_size_combo.setEditable(False)
         self._font_size_combo.setFixedWidth(48)
-        self._font_size_combo.setStyleSheet(self._FONT_COMBO_STYLE)
         for s in (8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24,
                   26, 28, 32, 36, 40, 48, 56, 64, 72):
             self._font_size_combo.addItem(str(s))
         self._font_size_combo.currentTextChanged.connect(self._apply_font_size)
-        form.addRow(size_lbl, self._font_size_combo)
-
-        # 메뉴가 열릴 때마다 현재 글로벌 폰트로 콤보 동기화
-        menu.aboutToShow.connect(self._sync_font_combos)
-
-        action = QWidgetAction(menu)
-        action.setDefaultWidget(widget)
-        menu.addAction(action)
-        return menu
+        form.addRow("크기:", self._font_size_combo)
+        return popup
 
     def _sync_font_combos(self) -> None:
         cur = self.editor.font()
@@ -1185,7 +1171,7 @@ class FormatToolbar(QWidget):
                 size = self.editor.font().pointSize() or 11
             win._apply_app_font(family, size)
         self.editor.setFocus()
-        self._font_menu.close()
+        self._font_popup.hide()
 
     def _apply_font_size(self, size_str: str) -> None:
         try:
@@ -1199,75 +1185,108 @@ class FormatToolbar(QWidget):
             family = self._font_family_combo.currentText() or self.editor.font().family()
             win._apply_app_font(family, size)
         self.editor.setFocus()
-        self._font_menu.close()
+        self._font_popup.hide()
 
     def _add_color_menu_btn(self, svg_name: str, tip: str, *, kind: str) -> QToolButton:
-        """kind='text' or 'bg'. 클릭 시 8색 그리드 + 사용자 정의 메뉴 팝업."""
+        """kind='text' or 'bg'. 클릭 시 8색 그리드 + 사용자 정의 팝업."""
         btn = QToolButton(self)
         btn.setObjectName("fmtBtn")
         btn.setToolTip(tip)
         btn.setFixedSize(28, 24)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         icon_path = _asset(svg_name)
         if icon_path.exists():
             btn.setIcon(QIcon(str(icon_path)))
             btn.setIconSize(QSize(16, 16))
-        btn.setMenu(self._build_color_menu(btn, kind))
+        popup = self._build_color_popup(kind)
+        btn.clicked.connect(lambda: self._toggle_popup(btn, popup))
         self.layout().addWidget(btn)
         return btn
 
-    def _build_color_menu(self, anchor: QWidget, kind: str) -> QMenu:
+    def _build_color_popup(self, kind: str) -> QFrame:
         palette = TEXT_COLOR_PALETTE if kind == "text" else BG_COLOR_PALETTE
-        menu = QMenu(self)
+        popup = QFrame(None, Qt.WindowType.Popup)
+        popup.setObjectName("colorPopup")
+        popup.setStyleSheet(
+            "QFrame#colorPopup { background: #313244; border: 1px solid #45475a;"
+            " border-radius: 6px; }"
+            "QWidget#swatchGrid { background: transparent; }"
+            "QPushButton#swatch { border: 1px solid rgba(0,0,0,0.2); border-radius: 2px; }"
+            "QPushButton#swatch:hover { border: 2px solid #cdd6f4; }"
+            "QPushButton#customBtn { background: transparent; color: #cdd6f4; font-size: 9pt;"
+            " border: none; border-top: 1px solid #45475a; border-radius: 0;"
+            " padding: 5px 8px; text-align: left; }"
+            "QPushButton#customBtn:hover { background: #45475a; }"
+        )
+        vbox = QVBoxLayout(popup)
+        vbox.setContentsMargins(6, 6, 6, 2)
+        vbox.setSpacing(0)
 
-        # 8 swatches in 4x2 grid
         grid_w = QWidget()
+        grid_w.setObjectName("swatchGrid")
         grid = QGridLayout(grid_w)
-        grid.setContentsMargins(6, 6, 6, 6)
+        grid.setContentsMargins(0, 0, 0, 6)
         grid.setSpacing(4)
         for i, color in enumerate(palette):
             sw = QPushButton()
+            sw.setObjectName("swatch")
             sw.setFixedSize(22, 22)
             sw.setCursor(Qt.CursorShape.PointingHandCursor)
+            sw.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             if color is None:
-                # "기본" / 배경 해제 — 대각선 빗금으로 표시
                 sw.setText("✕")
                 sw.setStyleSheet(
-                    "background: white; color: #888; border: 1px solid rgba(0,0,0,0.2);"
-                    " font-size: 9pt;"
+                    "QPushButton { background: white; color: #888;"
+                    " border: 1px solid rgba(0,0,0,0.2); font-size: 9pt; }"
+                    "QPushButton:hover { border: 2px solid #cdd6f4; }"
                 )
                 sw.setToolTip("배경 해제")
             else:
                 sw.setStyleSheet(
-                    f"background: {color}; border: 1px solid rgba(0,0,0,0.2);"
+                    f"QPushButton {{ background: {color};"
+                    " border: 1px solid rgba(0,0,0,0.2); }"
+                    "QPushButton:hover { border: 2px solid #cdd6f4; }"
                 )
                 sw.setToolTip(color)
             sw.clicked.connect(
-                lambda _c, h=color, k=kind: self._on_swatch_clicked(h, k, menu)
+                lambda _c, h=color, k=kind: self._on_swatch_clicked(h, k, popup)
             )
             grid.addWidget(sw, i // 4, i % 4)
-        wa = QWidgetAction(menu)
-        wa.setDefaultWidget(grid_w)
-        menu.addAction(wa)
+        vbox.addWidget(grid_w)
 
-        menu.addSeparator()
-        custom_act = menu.addAction("사용자 정의...")
+        custom_btn = QPushButton("사용자 정의...")
+        custom_btn.setObjectName("customBtn")
+        custom_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        custom_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         if kind == "text":
-            custom_act.triggered.connect(self.pick_custom_text_color)
+            custom_btn.clicked.connect(
+                lambda: (popup.hide(), self.pick_custom_text_color())
+            )
         else:
-            custom_act.triggered.connect(self.pick_custom_bg_color)
-        return menu
+            custom_btn.clicked.connect(
+                lambda: (popup.hide(), self.pick_custom_bg_color())
+            )
+        vbox.addWidget(custom_btn)
+        return popup
 
-    def _on_swatch_clicked(self, color_hex: str | None, kind: str, menu: QMenu) -> None:
+    def _on_swatch_clicked(self, color_hex: str | None, kind: str, popup: QFrame) -> None:
         if kind == "text":
-            # 글자색은 None 값이 없지만 안전상 체크
             if color_hex is not None:
                 self.apply_text_color(color_hex)
         else:
             self.apply_bg_color(color_hex)
-        menu.close()
+        popup.hide()
+
+    def _toggle_popup(self, btn: QWidget, popup: QFrame) -> None:
+        if popup.isVisible():
+            popup.hide()
+        else:
+            if popup is self._font_popup:
+                self._sync_font_combos()
+            pos = btn.mapToGlobal(QPoint(0, btn.height()))
+            popup.move(pos)
+            popup.show()
 
     # ----- 구분선 / 드롭다운 헬퍼 -----
     def _add_sep(self) -> None:
