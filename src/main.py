@@ -1004,11 +1004,46 @@ class FormatToolbar(QWidget):
         self.editor.setFocus()
 
     def bullet_list(self) -> None:
-        self.editor.textCursor().createList(QTextListFormat.Style.ListDisc)
-        self.editor.setFocus()
+        self._toggle_list(QTextListFormat.Style.ListDisc)
 
     def numbered_list(self) -> None:
-        self.editor.textCursor().createList(QTextListFormat.Style.ListDecimal)
+        self._toggle_list(QTextListFormat.Style.ListDecimal)
+
+    def _toggle_list(self, style: QTextListFormat.Style) -> None:
+        cursor = self.editor.textCursor()
+        doc = self.editor.document()
+
+        # 커서가 커버하는 블록 목록 수집 (선택 없으면 현재 블록 하나)
+        start = cursor.selectionStart()
+        end = cursor.selectionEnd()
+        blocks = []
+        block = doc.findBlock(start)
+        while block.isValid():
+            blocks.append(block)
+            if block.position() + block.length() > end:
+                break
+            block = block.next()
+
+        # 모든 블록이 이미 같은 스타일 목록 안에 있으면 → 해제
+        all_same = all(
+            b.textList() is not None and b.textList().format().style() == style
+            for b in blocks
+        )
+
+        if all_same:
+            cursor.beginEditBlock()
+            for b in blocks:
+                tl = b.textList()
+                if tl:
+                    tl.remove(b)
+                    bc = QTextCursor(b)
+                    fmt = bc.blockFormat()
+                    fmt.setIndent(0)
+                    bc.setBlockFormat(fmt)
+            cursor.endEditBlock()
+        else:
+            cursor.createList(style)
+
         self.editor.setFocus()
 
     # ----- 정렬 (선택영역 또는 현재 줄) -----
