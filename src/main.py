@@ -442,7 +442,7 @@ def body_stylesheet(t: dict[str, str], side: str = "right") -> str:
     QPushButton#backBtn:hover {{
         background-color: rgba(0,0,0,0.12);
     }}
-    QComboBox#sortCombo {{
+    QToolButton#sortCombo {{
         background-color: {t["input_bg"]};
         color: {t["text"]};
         border: 1px solid {t["border"]};
@@ -450,19 +450,11 @@ def body_stylesheet(t: dict[str, str], side: str = "right") -> str:
         padding: 3px 6px;
         font-size: 9pt;
     }}
-    QComboBox#sortCombo:hover {{
+    QToolButton#sortCombo:hover {{
         border: 1px solid {t["focus"]};
     }}
-    QComboBox#sortCombo::drop-down {{
-        border: none;
-        width: 16px;
-    }}
-    QComboBox#sortCombo QAbstractItemView {{
-        background-color: #313244;
-        color: #cdd6f4;
-        border: 1px solid #45475a;
-        selection-background-color: #45475a;
-        outline: 0;
+    QToolButton#sortCombo::menu-indicator {{
+        width: 0;
     }}
     QPushButton#fmtBtn, QToolButton#fmtBtn {{
         background-color: transparent;
@@ -1433,6 +1425,74 @@ class FormatToolbar(QWidget):
         self.editor.setFocus()
 
 
+class _SortSelector(QWidget):
+    """QComboBox 대체 위젯. Popup QFrame을 사용해 FramelessWindowHint/Tool 창에서도 동작."""
+
+    currentIndexChanged = pyqtSignal(int)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self._items: list[str] = []
+        self._index: int = 0
+
+        self._btn = QToolButton(self)
+        self._btn.setObjectName("sortCombo")
+        self._btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._btn.clicked.connect(self._toggle_popup)
+        layout.addWidget(self._btn)
+
+        self._popup = QFrame(None, Qt.WindowType.Popup)
+        self._popup.setObjectName("sortPopup")
+        self._popup.setStyleSheet(
+            "QFrame#sortPopup { background: #313244; border: 1px solid #45475a;"
+            " border-radius: 4px; }"
+            "QPushButton { background: transparent; color: #cdd6f4; font-size: 9pt;"
+            " border: none; padding: 5px 14px; text-align: left; }"
+            "QPushButton:hover { background: #45475a; }"
+        )
+        self._popup_vbox = QVBoxLayout(self._popup)
+        self._popup_vbox.setContentsMargins(2, 2, 2, 2)
+        self._popup_vbox.setSpacing(0)
+
+    def addItem(self, text: str) -> None:
+        idx = len(self._items)
+        self._items.append(text)
+        btn = QPushButton(text)
+        btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        btn.clicked.connect(lambda _c, i=idx: self._select(i))
+        self._popup_vbox.addWidget(btn)
+        if idx == 0:
+            self._btn.setText(text + " ▾")
+
+    def currentIndex(self) -> int:
+        return self._index
+
+    def setCurrentIndex(self, index: int) -> None:
+        if 0 <= index < len(self._items):
+            self._index = index
+            self._btn.setText(self._items[index] + " ▾")
+
+    def _select(self, index: int) -> None:
+        old = self._index
+        self.setCurrentIndex(index)
+        self._popup.hide()
+        if old != index:
+            self.currentIndexChanged.emit(index)
+
+    def _toggle_popup(self) -> None:
+        if self._popup.isVisible():
+            self._popup.hide()
+        else:
+            pos = self._btn.mapToGlobal(QPoint(0, self._btn.height()))
+            self._popup.move(pos)
+            self._popup.show()
+
+
 class DragGrip(QWidget):
     """탭 컬럼 상단의 세로 이동 그립 (크기 변경 없이 y 위치만 이동)."""
 
@@ -1852,10 +1912,7 @@ class SlideMemoWindow(QWidget):
         top.addWidget(self.trash_empty_btn)
 
         # 정렬 드롭다운
-        self.sort_combo = QComboBox()
-        self.sort_combo.setObjectName("sortCombo")
-        self.sort_combo.setFixedWidth(92)
-        self.sort_combo.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.sort_combo = _SortSelector()
         for _key, label in SORT_OPTIONS:
             self.sort_combo.addItem(label)
         saved = self.db.get_setting_int("sort_mode", 0)
