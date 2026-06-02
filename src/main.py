@@ -3060,7 +3060,7 @@ class SlideMemoWindow(QWidget):
             memo = self.db.get(memo_id)
         except KeyError:
             return
-        menu = QMenu(self)
+        menu = QMenu()
         restore_act = menu.addAction("복원")
         menu.addSeparator()
         purge_act = menu.addAction("영구 삭제")
@@ -3221,7 +3221,7 @@ class SlideMemoWindow(QWidget):
             memo = self.db.get(memo_id)
         except KeyError:
             return
-        menu = QMenu(self)
+        menu = QMenu()
         pin_act = menu.addAction(
             "📌 고정 해제" if memo.is_pinned else "📌 고정"
         )
