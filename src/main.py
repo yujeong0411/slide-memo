@@ -1069,13 +1069,15 @@ class FormatToolbar(QWidget):
 
         cursor.beginEditBlock()
         for b in blocks:
-            bc = QTextCursor(b)
-            fmt = bc.blockFormat()
-            fmt.setMarker(
-                no_marker if all_have
-                else QTextBlockFormat.MarkerType.Unchecked
-            )
-            bc.setBlockFormat(fmt)
+            cursor.setPosition(b.position())
+            fmt = cursor.blockFormat()
+            if all_have:
+                fmt.setMarker(no_marker)
+                fmt.setLeftMargin(0)
+            else:
+                fmt.setMarker(QTextBlockFormat.MarkerType.Unchecked)
+                fmt.setLeftMargin(20)  # 체크박스가 뷰포트 안에 보이도록 여백 확보
+            cursor.setBlockFormat(fmt)
         cursor.endEditBlock()
 
         self.editor.setFocus()
