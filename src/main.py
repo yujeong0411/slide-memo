@@ -1311,19 +1311,42 @@ class FormatToolbar(QWidget):
         btn.setFixedSize(28, 24)
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         icon_path = _asset("calendar_icon.svg")
         if icon_path.exists():
             btn.setIcon(QIcon(str(icon_path)))
             btn.setIconSize(QSize(16, 16))
-        menu = QMenu(btn)
-        menu.addAction("윈도우 메모장 포맷  (F5)", lambda: self.insert_datetime("notepad"))
-        menu.addAction("날짜만  (Ctrl+;)", lambda: self.insert_datetime("date"))
-        menu.addAction("시간만  (Ctrl+Shift+;)", lambda: self.insert_datetime("time"))
-        menu.addAction("ISO 형식  (Ctrl+Alt+;)", lambda: self.insert_datetime("iso"))
-        menu.addAction("한국식  (Ctrl+Shift+H)", lambda: self.insert_datetime("korean"))
-        btn.setMenu(menu)
+        popup = self._build_datetime_popup()
+        btn.clicked.connect(lambda: self._toggle_popup(btn, popup))
         self.layout().addWidget(btn)
+
+    def _build_datetime_popup(self) -> QFrame:
+        popup = QFrame(None, Qt.WindowType.Popup)
+        popup.setObjectName("datetimePopup")
+        popup.setStyleSheet(
+            "QFrame#datetimePopup { background: #313244; border: 1px solid #45475a;"
+            " border-radius: 6px; }"
+            "QPushButton { background: transparent; color: #cdd6f4; font-size: 9pt;"
+            " border: none; padding: 5px 16px; text-align: left; }"
+            "QPushButton:hover { background: #45475a; }"
+        )
+        vbox = QVBoxLayout(popup)
+        vbox.setContentsMargins(2, 2, 2, 2)
+        vbox.setSpacing(0)
+        options = [
+            ("윈도우 메모장 포맷  (F5)", "notepad"),
+            ("날짜만  (Ctrl+;)", "date"),
+            ("시간만  (Ctrl+Shift+;)", "time"),
+            ("ISO 형식  (Ctrl+Alt+;)", "iso"),
+            ("한국식  (Ctrl+Shift+H)", "korean"),
+        ]
+        for label, fmt_key in options:
+            item_btn = QPushButton(label)
+            item_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            item_btn.clicked.connect(
+                lambda _c, k=fmt_key: (popup.hide(), self.insert_datetime(k))
+            )
+            vbox.addWidget(item_btn)
+        return popup
 
     # ----- 링크 삽입 -----
     def insert_link(self) -> None:
