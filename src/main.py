@@ -920,6 +920,7 @@ class FormatToolbar(QWidget):
         self._add_sep()
         self._add_icon_btn("fmt_bullet.svg", "불릿 목록", self.bullet_list)
         self._add_icon_btn("fmt_numbered.svg", "번호 목록", self.numbered_list)
+        self._add_icon_btn("fmt_todo.svg", "할일 (체크박스)", self.todo_list)
         self._add_icon_btn(
             "fmt_align_left.svg", "왼쪽 정렬", lambda: self.set_alignment("left")
         )
@@ -1043,6 +1044,39 @@ class FormatToolbar(QWidget):
             cursor.endEditBlock()
         else:
             cursor.createList(style)
+
+        self.editor.setFocus()
+
+    def todo_list(self) -> None:
+        self._toggle_checkbox()
+
+    def _toggle_checkbox(self) -> None:
+        cursor = self.editor.textCursor()
+        doc = self.editor.document()
+
+        start = cursor.selectionStart()
+        end = cursor.selectionEnd()
+        blocks = []
+        block = doc.findBlock(start)
+        while block.isValid():
+            blocks.append(block)
+            if block.position() + block.length() > end:
+                break
+            block = block.next()
+
+        no_marker = QTextBlockFormat.MarkerType.NoMarker
+        all_have = all(b.blockFormat().marker() != no_marker for b in blocks)
+
+        cursor.beginEditBlock()
+        for b in blocks:
+            bc = QTextCursor(b)
+            fmt = bc.blockFormat()
+            fmt.setMarker(
+                no_marker if all_have
+                else QTextBlockFormat.MarkerType.Unchecked
+            )
+            bc.setBlockFormat(fmt)
+        cursor.endEditBlock()
 
         self.editor.setFocus()
 
