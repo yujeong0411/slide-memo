@@ -1174,7 +1174,7 @@ class FormatToolbar(QWidget):
             self._font_size_combo.addItem(str(s))
         self._font_size_combo.currentTextChanged.connect(self._apply_font_size)
         form.addRow("크기:", self._font_size_combo)
-        return popup
+        return self._install_popup_filter(popup)
 
     def _sync_font_combos(self) -> None:
         cur = self.editor.font()
@@ -1295,7 +1295,7 @@ class FormatToolbar(QWidget):
                 lambda: (popup.hide(), self.pick_custom_bg_color())
             )
         vbox.addWidget(custom_btn)
-        return popup
+        return self._install_popup_filter(popup)
 
     def _on_swatch_clicked(self, color_hex: str | None, kind: str, popup: QFrame) -> None:
         if kind == "text":
@@ -1314,6 +1314,17 @@ class FormatToolbar(QWidget):
             pos = btn.mapToGlobal(QPoint(0, btn.height()))
             popup.move(pos)
             popup.show()
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
+        if event.type() == QEvent.Type.Hide and isinstance(obj, QFrame):
+            win = self.editor.window()
+            if win is not None:
+                win.raise_()
+        return False
+
+    def _install_popup_filter(self, popup: QFrame) -> QFrame:
+        popup.installEventFilter(self)
+        return popup
 
     # ----- 구분선 / 드롭다운 헬퍼 -----
     def _add_sep(self) -> None:
@@ -1381,7 +1392,7 @@ class FormatToolbar(QWidget):
                 lambda _c, k=fmt_key: (popup.hide(), self.insert_datetime(k))
             )
             vbox.addWidget(item_btn)
-        return popup
+        return self._install_popup_filter(popup)
 
     # ----- 링크 삽입 -----
     def insert_link(self) -> None:
@@ -1516,6 +1527,7 @@ class _SortSelector(QWidget):
         self._popup_vbox = QVBoxLayout(self._popup)
         self._popup_vbox.setContentsMargins(2, 2, 2, 2)
         self._popup_vbox.setSpacing(0)
+        self._popup.installEventFilter(self)
 
     def addItem(self, text: str) -> None:
         idx = len(self._items)
@@ -1549,6 +1561,13 @@ class _SortSelector(QWidget):
             pos = self._btn.mapToGlobal(QPoint(0, self._btn.height()))
             self._popup.move(pos)
             self._popup.show()
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
+        if event.type() == QEvent.Type.Hide and obj is self._popup:
+            win = self.window()
+            if win is not None:
+                win.raise_()
+        return False
 
 
 class DragGrip(QWidget):
@@ -2240,13 +2259,16 @@ class SlideMemoWindow(QWidget):
         self.fade_anim.finished.connect(self._on_fade_done)
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
-        if event.type() == QEvent.Type.Enter:
+        t = event.type()
+        if t == QEvent.Type.Enter:
             w = obj
             while w is not None:
                 if w is self:
                     self.raise_()
                     break
                 w = w.parent()
+        elif t == QEvent.Type.ApplicationActivate:
+            self.raise_()
         return False
 
     def _on_fade_done(self) -> None:
@@ -2265,6 +2287,7 @@ class SlideMemoWindow(QWidget):
         self.apply_tab_geometry_settings()
         self.apply_display_mode_settings()
         self._refresh_ai_bar()
+        self.raise_()
 
     def _refresh_ai_bar(self) -> None:
         enabled = self.db.get_setting_str("ai_enabled", "0") == "1"
@@ -3100,6 +3123,7 @@ class SlideMemoWindow(QWidget):
         menu.addSeparator()
         purge_act = menu.addAction("영구 삭제")
         chosen = menu.exec(button.mapToGlobal(button.rect().center()))
+        self.raise_()
 
         if chosen == restore_act:
             self.db.restore(memo_id)
@@ -3263,6 +3287,7 @@ class SlideMemoWindow(QWidget):
         menu.addSeparator()
         del_act = menu.addAction("🗑 휴지통으로 이동")
         chosen = menu.exec(button.mapToGlobal(pos))
+        self.raise_()
 
         if chosen == pin_act:
             self.db.set_pinned(memo_id, not memo.is_pinned)
