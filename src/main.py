@@ -643,14 +643,73 @@ class RichPasteTextEdit(QTextEdit):
     IMG_MAX_WIDTH = 440  # 에디터 폭에 맞춘 이미지 표시 최대 폭
 
     def insertFromMimeData(self, source: QMimeData) -> None:  # noqa: N802
-        if source is not None and source.hasImage():
+        if source is None:
+            super().insertFromMimeData(source)
+            return
+
+        has_image = source.hasImage()
+        has_text = source.hasText()
+
+        # 이미지+텍스트 동시 → 엑셀/표 복사 케이스: 선택 다이얼로그
+        if has_image and has_text:
+            image = source.imageData()
+            if isinstance(image, QImage) and not image.isNull():
+                from PyQt6.QtWidgets import QDialog, QHBoxLayout, QPushButton, QLabel, QVBoxLayout
+
+                dlg = QDialog(self.window())
+                dlg.setWindowTitle("붙여넣기 형식 선택")
+                dlg.setWindowFlags(
+                    Qt.WindowType.Dialog | Qt.WindowType.WindowStaysOnTopHint
+                )
+                dlg.setStyleSheet(
+                    "QDialog { background: #f5f5f5; }"
+                    "QLabel { color: #222; font-size: 10pt; }"
+                    "QPushButton { background: #e0e0e0; color: #222; border: 1px solid #bbb;"
+                    "  border-radius: 4px; padding: 6px 16px; font-size: 10pt; }"
+                    "QPushButton:hover { background: #c8c8c8; }"
+                )
+                vbox = QVBoxLayout(dlg)
+                vbox.setContentsMargins(16, 12, 16, 12)
+                vbox.setSpacing(12)
+                vbox.addWidget(QLabel("붙여넣기 형식을 선택하세요:"))
+                hbox = QHBoxLayout()
+                hbox.setSpacing(8)
+                btn_text = QPushButton("텍스트로 붙여넣기")
+                btn_img = QPushButton("이미지로 붙여넣기")
+                hbox.addWidget(btn_text)
+                hbox.addWidget(btn_img)
+                vbox.addLayout(hbox)
+
+                result = [None]
+
+                def _pick_text():
+                    result[0] = "text"
+                    dlg.accept()
+
+                def _pick_img():
+                    result[0] = "image"
+                    dlg.accept()
+
+                btn_text.clicked.connect(_pick_text)
+                btn_img.clicked.connect(_pick_img)
+                dlg.exec()
+
+                if result[0] == "text":
+                    self.textCursor().insertText(source.text(), QTextCharFormat())
+                elif result[0] == "image":
+                    self._insert_image(image)
+                return
+
+        if has_image:
             image = source.imageData()
             if isinstance(image, QImage) and not image.isNull():
                 self._insert_image(image)
                 return
-        if source is not None and source.hasText():
+
+        if has_text:
             self.textCursor().insertText(source.text(), QTextCharFormat())
             return
+
         super().insertFromMimeData(source)
 
     def _insert_image(self, image: QImage) -> None:
