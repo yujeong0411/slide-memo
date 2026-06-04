@@ -1,6 +1,6 @@
 ﻿[project]
 name = "memo-slide"
-version = "1.0.7"
+version = "1.0.8"
 requires-python = ">=3.12"
 dependencies = [
     "keyring>=25.7.0",

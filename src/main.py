@@ -3652,7 +3652,7 @@ def _set_windows_app_user_model_id() -> None:
         pass  # 구버전 Windows 등 — 아이콘이 기본값으로 떨어지더라도 앱은 정상 동작
 
 
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 _GITHUB_REPO = "yujeong0411/SlideMemo"
 
 
@@ -3709,12 +3709,6 @@ class UpdateDialog(QDialog):
 
 
 def main() -> int:
-    try:
-        import pyi_splash  # type: ignore[import]
-        pyi_splash.close()
-    except ImportError:
-        pass
-
     # HiDPI 환경에서 좌표/스케일 어긋남 방지 (QApplication 생성 전에 호출)
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
@@ -3758,9 +3752,8 @@ def main() -> int:
         for _font_file in _fonts_dir.glob("*.ttf"):
             QFontDatabase.addApplicationFont(str(_font_file))
     if "Pretendard" in set(QFontDatabase.families()):
-        _app_font = QFont("Pretendard", 9)
-        # full hinting — fractional DPI 배율(125%/150% 등)에서 텍스트 또렷도 향상
-        _app_font.setHintingPreference(QFont.HintingPreference.PreferFullHinting)
+        _app_font = QFont("Pretendard", 10)
+        _app_font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
         _app_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
         app.setFont(_app_font)
 
