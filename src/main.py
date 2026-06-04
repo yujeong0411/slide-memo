@@ -3652,7 +3652,7 @@ def _set_windows_app_user_model_id() -> None:
         pass  # 구버전 Windows 등 — 아이콘이 기본값으로 떨어지더라도 앱은 정상 동작
 
 
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 _GITHUB_REPO = "yujeong0411/SlideMemo"
 
 
