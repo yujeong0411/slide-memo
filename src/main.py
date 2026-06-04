@@ -1818,6 +1818,17 @@ class SlideMemoWindow(QWidget):
             flags |= Qt.WindowType.Tool
         return flags
 
+    def _force_topmost(self) -> None:
+        """Qt raise_() + Windows API SetWindowPos로 TOPMOST z-order 강제 재설정."""
+        self.raise_()
+        try:
+            import ctypes
+            ctypes.windll.user32.SetWindowPos(
+                int(self.winId()), -1, 0, 0, 0, 0, 0x0002 | 0x0001  # HWND_TOPMOST, SWP_NOMOVE|SWP_NOSIZE
+            )
+        except Exception:
+            pass
+
     def _setup_window(self) -> None:
         self.setWindowFlags(self._window_flags_for_mode())
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -2287,7 +2298,7 @@ class SlideMemoWindow(QWidget):
         self.apply_tab_geometry_settings()
         self.apply_display_mode_settings()
         self._refresh_ai_bar()
-        self.raise_()
+        self._force_topmost()
 
     def _refresh_ai_bar(self) -> None:
         enabled = self.db.get_setting_str("ai_enabled", "0") == "1"
@@ -2742,6 +2753,7 @@ class SlideMemoWindow(QWidget):
             else:
                 self.clearMask()
             self.show()
+            self._force_topmost()
             self._update_handles()
 
     def apply_tab_geometry_settings(self) -> None:
@@ -3608,6 +3620,7 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
         window.apply_tab_geometry_settings()
         window.apply_display_mode_settings()
         window._refresh_ai_bar()
+        window._force_topmost()
 
     settings_act.triggered.connect(_open_settings_from_tray)
     menu.addAction(settings_act)

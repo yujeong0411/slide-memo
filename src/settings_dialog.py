@@ -381,7 +381,8 @@ class SettingsDialog(QDialog):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(8)
         layout.addWidget(QLabel("<b>Slide Memo</b>"))
-        layout.addWidget(QLabel("버전: 1.0.2"))
+        from main import APP_VERSION
+        layout.addWidget(QLabel(f"버전: {APP_VERSION}"))
         layout.addWidget(QLabel("PyQt6 기반 Windows 슬라이드 메모장"))
         layout.addSpacing(8)
         copyright_lbl = QLabel(
