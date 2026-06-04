@@ -3703,7 +3703,7 @@ class UpdateDialog(QDialog):
 
     def _open_download(self) -> None:
         QDesktopServices.openUrl(
-            QUrl(f"https://github.com/{_GITHUB_REPO}/releases/latest")
+            QUrl(f"https://github.com/{_GITHUB_REPO}/releases/latest/download/SlideMemo-Setup.exe")
         )
         self.accept()
 
