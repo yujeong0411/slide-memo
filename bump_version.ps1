@@ -93,11 +93,11 @@ if ($buildAnswer -eq "y" -or $buildAnswer -eq "Y") {
 # ── GitHub Release 생성 + 인스톨러 첨부 ──────────────────────────────────
 Write-Host ""
 if ((Test-Path $installer) -and ($buildAnswer -eq "y" -or $buildAnswer -eq "Y")) {
-    & $gh release create "v$NewVersion" --title "v$NewVersion" --generate-notes $installer
+    & $gh release create "v$NewVersion" --title "Slide Memo v$NewVersion" --generate-notes $installer
     Write-Host ""
     Write-Host "완료! GitHub Release v$NewVersion + 인스톨러 업로드됨."
 } else {
-    & $gh release create "v$NewVersion" --title "v$NewVersion" --generate-notes
+    & $gh release create "v$NewVersion" --title "Slide Memo v$NewVersion" --generate-notes
     Write-Host ""
     Write-Host "완료! GitHub Release v$NewVersion 생성됨."
     if (Test-Path $installer) {
