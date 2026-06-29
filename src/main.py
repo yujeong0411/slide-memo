@@ -126,14 +126,12 @@ BG_COLOR_PALETTE = [
     None,       # 기본/투명 (배경 해제)
 ]
 
+# 레거시 솔리드 색(예전 메모 호환용). ivory/blush/mint는 그라데이션으로 승격됨.
 COLORS = {
-    "ivory":    "#FFEF9F",
-    "blush":    "#F5CBCB",
     "peach":    "#FFF2EB",
     "cream":    "#A4CCD9",
     "olive":    "#F1F3E0",
     "lavender": "#F4EEFF",
-    "mint":     "#BADFDB",
 }
 
 # 그라데이션 프리셋: (x1,y1,x2,y2) + [(stop, hex), ...]
@@ -158,12 +156,30 @@ GRADIENTS = {
         ],
         "representative": "#F8C7D9",
     },
+    "ivory": {
+        "coords": (0, 0, 1, 1),
+        "stops": [(0.0, "#FFF7C4"), (1.0, "#FFE07A")],
+        "representative": "#FFEF9F",
+    },
+    "blush": {
+        "coords": (0, 0, 1, 1),
+        "stops": [(0.0, "#FCE0E6"), (1.0, "#F3B8C2")],
+        "representative": "#F5CBCB",
+    },
+    "mint": {
+        "coords": (0, 0, 1, 1),
+        "stops": [(0.0, "#D6EFE9"), (1.0, "#A6D5CC")],
+        "representative": "#BADFDB",
+    },
 }
-COLOR_ORDER = ["sunrise", "blossom", "ivory", "blush", "mint"]
+# 팔레트: 앞 2개는 고정 그라데이션, 뒤 3개는 사용자가 우클릭으로 편집하는 슬롯.
+COLOR_FIXED = ["sunrise", "blossom"]
+USER_SLOT_KEYS = ["user_slot_1", "user_slot_2", "user_slot_3"]
+USER_SLOT_DEFAULTS = ["ivory", "blush", "mint"]
 
 
 def is_gradient(name: str | None) -> bool:
-    return isinstance(name, str) and name in GRADIENTS
+    return isinstance(name, str) and (name in GRADIENTS or name.startswith("grad:"))
 
 
 def _darken_hex(hex_color: str, factor: float = 0.4) -> str:
@@ -194,6 +210,19 @@ def _hex_to_rgba(hex_color: str, alpha: float) -> str:
     return f"rgba({r}, {g}, {b}, {alpha})"
 
 
+def _gradient_def(name: str) -> dict:
+    """이름 프리셋이면 GRADIENTS[name]. 커스텀 'grad:#a[,#b,...]'는 색 목록으로 균등 stop.
+    색이 1개뿐이면 그 색에서 살짝 어두운 색을 자동 추가해 2-stop."""
+    if name in GRADIENTS:
+        return GRADIENTS[name]
+    cols = name[5:].split(",")  # "grad:#a,#b" → ["#a", "#b"]
+    if len(cols) == 1:
+        cols = [cols[0], _darken_hex(cols[0], 0.72)]
+    n = len(cols)
+    stops = [(i / (n - 1), c) for i, c in enumerate(cols)]
+    return {"coords": (0, 0, 1, 1), "stops": stops, "representative": cols[0]}
+
+
 def gradient_qss(
     name: str,
     *,
@@ -202,7 +231,7 @@ def gradient_qss(
 ) -> str:
     """qlineargradient(...) QSS 문자열. coords로 좌표 오버라이드 가능 (탭 등 짧은 영역).
     alpha < 1.0이면 stop의 색상에 알파 채널 적용."""
-    g = GRADIENTS[name]
+    g = _gradient_def(name)
     x1, y1, x2, y2 = coords if coords is not None else g["coords"]
     if alpha < 1.0:
         stops = ", ".join(f"stop:{s} {_hex_to_rgba(c, alpha)}" for s, c in g["stops"])
@@ -304,7 +333,7 @@ def resolve_color(value: str | None) -> str:
     if value in COLORS:
         return COLORS[value]
     if is_gradient(value):
-        return GRADIENTS[value]["representative"]
+        return _gradient_def(value)["representative"]
     if isinstance(value, str) and _HEX_COLOR_RE.fullmatch(value.strip()):
         return value.strip()
     if DEFAULT_COLOR in COLORS:
@@ -329,14 +358,26 @@ def _text_color_for(hex_color: str) -> str:
 # 그라데이션은 라이트 톤 가정 → 어두운 글자 + 에디터 투명 처리(bodyPanel 한 장에 그라데이션이 비쳐 보이게).
 def theme_for(color: str | None) -> dict[str, str]:
     if is_gradient(color):
+        bg = gradient_qss(color)
+        # 대표색 밝기로 글자색 결정 → 커스텀 어두운 그라데이션도 가독성 유지
+        if _text_color_for(resolve_color(color)) == "#1e1e2e":
+            return {
+                "bg": bg,
+                "editor_bg": "transparent",
+                "text": "#1e1e2e",
+                "text_sub": "rgba(30, 30, 46, 0.55)",
+                "border": "rgba(0, 0, 0, 0.15)",
+                "focus": "#1e1e2e",
+                "input_bg": "rgba(255, 255, 255, 0.35)",
+            }
         return {
-            "bg": gradient_qss(color),
+            "bg": bg,
             "editor_bg": "transparent",
-            "text": "#1e1e2e",
-            "text_sub": "rgba(30, 30, 46, 0.55)",
-            "border": "rgba(0, 0, 0, 0.15)",
-            "focus": "#1e1e2e",
-            "input_bg": "rgba(255, 255, 255, 0.35)",
+            "text": "#f5f5f5",
+            "text_sub": "rgba(245, 245, 245, 0.6)",
+            "border": "rgba(255, 255, 255, 0.22)",
+            "focus": "#f5f5f5",
+            "input_bg": "rgba(255, 255, 255, 0.10)",
         }
     base = resolve_color(color)
     if _text_color_for(base) == "#1e1e2e":
@@ -508,14 +549,13 @@ class MemoTabButton(QPushButton):
         self.color_name = memo.color
         if is_gradient(memo.color):
             # 탭은 세로로 길쭉 → 위→아래 짧은 그라데이션으로 표현
+            rep = _gradient_def(memo.color)["representative"]
             self._bg = gradient_qss(
                 memo.color, coords=(0, 0, 0, 1), alpha=MemoTabButton.BG_ALPHA
             )
-            self._fg = "#1e1e2e"
+            self._fg = _text_color_for(rep)
             # 선택 인디케이터 색: 그라데이션의 대표색을 어둡게 (같은 hue 계열)
-            self._sel_bar_color = _darken_hex(
-                GRADIENTS[memo.color]["representative"], 0.35
-            )
+            self._sel_bar_color = _darken_hex(rep, 0.35)
         else:
             hex_color = resolve_color(memo.color)
             self._bg = _hex_to_rgba(hex_color, MemoTabButton.BG_ALPHA)
@@ -613,17 +653,31 @@ class MemoTabButton(QPushButton):
 
 
 class ColorDot(QPushButton):
-    """색상 선택용 작은 원형 버튼."""
+    """색상 선택용 작은 원형 버튼. editable이면 우클릭으로 색 편집 요청."""
 
-    def __init__(self, color_name: str, parent: QWidget | None = None) -> None:
+    edit_requested = pyqtSignal()
+
+    def __init__(self, color_name: str, editable: bool = False, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.color_name = color_name
+        self.editable = editable
+        self._selected = False
         self.setFixedSize(16, 16)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip(color_name)
+        self.setToolTip(color_name + ("  (우클릭: 색 편집)" if editable else ""))
+        if editable:
+            self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            self.customContextMenuRequested.connect(lambda _p: self.edit_requested.emit())
         self.set_selected(False)
 
+    def set_color(self, color_name: str) -> None:
+        self.color_name = color_name
+        if self.editable:
+            self.setToolTip(color_name + "  (우클릭: 색 편집)")
+        self.set_selected(self._selected)
+
     def set_selected(self, selected: bool) -> None:
+        self._selected = selected
         border_color = "#1e1e2e" if selected else "rgba(0,0,0,0.25)"
         border_w = 2 if selected else 1
         if is_gradient(self.color_name):
@@ -790,6 +844,87 @@ class TableDialog(QDialog):
 
     def values(self) -> tuple[int, int, bool]:
         return self.rows_spin.value(), self.cols_spin.value(), self.header_check.isChecked()
+
+
+class GradientDialog(QDialog):
+    """커스텀 그라데이션: 색을 2개 이상 직접 지정 (개수 제한 없음)."""
+
+    def __init__(self, colors: list[str] | None = None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("그라데이션 색 지정")
+        self.setMinimumWidth(300)
+        self._colors = list(colors) if colors and len(colors) >= 2 else ["#FFD27A", "#FF8FB1"]
+
+        layout = QVBoxLayout(self)
+        self._preview = QFrame()
+        self._preview.setFixedHeight(40)
+        layout.addWidget(self._preview)
+
+        self._rows_container = QWidget()
+        self._rows_v = QVBoxLayout(self._rows_container)
+        self._rows_v.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._rows_container)
+
+        add_btn = QPushButton("+ 색 추가")
+        add_btn.clicked.connect(self._add_color)
+        layout.addWidget(add_btn)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self._rebuild()
+
+    def _rebuild(self) -> None:
+        while self._rows_v.count():
+            w = self._rows_v.takeAt(0).widget()
+            if w is not None:
+                w.deleteLater()
+        for i, c in enumerate(self._colors):
+            row = QWidget()
+            h = QHBoxLayout(row)
+            h.setContentsMargins(0, 0, 0, 0)
+            sw = QPushButton(c)
+            sw.setCursor(Qt.CursorShape.PointingHandCursor)
+            sw.setStyleSheet(
+                f"background:{c}; color:{_text_color_for(c)};"
+                " border:1px solid #888; border-radius:4px; padding:5px;"
+            )
+            sw.clicked.connect(lambda _x, idx=i: self._pick(idx))
+            h.addWidget(sw, 1)
+            rm = QPushButton("✕")
+            rm.setFixedWidth(28)
+            rm.setEnabled(len(self._colors) > 2)  # 최소 2색 유지
+            rm.clicked.connect(lambda _x, idx=i: self._remove(idx))
+            h.addWidget(rm)
+            self._rows_v.addWidget(row)
+        self._preview.setStyleSheet(
+            f"background: {gradient_qss('grad:' + ','.join(self._colors))};"
+            " border:1px solid #888; border-radius:4px;"
+        )
+
+    def _pick(self, idx: int) -> None:
+        chosen = QColorDialog.getColor(
+            QColor(self._colors[idx]), self, "색 선택",
+            QColorDialog.ColorDialogOption.DontUseNativeDialog,
+        )
+        if chosen.isValid():
+            self._colors[idx] = chosen.name()
+            self._rebuild()
+
+    def _add_color(self) -> None:
+        self._colors.append(self._colors[-1])
+        self._rebuild()
+
+    def _remove(self, idx: int) -> None:
+        if len(self._colors) > 2:
+            del self._colors[idx]
+            self._rebuild()
+
+    def values(self) -> list[str]:
+        return self._colors
 
 
 class FlowLayout(QLayout):
@@ -1775,6 +1910,32 @@ class ResizeHandle(QWidget):
         super().mouseReleaseEvent(event)
 
 
+# ----- Windows always-on-top 강제 -----
+# WindowStaysOnTopHint(WS_EX_TOPMOST)는 best-effort라 다른 topmost 창이나
+# 시스템 이벤트(오버레이/알림/explorer 재시작 등)에 의해 z-order에서 밀려날 수
+# 있다. 밀려나려는 순간 Windows가 보내는 WM_WINDOWPOSCHANGING을 가로채 삽입
+# 위치를 HWND_TOPMOST로 되돌려, 실제로 가려지기 전에 막는다.
+# (폴링 없이 z-order가 바뀔 때만 반응 → 펼침/접힘 상태 무관하게 동작)
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+
+    _WM_WINDOWPOSCHANGING = 0x0046
+    _SWP_NOZORDER = 0x0004
+    _HWND_TOPMOST = -1
+
+    class _WINDOWPOS(ctypes.Structure):
+        _fields_ = [
+            ("hwnd", ctypes.c_ssize_t),
+            ("hwndInsertAfter", ctypes.c_ssize_t),
+            ("x", ctypes.c_int),
+            ("y", ctypes.c_int),
+            ("cx", ctypes.c_int),
+            ("cy", ctypes.c_int),
+            ("flags", ctypes.c_uint),
+        ]
+
+
 class SlideMemoWindow(QWidget):
     def __init__(self, db: MemoDatabase) -> None:
         super().__init__()
@@ -1797,6 +1958,10 @@ class SlideMemoWindow(QWidget):
         self._load_display_mode()  # Tool 플래그 결정에 필요
         self._setup_window()
         self._setup_fonts()
+        self._color_slots = [
+            self.db.get_setting_str(k, d)
+            for k, d in zip(USER_SLOT_KEYS, USER_SLOT_DEFAULTS)
+        ]
         self._build_ui()
         self._setup_animation()
         self._setup_shortcuts()
@@ -1888,6 +2053,34 @@ class SlideMemoWindow(QWidget):
         except Exception:
             pass
 
+    def nativeEvent(self, eventType, message):  # noqa: N802
+        # z-order가 바뀌려는 순간 삽입 위치를 topmost로 되돌려 가려짐을 막는다.
+        # (다른 topmost 창에 밀려나는 것을 발생 전에 차단 — 펼침/접힘 모두 적용)
+        if sys.platform == "win32" and eventType == b"windows_generic_MSG":
+            try:
+                msg = wintypes.MSG.from_address(int(message))
+                # 다이얼로그/팝업(색상 선택·설정·확인창·서식 팝업 등)이 열려 있으면
+                # topmost를 강제하지 않는다 — 안 그러면 메모창이 그 위로 올라가 팝업을 가림.
+                if (
+                    msg.message == _WM_WINDOWPOSCHANGING
+                    and QApplication.activeModalWidget() is None
+                    and QApplication.activePopupWidget() is None
+                ):
+                    wp = _WINDOWPOS.from_address(msg.lParam)
+                    # SWP_NOZORDER가 없을 때(=z-order가 실제로 바뀌는 경우)만 개입.
+                    # 단순 이동/리사이즈는 건드리지 않는다.
+                    if not (wp.flags & _SWP_NOZORDER):
+                        wp.hwndInsertAfter = _HWND_TOPMOST
+            except Exception:
+                pass
+        # 구조체만 in-place 수정하고 기본 처리를 계속하게 둔다.
+        # (PyQt6에서 super().nativeEvent() 호출/반환은 하드 크래시를 유발하므로 금지)
+        return False, 0
+
+    def _apply_window_opacity(self) -> None:
+        pct = max(50, min(self.db.get_setting_int("window_opacity", 100), 100))
+        self.setWindowOpacity(pct / 100.0)
+
     def _setup_window(self) -> None:
         self.setWindowFlags(self._window_flags_for_mode())
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -1897,6 +2090,7 @@ class SlideMemoWindow(QWidget):
         # 화면 안에 항상 전체가 들어오도록 폭 자체가 슬라이드함.
         self.setMinimumWidth(self.tab_width)
         # setMaximumWidth 안 둠 - 사용자가 좌측 드래그로 키울 수 있어야 함
+        self._apply_window_opacity()
 
     def _setup_fonts(self) -> None:
         families = set(QFontDatabase.families())
@@ -2088,12 +2282,18 @@ class SlideMemoWindow(QWidget):
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.setSpacing(4)
         title_row.addWidget(self.title_input, stretch=1)
-        self.color_buttons: dict[str, ColorDot] = {}
-        for name in COLOR_ORDER:
+        self.color_dots: list[ColorDot] = []
+        for name in COLOR_FIXED:
             dot = ColorDot(name)
-            dot.clicked.connect(lambda _checked, n=name: self._on_color_changed(n))
+            dot.clicked.connect(lambda _c, d=dot: self._on_color_changed(d.color_name))
             title_row.addWidget(dot)
-            self.color_buttons[name] = dot
+            self.color_dots.append(dot)
+        for slot_idx, value in enumerate(self._color_slots):
+            dot = ColorDot(value, editable=True)
+            dot.clicked.connect(lambda _c, d=dot: self._on_color_changed(d.color_name))
+            dot.edit_requested.connect(lambda i=slot_idx, d=dot: self._edit_color_slot(i, d))
+            title_row.addWidget(dot)
+            self.color_dots.append(dot)
         # 사용자 지정 색상 버튼 (+): 클릭 시 색상 선택 다이얼로그
         self.custom_color_btn = QPushButton("+")
         self.custom_color_btn.setFixedSize(16, 16)
@@ -2356,6 +2556,7 @@ class SlideMemoWindow(QWidget):
         self.apply_side_settings()
         self.apply_tab_geometry_settings()
         self.apply_display_mode_settings()
+        self._apply_window_opacity()
         self._refresh_ai_bar()
         self._force_topmost()
 
@@ -3306,9 +3507,14 @@ class SlideMemoWindow(QWidget):
         # 색상 점 버튼은 항상 자기 색깔 유지하므로 별도 처리 없음.
 
     def _update_color_buttons(self, current_color: str) -> None:
-        is_preset = current_color in COLORS or is_gradient(current_color)
-        for name, btn in self.color_buttons.items():
-            btn.set_selected(name == current_color)
+        dot_values = [d.color_name for d in self.color_dots]
+        is_preset = (
+            current_color in COLORS
+            or current_color in GRADIENTS
+            or current_color in dot_values
+        )
+        for dot in self.color_dots:
+            dot.set_selected(dot.color_name == current_color)
         # 커스텀(+) 버튼: 프리셋이 아니면 그 색을 칠하고 선택 강조
         if is_preset:
             self.custom_color_btn.setText("+")
@@ -3318,7 +3524,7 @@ class SlideMemoWindow(QWidget):
                 " font-weight: bold;"
             )
         else:
-            bg = resolve_color(current_color)
+            bg = gradient_qss(current_color) if is_gradient(current_color) else resolve_color(current_color)
             self.custom_color_btn.setText("")
             self.custom_color_btn.setStyleSheet(
                 f"background-color: {bg};"
@@ -3420,16 +3626,33 @@ class SlideMemoWindow(QWidget):
         self._refresh_memo_tabs()
 
     def _on_custom_color(self) -> None:
-        """색상 선택 다이얼로그로 사용자 지정 hex 색상을 적용."""
+        """다색 그라데이션 다이얼로그로 사용자 지정 색을 적용."""
         if self.current_memo is None:
             return
-        initial = QColor(resolve_color(self.current_memo.color))
-        chosen = QColorDialog.getColor(
-            initial, self, "메모 색상 선택",
-            QColorDialog.ColorDialogOption.DontUseNativeDialog,
-        )
-        if chosen.isValid():
-            self._on_color_changed(chosen.name())  # '#rrggbb'
+        cur = self.current_memo.color
+        prefill = [c for _s, c in _gradient_def(cur)["stops"]] if is_gradient(cur) else None
+        dlg = GradientDialog(prefill, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._on_color_changed("grad:" + ",".join(dlg.values()))
+
+    def _edit_color_slot(self, slot_idx: int, dot: ColorDot) -> None:
+        """편집 가능한 팔레트 슬롯(뒤 3개)의 색을 바꾼다. DB 설정에 영구 저장."""
+        cur = dot.color_name
+        prefill = [c for _s, c in _gradient_def(cur)["stops"]] if is_gradient(cur) else None
+        dlg = GradientDialog(prefill, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        value = "grad:" + ",".join(dlg.values())
+        self._color_slots[slot_idx] = value
+        self.db.set_setting_str(USER_SLOT_KEYS[slot_idx], value)
+        dot.set_color(value)
+        # 현재 메모가 방금 편집한 슬롯 색을 쓰고 있었다면 새 색으로 즉시 갱신
+        if self.current_memo is not None and self.current_memo.color == cur:
+            self._on_color_changed(value)
+        else:
+            self._update_color_buttons(
+                self.current_memo.color if self.current_memo else DEFAULT_COLOR
+            )
 
     def save_now(self) -> None:
         if self.current_memo is None:
@@ -3678,6 +3901,7 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
         window.apply_side_settings()
         window.apply_tab_geometry_settings()
         window.apply_display_mode_settings()
+        window._apply_window_opacity()
         window._refresh_ai_bar()
         window._force_topmost()
 
@@ -3711,7 +3935,7 @@ def _set_windows_app_user_model_id() -> None:
         pass  # 구버전 Windows 등 — 아이콘이 기본값으로 떨어지더라도 앱은 정상 동작
 
 
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.9"
 _GITHUB_REPO = "yujeong0411/SlideMemo"
 
 

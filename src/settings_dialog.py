@@ -126,6 +126,20 @@ class SettingsDialog(QDialog):
         # 인덱스 탭 설정 그룹
         outer.addWidget(self._build_tab_geometry_group())
 
+        # 창 투명도 (드래그 시 실시간 미리보기)
+        opacity_row = QHBoxLayout()
+        opacity_row.addWidget(QLabel("창 투명도:"))
+        self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._opacity_slider.setRange(50, 100)
+        self._opacity_slider.setSingleStep(1)
+        self._opacity_slider.setPageStep(5)
+        self._opacity_lbl = QLabel("100%")
+        self._opacity_lbl.setMinimumWidth(40)
+        self._opacity_slider.valueChanged.connect(self._on_opacity_preview)
+        opacity_row.addWidget(self._opacity_slider, stretch=1)
+        opacity_row.addWidget(self._opacity_lbl)
+        outer.addLayout(opacity_row)
+
         # 시스템 시작 시 자동 실행
         self._autostart_chk = QCheckBox("시스템 시작 시 자동 실행")
         outer.addWidget(self._autostart_chk)
@@ -408,6 +422,13 @@ class SettingsDialog(QDialog):
         layout.addStretch(1)
         return w
 
+    def _on_opacity_preview(self, v: int) -> None:
+        self._opacity_lbl.setText(f"{v}%")
+        # 부모(메모 창)에 실시간 반영. 취소하면 main이 닫은 뒤 DB값으로 되돌림.
+        p = self.parent()
+        if p is not None:
+            p.setWindowOpacity(v / 100.0)
+
     # ── 설정 로드 ─────────────────────────────────────────────────
     def _load_settings(self) -> None:
         # 일반
@@ -426,6 +447,10 @@ class SettingsDialog(QDialog):
         tab_h = max(60, min(self.db.get_setting_int("memo_tab_height", 116), 200))
         self._memo_tab_height_slider.setValue(tab_h)
         self._memo_tab_height_lbl.setText(f"{tab_h} px")
+
+        op = max(50, min(self.db.get_setting_int("window_opacity", 100), 100))
+        self._opacity_slider.setValue(op)
+        self._opacity_lbl.setText(f"{op}%")
 
         # 자동 실행: OS의 실제 등록 상태가 진실
         if autostart.is_supported():
@@ -607,6 +632,7 @@ class SettingsDialog(QDialog):
         self.db.set_setting_int(
             "memo_tab_height", self._memo_tab_height_slider.value()
         )
+        self.db.set_setting_int("window_opacity", self._opacity_slider.value())
 
         # 자동 실행: 현재 OS 상태와 다르면 set_enabled 호출, 실패하면 알림
         if autostart.is_supported():

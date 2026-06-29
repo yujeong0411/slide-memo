@@ -27,8 +27,14 @@ def normalize_color(color: str | None) -> str:
     """프리셋 이름이거나 유효한 hex 코드면 그대로, 그 외에는 기본색으로."""
     if color in VALID_COLORS:
         return color
-    if isinstance(color, str) and _HEX_COLOR_RE.match(color.strip()):
-        return color.strip()
+    if isinstance(color, str):
+        c = color.strip()
+        if _HEX_COLOR_RE.match(c):
+            return c
+        if c.startswith("grad:"):  # 커스텀 그라데이션 (색 1개 이상, 쉼표 구분)
+            parts = c[5:].split(",")
+            if parts and all(_HEX_COLOR_RE.match(p) for p in parts):
+                return c
     return DEFAULT_COLOR
 
 # 정렬 모드별 ORDER BY 절 (is_pinned DESC가 항상 앞에 붙음)
