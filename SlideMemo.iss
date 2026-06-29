@@ -36,6 +36,10 @@ ArchitecturesInstallIn64BitMode=x64compatible
 [Languages]
 Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
 
+; 업그레이드 시 이전 버전의 잔여 파일 정리 (의존성 변경으로 사라진 _internal 파일 등)
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Files]
 Source: "dist\SlideMemo\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\SlideMemo\*"; Excludes: "{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
