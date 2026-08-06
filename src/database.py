@@ -12,6 +12,13 @@ APP_DIR = Path.home() / ".memo_slide"
 DB_PATH = APP_DIR / "memos.db"
 IMAGES_DIR = APP_DIR / "images"
 
+# 버전 히스토리 — 자동저장이 덮어쓰기 직전 내용을 스냅샷으로 남긴다.
+# 보장: 어떤 시점에 내용을 지워도 최대 VERSION_INTERVAL_MIN분 전 상태로 되돌릴 수 있다.
+# 두 값은 튜닝 노브다. 간격을 줄이면 촘촘해지고 보관 시간이 짧아진다
+# (기본값은 5분 × 20개 ≈ 100분치 편집 이력).
+VERSION_INTERVAL_MIN = 5
+VERSION_KEEP = 20
+
 COLOR_SEQUENCE = [
     "sunrise", "blossom",
     "ivory", "blush", "peach", "cream", "olive", "lavender", "mint",
@@ -76,6 +83,25 @@ class Memo:
         )
 
 
+@dataclass
+class MemoVersion:
+    id: int
+    memo_id: int
+    title: str
+    content: str
+    created_at: str
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "MemoVersion":
+        return cls(
+            id=row["id"],
+            memo_id=row["memo_id"],
+            title=row["title"],
+            content=row["content"],
+            created_at=row["created_at"],
+        )
+
+
 class MemoDatabase:
     def __init__(self, db_path: Path | None = None) -> None:
         self.db_path = db_path or DB_PATH
@@ -109,6 +135,15 @@ class MemoDatabase:
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            -- 메모 하드 삭제 시 CASCADE로 함께 정리 (PRAGMA foreign_keys = ON)
+            CREATE TABLE IF NOT EXISTS memo_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memo_id INTEGER NOT NULL REFERENCES memos(id) ON DELETE CASCADE,
+                title TEXT NOT NULL DEFAULT '',
+                content TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_versions_memo ON memo_versions(memo_id, id DESC);
             """
         )
         self.conn.commit()
@@ -277,6 +312,66 @@ class MemoDatabase:
         )
         self.conn.commit()
         return self.get(memo_id)
+
+    # ----- 버전 히스토리 -----
+    def snapshot(self, memo_id: int, *, force: bool = False) -> bool:
+        """DB에 저장된 현재 내용을 버전으로 남긴다. 덮어쓰기(update) *직전*에 호출할 것.
+
+        직전 버전과 내용이 같거나 VERSION_INTERVAL_MIN분이 안 지났으면 건너뛴다
+        (force=True면 간격 무시). 실제로 저장했으면 True.
+        """
+        row = self.conn.execute(
+            "SELECT title, content FROM memos WHERE id = ?", (memo_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        last = self.conn.execute(
+            "SELECT content, created_at FROM memo_versions WHERE memo_id = ?"
+            " ORDER BY id DESC LIMIT 1",
+            (memo_id,),
+        ).fetchone()
+        if last is not None:
+            if last["content"] == row["content"]:
+                return False  # 달라진 게 없으면 남길 이유가 없다
+            if not force:
+                cutoff = (
+                    datetime.now() - timedelta(minutes=VERSION_INTERVAL_MIN)
+                ).isoformat(timespec="seconds")
+                if last["created_at"] > cutoff:
+                    return False
+        self.conn.execute(
+            "INSERT INTO memo_versions (memo_id, title, content, created_at)"
+            " VALUES (?, ?, ?, ?)",
+            (memo_id, row["title"], row["content"], self._now()),
+        )
+        # 메모당 최신 VERSION_KEEP개만 유지
+        self.conn.execute(
+            "DELETE FROM memo_versions WHERE memo_id = ? AND id NOT IN"
+            " (SELECT id FROM memo_versions WHERE memo_id = ? ORDER BY id DESC LIMIT ?)",
+            (memo_id, memo_id, VERSION_KEEP),
+        )
+        self.conn.commit()
+        return True
+
+    def list_versions(self, memo_id: int) -> list[MemoVersion]:
+        """최신순 버전 목록."""
+        rows = self.conn.execute(
+            "SELECT * FROM memo_versions WHERE memo_id = ? ORDER BY id DESC",
+            (memo_id,),
+        ).fetchall()
+        return [MemoVersion.from_row(r) for r in rows]
+
+    def restore_version(self, version_id: int) -> Memo:
+        """버전을 현재 내용으로 되돌린다. 되돌리기 직전 상태도 버전으로 남겨
+        복원 자체를 다시 취소할 수 있게 한다."""
+        row = self.conn.execute(
+            "SELECT * FROM memo_versions WHERE id = ?", (version_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"version {version_id} not found")
+        memo_id = row["memo_id"]
+        self.snapshot(memo_id, force=True)
+        return self.update(memo_id, title=row["title"], content=row["content"])
 
     def set_pinned(self, memo_id: int, pinned: bool) -> Memo:
         # 고정은 메모 수정이 아니므로 updated_at은 건드리지 않음

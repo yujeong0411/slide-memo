@@ -1,4 +1,4 @@
-"""Slide Memo - Windows 데스크탑용 슬라이드 메모장."""
+﻿"""Slide Memo - Windows 데스크탑용 슬라이드 메모장."""
 from __future__ import annotations
 
 import re
@@ -39,6 +39,8 @@ from PyQt6.QtGui import (
     QTextBlockFormat,
     QTextCharFormat,
     QTextCursor,
+    QTextDocument,
+    QTextDocumentWriter,
     QTextImageFormat,
     QTextListFormat,
     QTextTableFormat,
@@ -50,6 +52,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QGraphicsOpacityEffect,
@@ -59,6 +62,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLayout,
     QLineEdit,
+    QListWidget,
     QMenu,
     QMessageBox,
     QProgressBar,
@@ -77,18 +81,21 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from database import DEFAULT_COLOR, IMAGES_DIR, Memo, MemoDatabase
+from database import DEFAULT_COLOR, IMAGES_DIR, Memo, MemoDatabase, MemoVersion
 
 
 # ----- 상수 -----
-TAB_WIDTH = 30          # 인덱스 가로 (기본값; 설정에서 조절)
+TAB_WIDTH = 36          # 인덱스 가로 (기본값; 설정에서 조절)
 TAB_WIDTH_MIN = 24
 TAB_WIDTH_MAX = 60
 EXPANDED_WIDTH = 520
 HEIGHT_RATIO = 0.55
 ANIM_DURATION = 150  # body 페이드 시간
 AUTOSAVE_DELAY = 600
-MEMO_TAB_HEIGHT = 116   # 인덱스 세로 (기본값; 설정에서 조절)
+# 메모별 undo 스택 유지 개수. 문서를 캐시해두면 메모를 전환했다 돌아와도 Ctrl+Z가
+# 살아있다. 이미지가 붙은 문서는 메모리를 먹으므로 LRU로 제한한다.
+UNDO_CACHE_SIZE = 10
+MEMO_TAB_HEIGHT = 110   # 인덱스 세로 (기본값; 설정에서 조절)
 MEMO_TAB_HEIGHT_MIN = 60
 MEMO_TAB_HEIGHT_MAX = 200
 NEW_TAB_HEIGHT = 38
@@ -257,34 +264,34 @@ STYLE = """
     border: none;
 }
 #newTabBtn {
-    background-color: rgba(255, 255, 255, 0.75);
+    background-color: #ffffff;
     color: #5c5c66;
     border: none;
     font-size: 14pt;
     font-weight: bold;
 }
 #newTabBtn:hover {
-    background-color: rgba(255, 255, 255, 0.95);
+    background-color: #eceff4;
     color: #4a4a52;
 }
 #trashBtn {
-    background-color: rgba(255, 255, 255, 0.75);
+    background-color: #ffffff;
     color: #5c5c66;
     border: none;
     font-size: 9pt;
 }
 #trashBtn:hover {
-    background-color: rgba(255, 255, 255, 0.95);
+    background-color: #eceff4;
     color: #d85a7a;
 }
 #settingsBtn {
-    background-color: rgba(255, 255, 255, 0.75);
+    background-color: #ffffff;
     color: #5c5c66;
     border: none;
     font-size: 11pt;
 }
 #settingsBtn:hover {
-    background-color: rgba(255, 255, 255, 0.95);
+    background-color: #eceff4;
     color: #4a4a52;
 }
 QScrollBar:vertical {
@@ -358,7 +365,10 @@ def _text_color_for(hex_color: str) -> str:
 # 그라데이션은 라이트 톤 가정 → 어두운 글자 + 에디터 투명 처리(bodyPanel 한 장에 그라데이션이 비쳐 보이게).
 def theme_for(color: str | None) -> dict[str, str]:
     if is_gradient(color):
-        bg = gradient_qss(color)
+        # 세로 방향 — 탭(MemoTabButton)과 인덱스 컬럼 채움도 세로라, 셋이 같은
+        # y 범위를 공유해 좌우로 붙어도 색이 이어진다. 대각선이면 폭이 다른 위젯끼리
+        # 진행도가 어긋나 경계가 드러난다.
+        bg = gradient_qss(color, coords=(0, 0, 0, 1))
         # 대표색 밝기로 글자색 결정 → 커스텀 어두운 그라데이션도 가독성 유지
         if _text_color_for(resolve_color(color)) == "#1e1e2e":
             return {
@@ -369,6 +379,9 @@ def theme_for(color: str | None) -> dict[str, str]:
                 "border": "rgba(0, 0, 0, 0.15)",
                 "focus": "#1e1e2e",
                 "input_bg": "rgba(255, 255, 255, 0.35)",
+                # 스크롤바: 메모 자기 색의 진한 톤 (탭 선택 띠와 같은 방식)
+                "scroll": _darken_hex(resolve_color(color), 0.35),
+                "scroll_hover": _darken_hex(resolve_color(color), 0.22),
             }
         return {
             "bg": bg,
@@ -389,6 +402,9 @@ def theme_for(color: str | None) -> dict[str, str]:
             "border": "rgba(0, 0, 0, 0.15)",
             "focus": "#1e1e2e",
             "input_bg": "rgba(0, 0, 0, 0.05)",
+            # 스크롤바: 메모 자기 색의 진한 톤 (탭 선택 띠와 같은 방식)
+            "scroll": _darken_hex(base, 0.35),
+            "scroll_hover": _darken_hex(base, 0.22),
         }
     return {
         "bg": base,
@@ -398,18 +414,23 @@ def theme_for(color: str | None) -> dict[str, str]:
         "border": "rgba(255, 255, 255, 0.22)",
         "focus": "#f5f5f5",
         "input_bg": "rgba(255, 255, 255, 0.10)",
+        # 어두운 배경에선 진하게 하면 오히려 묻힌다 → 밝은 쪽으로
+        "scroll": "rgba(245, 245, 245, 0.55)",
+        "scroll_hover": "rgba(245, 245, 245, 0.85)",
     }
 
 
 def body_stylesheet(t: dict[str, str], side: str = "right") -> str:
-    # side와 만나는 면(side=right면 body 우측, side=left면 body 좌측)은 라운드 0 →
-    # 인덱스 컬럼과 한 덩어리처럼 붙어 보이게.
+    # side와 만나는 면(side=right면 body 우측, side=left면 body 좌측)은 라운드 0 +
+    # 테두리 제거 → 인덱스 컬럼과 한 덩어리처럼 이어져 보이게. 테두리를 남기면
+    # 컬럼 뒤를 같은 색으로 채워도 그 1px이 경계선으로 읽힌다.
     if side == "right":
         body_radius = (
             "border-top-left-radius: 8px;"
             "border-bottom-left-radius: 8px;"
             "border-top-right-radius: 0;"
             "border-bottom-right-radius: 0;"
+            "border-right: none;"
         )
     else:
         body_radius = (
@@ -417,12 +438,47 @@ def body_stylesheet(t: dict[str, str], side: str = "right") -> str:
             "border-bottom-right-radius: 8px;"
             "border-top-left-radius: 0;"
             "border-bottom-left-radius: 0;"
+            "border-left: none;"
         )
     return f"""
     #bodyPanel {{
         background: {t["bg"]};
         border: 1px solid {t["border"]};
         {body_radius}
+    }}
+    /* 본문 스크롤바 — 전역 STYLE의 흰색 4px는 밝은 메모색 위에서 보이지 않는다.
+       #editor로 스코프를 좁혀야(ID 선택자) 전역 규칙을 이긴다. */
+    #editor QScrollBar:vertical {{
+        background: transparent;
+        width: 10px;
+        margin: 2px;
+    }}
+    #editor QScrollBar::handle:vertical {{
+        background: {t["scroll"]};
+        border-radius: 3px;
+        min-height: 30px;
+    }}
+    #editor QScrollBar::handle:vertical:hover {{
+        background: {t["scroll_hover"]};
+    }}
+    #editor QScrollBar:horizontal {{
+        background: transparent;
+        height: 10px;
+        margin: 2px;
+    }}
+    #editor QScrollBar::handle:horizontal {{
+        background: {t["scroll"]};
+        border-radius: 3px;
+        min-width: 30px;
+    }}
+    #editor QScrollBar::handle:horizontal:hover {{
+        background: {t["scroll_hover"]};
+    }}
+    #editor QScrollBar::add-line, #editor QScrollBar::sub-line {{
+        width: 0; height: 0;
+    }}
+    #editor QScrollBar::add-page, #editor QScrollBar::sub-page {{
+        background: transparent;
     }}
     QLineEdit#searchInput {{
         background-color: {t["input_bg"]};
@@ -470,18 +526,6 @@ def body_stylesheet(t: dict[str, str], side: str = "right") -> str:
     QPushButton#iconBtn:hover {{
         background-color: rgba(0,0,0,0.10);
         border-radius: 4px;
-    }}
-    QPushButton#backBtn {{
-        background-color: {t["input_bg"]};
-        color: {t["text"]};
-        border: 1px solid {t["border"]};
-        border-radius: 4px;
-        padding: 4px 8px;
-        font-size: 10pt;
-        text-align: left;
-    }}
-    QPushButton#backBtn:hover {{
-        background-color: rgba(0,0,0,0.12);
     }}
     QToolButton#sortCombo {{
         background-color: {t["input_bg"]};
@@ -533,6 +577,65 @@ def body_stylesheet(t: dict[str, str], side: str = "right") -> str:
     """
 
 
+COLUMN_RADIUS = 8  # 탭 컬럼 바깥면 라운드 (본문 라운드와 같은 값)
+
+# 메뉴 아이콘 색/크기.
+# - 색: 컨텍스트 메뉴는 QMenu()를 부모 없이 만들어 앱 스타일시트(어두운 QMenu 정의)를
+#   물려받지 못한다 → 실제 배경은 흰색이므로 어두운 아이콘이어야 보인다.
+# - 크기: 스타일이 PM_SmallIconSize(=16)로 요청하므로 이 값을 올려도 화면에선 안 커진다.
+#   잘 안 보이면 색을 진하게 하거나 굵은 변형(menu_*.svg)을 쓴다.
+MENU_ICON_COLOR = "#1e1e2e"
+MENU_ICON_SIZE = 16
+
+_TINT_CACHE: dict[tuple[str, str, int], QPixmap] = {}
+
+
+def tinted_pixmap(asset_name: str, color: str, size: int) -> QPixmap:
+    """SVG 아이콘을 원하는 색으로 물들여 반환 (결과는 캐시).
+
+    Material Symbols SVG는 fill이 고정이라 어두운 배경 위에서는 그대로 쓸 수 없다.
+    렌더한 뒤 SourceIn 합성으로 색만 덮어씌운다.
+    """
+    key = (asset_name, color, size)
+    cached = _TINT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    base = QIcon(str(_asset(asset_name))).pixmap(size, size)
+    tinted = QPixmap(base.size())
+    tinted.fill(Qt.GlobalColor.transparent)
+    p = QPainter(tinted)
+    p.drawPixmap(0, 0, base)
+    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    p.fillRect(tinted.rect(), QColor(color))
+    p.end()
+    _TINT_CACHE[key] = tinted
+    return tinted
+
+
+def menu_icon(asset_name: str) -> QIcon:
+    """어두운 컨텍스트 메뉴용 아이콘."""
+    return QIcon(tinted_pixmap(asset_name, MENU_ICON_COLOR, MENU_ICON_SIZE))
+
+
+def _outer_radius_qss(side: str, *, top: bool, bottom: bool) -> str:
+    """탭 컬럼 요소의 바깥면 모서리를 둥글게 하는 QSS 조각.
+
+    바깥면 = 본문이 있는(있던) 쪽. 접으면 컬럼만 남아 그 면이 바깥으로 드러나고,
+    펼치면 본문과 맞닿는다. 접힘 여부와 무관하게 항상 둥글다.
+
+    top/bottom으로 한쪽 끝만 둥글게 할 수 있다 — 여러 위젯이 세로로 붙어 한 덩어리로
+    보여야 할 때(설정/휴지통/추가) 맨 위·맨 아래만 주기 위한 것.
+    """
+    outer = "left" if side == "right" else "right"
+    # 먼저 전부 0으로 깔고 필요한 모서리만 덮어쓴다 (QSS는 뒤에 온 선언이 이김)
+    parts = ["border-radius: 0;"]
+    if top:
+        parts.append(f"border-top-{outer}-radius: {COLUMN_RADIUS}px;")
+    if bottom:
+        parts.append(f"border-bottom-{outer}-radius: {COLUMN_RADIUS}px;")
+    return "".join(parts)
+
+
 class MemoTabButton(QPushButton):
     """메모별 색깔 탭. 세로 회전한 제목을 표시."""
 
@@ -540,8 +643,23 @@ class MemoTabButton(QPushButton):
     button_height = MEMO_TAB_HEIGHT  # 클래스 변수: 설정에서 조절 시 갱신
     app_font_family: str = ""  # 글로벌 폰트 family (회전 텍스트에 사용)
 
-    SEL_BAR_WIDTH = 4  # 선택 인디케이터 띠 굵기 (px)
-    BG_ALPHA = 0.85  # 메모 인덱스 배경 알파 (조금 투명)
+    SEL_BORDER_WIDTH = 3  # 선택 표시 테두리 굵기 (px)
+    # 1.0 = 불투명. 본문과 같은 선명도로 보이게 한다 (낮출수록 비쳐 보임).
+    BG_ALPHA = 1.0
+    PIN_ICON_SIZE = 16    # 고정 표시 아이콘 한 변 (px)
+    PIN_TOP_MARGIN = 6    # 탭 위쪽 끝에서 최소 이만큼 떨어뜨린다
+    PIN_TEXT_GAP = 4      # 핀과 회전 제목 사이 간격
+    # (글자색, 크기) → 틴트된 핀 픽스맵. 매 paint마다 다시 만들지 않게 캐시한다.
+
+    @staticmethod
+    def _pin_pixmap(fg: str, size: int) -> QPixmap:
+        """핀 아이콘을 글자색으로 물들여 반환. SVG는 fill이 고정이라 메모 배경이
+        어두우면 안 보이므로, 렌더한 뒤 SourceIn으로 색을 덮어씌운다.
+
+        인덱스 표시는 '고정됨' 상태이므로 채워진 변형을 쓴다 — 이 크기에서 외곽선
+        변형은 속이 빈 선이라 거의 안 보인다 (상단 버튼은 동작이라 outlined).
+        """
+        return tinted_pixmap("keep_fill_icon.svg", fg, size)
 
     def __init__(self, memo: Memo, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -555,18 +673,24 @@ class MemoTabButton(QPushButton):
             )
             self._fg = _text_color_for(rep)
             # 선택 인디케이터 색: 그라데이션의 대표색을 어둡게 (같은 hue 계열)
-            self._sel_bar_color = _darken_hex(rep, 0.35)
+            self._sel_color = _darken_hex(rep, 0.35)
         else:
             hex_color = resolve_color(memo.color)
             self._bg = _hex_to_rgba(hex_color, MemoTabButton.BG_ALPHA)
             self._fg = _text_color_for(hex_color)
-            self._sel_bar_color = _darken_hex(hex_color, 0.35)
+            self._sel_color = _darken_hex(hex_color, 0.35)
         self.memo_title = memo.title.strip() or "(제목 없음)"
         self.is_pinned = memo.is_pinned
         # 메모별 폰트 (없으면 글로벌 default = 클래스 변수)
         self._font_family = memo.font_family or MemoTabButton.app_font_family
         self._selected = False
         self.setFixedHeight(MemoTabButton.button_height)
+        # QPushButton 기본 최소 폭(48px)이 인덱스 컬럼(36px)보다 커서 탭이 잘리고,
+        # 선택 테두리가 붙으면 그 최소값이 커지며 레이아웃이 밀린다. 내용은 전부
+        # 직접 그리므로 크기 힌트가 필요 없다 → 가로는 레이아웃이 주는 대로 받는다.
+        # (minimumWidth(0)만으론 부족하다 — 기본 정책이 Minimum이라 힌트가 하한이 된다)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setMinimumWidth(0)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         tip = ("📌 " if self.is_pinned else "") + self.memo_title
         self.setToolTip(tip)
@@ -579,29 +703,19 @@ class MemoTabButton(QPushButton):
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        # 1.5) 선택 인디케이터 — stylesheet border가 좌/우 모드에서 가시성이 일관되지 않아
-        #     직접 그린다. accent는 본문과 만나는 면 = side의 반대편.
-        if self._selected:
-            accent = "left" if MemoTabButton.side == "right" else "right"
-            bar_w = MemoTabButton.SEL_BAR_WIDTH
-            if accent == "left":
-                bar_rect = QRect(0, 0, bar_w, self.height())
-            else:
-                bar_rect = QRect(self.width() - bar_w, 0, bar_w, self.height())
-            painter.fillRect(bar_rect, QColor(self._sel_bar_color))
+        # (선택 표시 테두리는 stylesheet이 그린다 — border-radius를 자동으로 따라가므로
+        #  직접 그리면 모서리가 각져 나온다. update_style 참고.)
 
         # 2) 고정 표시 (회전 전, 탭 상단 중앙)
         pin_h = 0
+        size = MemoTabButton.PIN_ICON_SIZE
+        # 핀은 항상 같은 자리 — 위쪽 여백만큼 내려서 그린다. 아래 제목 영역을
+        # pin_h만큼 비워두므로 제목 길이와 무관하게 겹치지 않는다.
         if self.is_pinned:
-            pin_h = 15
-            pf = self.font()
-            pf.setPointSize(9)
-            painter.setFont(pf)
-            painter.setPen(QColor(self._fg))
-            painter.drawText(
-                QRect(0, 1, self.width(), pin_h),
-                int(Qt.AlignmentFlag.AlignCenter),
-                "📌",
+            pin_h = MemoTabButton.PIN_TOP_MARGIN + size + MemoTabButton.PIN_TEXT_GAP
+            painter.drawPixmap(
+                (self.width() - size) // 2, MemoTabButton.PIN_TOP_MARGIN,
+                MemoTabButton._pin_pixmap(self._fg, size),
             )
 
         # 3) 세로 회전 제목 (시계방향 90도 → 위에서 아래로 읽힘)
@@ -627,28 +741,30 @@ class MemoTabButton(QPushButton):
         painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), elided)
         painter.end()
 
-    def update_style(self, selected: bool) -> None:
-        # stylesheet은 배경만 담당. 선택 인디케이터는 paintEvent에서 직접 그림.
-        # 라운드는 0 — 메모 탭들을 한 띠로 보이게 한다.
-        # 같은 selected 값이면 setStyleSheet polish 다시 안 호출 (성능).
-        if getattr(self, "_style_applied", False) and self._selected == selected:
-            return
-        self._selected = selected
-        self.setStyleSheet(
-            f"QPushButton {{"
-            f"  background: {self._bg};"
-            f"  border: none;"
-            f"  border-radius: 0;"
-            f"}}"
-        )
-        self._style_applied = True
-        self.update()
+    @staticmethod
+    def _radius_qss() -> str:
+        """메모 탭은 낱개로 둥글다 (위·아래 모두)."""
+        return _outer_radius_qss(MemoTabButton.side, top=True, bottom=True)
 
-    def set_selected_only(self, selected: bool) -> None:
-        """stylesheet 재적용 없이 인디케이터 표시만 토글 — expand/collapse 시 호출."""
-        if self._selected == selected:
-            return
+    def update_style(self, selected: bool) -> None:
+        # 선택 표시 테두리를 stylesheet에 함께 넣는다 — 같은 규칙 안에 있어야 Qt가
+        # border-radius를 따라 모서리를 둥글게 그려준다. 직접 QPainter로 그리면
+        # 호를 손으로 계산해야 하고, 반지름이 어긋나면 모서리가 각져 보인다.
         self._selected = selected
+        state = (MemoTabButton.side, selected)
+        if getattr(self, "_style_state", None) != state:
+            self._style_state = state
+            pw = MemoTabButton.SEL_BORDER_WIDTH
+            border = (
+                f"border: {pw}px solid {self._sel_color};" if selected else "border: none;"
+            )
+            self.setStyleSheet(
+                f"QPushButton {{"
+                f"  background: {self._bg};"
+                f"  {border}"
+                f"  {self._radius_qss()}"
+                f"}}"
+            )
         self.update()
 
 
@@ -844,6 +960,136 @@ class TableDialog(QDialog):
 
     def values(self) -> tuple[int, int, bool]:
         return self.rows_spin.value(), self.cols_spin.value(), self.header_check.isChecked()
+
+
+class VersionDialog(QDialog):
+    """이전 버전 목록 + 미리보기. 선택한 버전으로 되돌린다."""
+
+    def __init__(self, versions: list[MemoVersion], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("이전 버전")
+        self.resize(660, 440)
+        self._versions = versions
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(
+            QLabel(
+                f"자동 저장된 이전 내용 {len(versions)}개입니다.\n"
+                "되돌려도 지금 내용이 버전으로 남으므로 다시 취소할 수 있습니다."
+            )
+        )
+
+        row = QHBoxLayout()
+        self.list = QListWidget()
+        self.list.setFixedWidth(180)
+        for v in versions:
+            self.list.addItem(_version_label(v))
+        row.addWidget(self.list)
+        self.preview = QTextBrowser()
+        self.preview.setOpenExternalLinks(False)
+        row.addWidget(self.preview, 1)
+        layout.addLayout(row)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        self._ok_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
+        self._ok_btn.setText("이 버전으로 되돌리기")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("닫기")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self.list.currentRowChanged.connect(self._on_row_changed)
+        if versions:
+            self.list.setCurrentRow(0)
+        else:
+            self._ok_btn.setEnabled(False)
+
+    def _on_row_changed(self, row: int) -> None:
+        v = self.selected()
+        self._ok_btn.setEnabled(v is not None)
+        if v is None:
+            self.preview.clear()
+        elif v.content and Qt.mightBeRichText(v.content):
+            self.preview.setHtml(v.content)
+        else:
+            self.preview.setPlainText(v.content)
+
+    def selected(self) -> MemoVersion | None:
+        row = self.list.currentRow()
+        return self._versions[row] if 0 <= row < len(self._versions) else None
+
+
+_UNSAFE_FILENAME_RE = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+def _safe_filename(name: str) -> str:
+    """제목을 파일명으로 쓸 수 있게 정리. Windows 금지문자·끝점 제거 후 길이 제한."""
+    cleaned = _UNSAFE_FILENAME_RE.sub("", name).strip().rstrip(". ")
+    return cleaned[:80] or "메모"
+
+
+def _embed_images(doc: QTextDocument) -> None:
+    """문서 안 이미지를 리소스로 등록한다. 에디터에 붙지 않은 QTextDocument는 이미지를
+    스스로 로드하지 않아서, 이 과정을 빼면 ODF 내보내기에서 이미지가 통째로 사라진다."""
+    block = doc.begin()
+    while block.isValid():
+        it = block.begin()
+        while not it.atEnd():
+            fragment = it.fragment()
+            if fragment.isValid() and fragment.charFormat().isImageFormat():
+                name = fragment.charFormat().toImageFormat().name()
+                image = QImage(name)
+                if not image.isNull():  # 파일이 지워졌으면 조용히 건너뛴다
+                    doc.addResource(
+                        QTextDocument.ResourceType.ImageResource, QUrl(name), image
+                    )
+            it += 1
+        block = block.next()
+
+
+def _memo_document(memo: Memo) -> QTextDocument:
+    """메모를 QTextDocument로. 제목이 있으면 맨 앞에 제목 문단(heading)으로 넣는다.
+    heading level을 지정해두면 md는 '# 제목', ODF/HTML은 제목 스타일로 나간다."""
+    doc = QTextDocument()
+    if memo.content and Qt.mightBeRichText(memo.content):
+        doc.setHtml(memo.content)
+    else:
+        doc.setPlainText(memo.content)
+    title = memo.title.strip()
+    if title:
+        cursor = QTextCursor(doc)
+        cursor.setPosition(0)
+        cursor.insertBlock()  # 본문 앞에 빈 블록을 만들고 그 블록을 제목으로 쓴다
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        block_fmt = QTextBlockFormat()
+        block_fmt.setHeadingLevel(1)
+        cursor.setBlockFormat(block_fmt)
+        char_fmt = QTextCharFormat()
+        char_fmt.setFontWeight(QFont.Weight.Bold)
+        char_fmt.setFontPointSize(18)
+        cursor.insertText(title, char_fmt)
+    _embed_images(doc)
+    return doc
+
+
+def _memo_as_text(memo: Memo, markdown: bool) -> str:
+    """메모를 내보내기용 텍스트로. 변환은 Qt가 한다(외부 의존성 없음)."""
+    doc = _memo_document(memo)
+    if markdown:
+        return doc.toMarkdown()
+    # toPlainText()는 이미지 자리에 U+FFFC(보이지 않는 자리표시자)를 남기므로 걷어낸다
+    return doc.toPlainText().replace("\ufffc", "")
+
+
+def _version_label(v: MemoVersion) -> str:
+    try:
+        stamp = datetime.fromisoformat(v.created_at).strftime("%m-%d %H:%M")
+    except ValueError:
+        stamp = v.created_at
+    title = v.title.strip() or "(제목 없음)"
+    return f"{stamp}  {title[:12]}"
 
 
 class GradientDialog(QDialog):
@@ -1783,10 +2029,19 @@ class DragGrip(QWidget):
         from PyQt6.QtCore import QRect
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        # 컬럼 버튼들과 같은 톤 — 라이트 배경 (알파 0.75 ≈ 191)
-        painter.setBrush(QColor(255, 255, 255, 191))
+        # 컬럼 버튼들과 같은 톤 — 불투명 흰색 (#newTabBtn 등과 동일)
+        painter.setBrush(QColor(255, 255, 255))
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRect(self.rect())
+        # 배경: 바깥면만 둥글게 (기준은 _outer_radius_qss와 동일).
+        # QSS가 아닌 직접 그리기라, 전체를 둥글게 칠한 뒤 반대쪽 절반을 사각으로
+        # 덮어 그 쪽 모서리만 각지게 되돌린다.
+        rect = self.rect()
+        painter.drawRoundedRect(rect, COLUMN_RADIUS, COLUMN_RADIUS)
+        half = rect.width() // 2
+        if MemoTabButton.side == "right":
+            painter.drawRect(rect.adjusted(half, 0, 0, 0))  # 바깥면=왼쪽
+        else:
+            painter.drawRect(rect.adjusted(0, 0, -half, 0))  # 바깥면=오른쪽
         if self._drag_icon is not None and not self._drag_icon.isNull():
             # tab_column 폭에 비례 — 너무 작으면 안 보이고 너무 크면 그립 영역 초과
             icon_size = max(12, min(int(self.width() * 0.55), 32))
@@ -2019,8 +2274,9 @@ class SlideMemoWindow(QWidget):
         """tab_width에 따라 컬럼 버튼 아이콘/폰트 크기를 비례 조절.
         (DragGrip은 paintEvent에서 자체 폭 기반으로 그리므로 자동 반응)"""
         size = max(12, min(int(self.tab_width * 0.55), 32))
-        self.settings_btn.setIconSize(QSize(size, size))
-        self.trash_btn.setIconSize(QSize(size, size))
+        for btn in (self.settings_btn, self.trash_btn,
+                    self.col_empty_btn, self.col_back_btn):
+            btn.setIconSize(QSize(size, size))
         # new_tab_btn의 "＋" 텍스트 크기도 함께 줄임
         font = self.new_tab_btn.font()
         font.setPointSize(max(9, int(size * 0.85)))
@@ -2237,20 +2493,8 @@ class SlideMemoWindow(QWidget):
         self.search_input.textChanged.connect(self._on_search_changed)
         top.addWidget(self.search_input, stretch=1)
 
-        self.back_btn = QPushButton("←  휴지통 닫기")
-        self.back_btn.setObjectName("backBtn")
-        self.back_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.back_btn.clicked.connect(self._exit_trash_mode)
-        self.back_btn.hide()
-        top.addWidget(self.back_btn, stretch=1)
-
-        # 휴지통 전체 비우기 버튼 (휴지통 모드에서만 표시)
-        self.trash_empty_btn = QPushButton("🗑 전체 비우기")
-        self.trash_empty_btn.setObjectName("backBtn")
-        self.trash_empty_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.trash_empty_btn.clicked.connect(self._empty_trash)
-        self.trash_empty_btn.hide()
-        top.addWidget(self.trash_empty_btn)
+        # 휴지통 닫기 / 전체 비우기는 인덱스 컬럼에 있다 (col_back_btn, col_empty_btn)
+        # — 본문 상단은 휴지통 모드에서도 검색/정렬 그대로 유지한다.
 
         # 정렬 드롭다운
         self.sort_combo = _SortSelector()
@@ -2260,6 +2504,28 @@ class SlideMemoWindow(QWidget):
         self.sort_combo.setCurrentIndex(max(0, min(saved, len(SORT_OPTIONS) - 1)))
         self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
         top.addWidget(self.sort_combo)
+
+        # 정렬 옆: 고정 토글 + 내보내기
+        self._keep_icon = QIcon(str(_asset("keep_icon.svg")))
+        self._keep_off_icon = QIcon(str(_asset("keep_off_icon.svg")))
+        self.pin_btn = QPushButton()
+        self.pin_btn.setObjectName("iconBtn")
+        self.pin_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.pin_btn.setFixedSize(28, 24)
+        self.pin_btn.setIconSize(QSize(17, 17))
+        self.pin_btn.clicked.connect(self._toggle_pin_current)
+        top.addWidget(self.pin_btn)
+
+        self.export_btn = QPushButton()
+        self.export_btn.setObjectName("iconBtn")
+        self.export_btn.setToolTip("메모 내보내기 (Ctrl+E)")
+        self.export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.export_btn.setFixedSize(28, 24)
+        self.export_btn.setIcon(QIcon(str(_asset("export_icon.svg"))))
+        self.export_btn.setIconSize(QSize(17, 17))
+        self.export_btn.clicked.connect(self._export_current_memo)
+        top.addWidget(self.export_btn)
+
         body_layout.addLayout(top)
 
         # 에디터 패널 (제목+색상 / 본문 / 미리보기 버튼)
@@ -2318,22 +2584,13 @@ class SlideMemoWindow(QWidget):
         self.editor.textChanged.connect(self._on_text_changed)
         self.editor.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.editor.customContextMenuRequested.connect(self._show_editor_context_menu)
+        # 메모마다 문서를 따로 두고 갈아끼운다 (undo 스택이 문서에 붙어 있으므로).
+        # 부모는 반드시 창 — 에디터 자식이면 setDocument가 이전 문서를 지워버린다.
+        self._doc_cache: dict[int, QTextDocument] = {}
+        self._scratch_doc = QTextDocument(self)  # 메모 아닌 내용(빈 화면·휴지통 미리보기)용
 
-        # 서식바: 서식 버튼들만 + 복사 버튼 (색상 dot/사용자 정의는 제목 줄로 분리)
+        # 서식바: 서식 버튼들만 (색상 dot/사용자 정의는 제목 줄로 분리)
         self.format_toolbar = FormatToolbar(self.editor)
-        fmt_layout = self.format_toolbar.layout()
-        fmt_layout.addSpacing(6)
-        self._copy_icon = QIcon(str(_asset("content_copy.svg")))
-        self._check_icon = QIcon(str(_asset("check.svg")))
-        self.copy_btn = QPushButton()
-        self.copy_btn.setObjectName("iconBtn")
-        self.copy_btn.setToolTip("메모 본문 전체 복사 (Ctrl+Shift+C)")
-        self.copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.copy_btn.setFixedSize(28, 24)
-        self.copy_btn.setIcon(self._copy_icon)
-        self.copy_btn.setIconSize(QSize(17, 17))
-        self.copy_btn.clicked.connect(self._copy_memo_text)
-        fmt_layout.addWidget(self.copy_btn)
 
         ep.addWidget(self.format_toolbar)
         ep.addWidget(self.editor, stretch=1)
@@ -2442,6 +2699,28 @@ class SlideMemoWindow(QWidget):
         self._trash_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._trash_badge.hide()
 
+        # 휴지통 모드 전용 (평소엔 숨김). 본문 상단이 아니라 컬럼에 두어
+        # 본문은 일반 모드와 같은 검색/정렬 화면을 유지한다.
+        self.col_empty_btn = QPushButton()
+        self.col_empty_btn.setObjectName("trashBtn")
+        self.col_empty_btn.setFixedHeight(NEW_TAB_HEIGHT)
+        self.col_empty_btn.setToolTip("휴지통 전체 비우기")
+        self.col_empty_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.col_empty_btn.setIcon(QIcon(str(_asset("delete_forever_icon.svg"))))
+        self.col_empty_btn.clicked.connect(self._empty_trash)
+        self.col_empty_btn.hide()
+        col_layout.addWidget(self.col_empty_btn)
+
+        self.col_back_btn = QPushButton()
+        self.col_back_btn.setObjectName("settingsBtn")
+        self.col_back_btn.setFixedHeight(NEW_TAB_HEIGHT)
+        self.col_back_btn.setToolTip("휴지통 닫기")
+        self.col_back_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.col_back_btn.setIcon(QIcon(str(_asset("back_icon.svg"))))
+        self.col_back_btn.clicked.connect(self._exit_trash_mode)
+        self.col_back_btn.hide()
+        col_layout.addWidget(self.col_back_btn)
+
         self.new_tab_btn = QPushButton("＋")
         self.new_tab_btn.setObjectName("newTabBtn")
         self.new_tab_btn.setFixedHeight(NEW_TAB_HEIGHT)
@@ -2481,6 +2760,16 @@ class SlideMemoWindow(QWidget):
         else:
             root.addWidget(self.tab_column)
             root.addWidget(self.body, stretch=1)
+        # 세로 스크롤바는 기본으로 뷰포트 오른쪽에 붙는다. 왼쪽 정렬이면 그 자리가
+        # 본문과 맞닿는 면이라 탭 테두리를 4px 잘라먹는다 → 방향을 뒤집어 화면
+        # 가장자리 쪽으로 보낸다. 탭은 세로 한 줄이라 내용 배치에는 영향이 없다.
+        self.tab_scroll.setLayoutDirection(
+            Qt.LayoutDirection.RightToLeft
+            if self.side == "left"
+            else Qt.LayoutDirection.LeftToRight
+        )
+        # 라운드 방향은 side에만 의존한다 → side가 바뀌는 이 지점에서만 갱신
+        self._update_column_style()
 
     def _update_handles(self) -> None:
         """리사이즈 핸들 위치 + 가시성 갱신 (side / 펼침 상태 반영).
@@ -2590,6 +2879,10 @@ class SlideMemoWindow(QWidget):
             ("Ctrl+Shift+H", lambda: self.format_toolbar.insert_datetime("korean")),
             # 메모 삭제 (모드별로 다른 동작)
             ("Ctrl+Shift+D", self._delete_current_memo),
+            # 이전 버전 (Ctrl+Z가 닿지 않는 범위를 되돌린다)
+            ("Ctrl+Alt+Z", self._show_current_versions),
+            # 내보내기
+            ("Ctrl+E", self._export_current_memo),
             # AI 기능
             ("Ctrl+Alt+S", lambda: self._run_ai_feature("summarize")),
             ("Ctrl+Alt+T", lambda: self._run_ai_feature("translate")),
@@ -3187,8 +3480,10 @@ class SlideMemoWindow(QWidget):
         if n > 0:
             self._trash_badge.setText(str(n) if n < 100 else "99+")
             self._trash_badge.adjustSize()
-            # trash_btn 우측 상단 — width가 아직 0이면 tab_width를 fallback으로
-            bw = self.trash_btn.width() or self.tab_width
+            # trash_btn 우측 상단. 버튼 폭은 컬럼 폭과 같으므로 tab_width를 쓴다 —
+            # trash_btn.width()는 레이아웃 전에 Qt 기본값(640)을 돌려줘서 배지가
+            # 버튼 밖(x≈621)에 놓이고, 다음 갱신 전까지 안 보인다.
+            bw = self.tab_width
             self._trash_badge.move(
                 max(2, bw - self._trash_badge.width() - 2), 2
             )
@@ -3216,11 +3511,15 @@ class SlideMemoWindow(QWidget):
         # 휴지통 메모는 보기 전용
         self.editor.setReadOnly(True)
         self.title_input.setReadOnly(True)
-        self.search_input.hide()
-        self.sort_combo.hide()
-        self.back_btn.show()
-        self.trash_empty_btn.show()
+        # 검색/정렬은 일반 모드와 동일하게 유지 — 휴지통에서도 찾고 정렬해야 한다.
+        # 휴지통 메모엔 의미 없는 것만 숨긴다.
+        self.pin_btn.hide()
+        self.export_btn.hide()
         self.new_tab_btn.hide()
+        # 휴지통 진입 버튼은 감춘다 — 나가는 길은 아래 '닫기' 하나로 충분하다
+        self.trash_btn.hide()
+        self.col_empty_btn.show()
+        self.col_back_btn.show()
         self._refresh_memo_tabs()
         # 진입 시 펼침 상태였다면 접음 (휴지통 메모 클릭하면 다시 펼치며 미리보기)
         if self.is_expanded:
@@ -3233,10 +3532,11 @@ class SlideMemoWindow(QWidget):
         self._trash_preview_id = None
         self.editor.setReadOnly(False)
         self.title_input.setReadOnly(False)
-        self.back_btn.hide()
-        self.trash_empty_btn.hide()
-        self.search_input.show()
-        self.sort_combo.show()
+        self.col_empty_btn.hide()
+        self.col_back_btn.hide()
+        self.trash_btn.show()
+        self.pin_btn.show()
+        self.export_btn.show()
         self.new_tab_btn.show()
         # 휴지통 진입 전에 보던 메모로 에디터 복원.
         # 그 메모가 그 사이 삭제됐거나 아예 메모가 0개면 활성 메모를 보장한다.
@@ -3369,10 +3669,7 @@ class SlideMemoWindow(QWidget):
         self.title_input.blockSignals(True)
         self.editor.blockSignals(True)
         self.title_input.setText(memo.title)
-        if memo.content and Qt.mightBeRichText(memo.content):
-            self.editor.setHtml(memo.content)
-        else:
-            self.editor.setPlainText(memo.content)
+        self._show_scratch(memo.content)  # 휴지통 미리보기는 임시 문서에
         self.title_input.blockSignals(False)
         self.editor.blockSignals(False)
         self._apply_memo_theme(memo.color)
@@ -3391,9 +3688,9 @@ class SlideMemoWindow(QWidget):
         except KeyError:
             return
         menu = QMenu()
-        restore_act = menu.addAction("복원")
+        restore_act = menu.addAction(menu_icon("menu_restore.svg"), "복원")
         menu.addSeparator()
-        purge_act = menu.addAction("영구 삭제")
+        purge_act = menu.addAction(menu_icon("menu_delete_forever.svg"), "영구 삭제")
         chosen = menu.exec(button.mapToGlobal(button.rect().center()))
         self.raise_()
 
@@ -3430,6 +3727,24 @@ class SlideMemoWindow(QWidget):
             if self.trash_mode and neighbor is not None:
                 self._preview_trashed(neighbor.id)
 
+    def _update_column_style(self) -> None:
+        """탭 컬럼 하단 버튼들의 바깥면 라운드를 현재 side에 맞춘다.
+
+        3개(설정·휴지통·추가)가 한 덩어리로 보여야 하므로 맨 위와 맨 아래 모서리만
+        둥글게 하고 가운데(휴지통)는 각지게 둔다. 그립은 직접 그리므로 다시
+        칠하라고만 알린다.
+        """
+        side = MemoTabButton.side
+        for btn, top, bottom in (
+            (self.settings_btn, True, False),
+            (self.trash_btn, False, False),
+            (self.new_tab_btn, False, True),
+        ):
+            btn.setStyleSheet(
+                f"QPushButton {{ {_outer_radius_qss(side, top=top, bottom=bottom)} }}"
+            )
+        self.drag_grip.update()
+
     def _update_tabs_selected(self) -> None:
         # 접힘(collapse) 상태에서는 인디케이터를 보이지 않게 — 펼친 메모가 없으니
         # 어떤 탭에도 selected 표시가 남지 않도록.
@@ -3440,8 +3755,7 @@ class SlideMemoWindow(QWidget):
         for i in range(self.tabs_layout.count()):
             w = self.tabs_layout.itemAt(i).widget()
             if isinstance(w, MemoTabButton):
-                # stylesheet 재적용 비용 없이 인디케이터 표시만 토글
-                w.set_selected_only(w.memo_id == current_id)
+                w.update_style(selected=(w.memo_id == current_id))
 
     def select_memo(self, memo_id: int) -> None:
         # 이미 선택된 메모를 다시 누르면 토글 (열려있으면 접고, 접혀있으면 펴기)
@@ -3461,6 +3775,44 @@ class SlideMemoWindow(QWidget):
         self._update_tabs_selected()
         self.expand()
 
+    # ----- 메모별 문서(undo 스택) 캐시 -----
+    def _document_for(self, memo: Memo) -> QTextDocument:
+        """메모 전용 문서를 돌려준다. 문서마다 undo 스택을 따로 들고 있어서
+        다른 메모에 갔다 돌아와도 Ctrl+Z가 그대로 동작한다."""
+        doc = self._doc_cache.pop(memo.id, None)  # pop 후 재삽입 = LRU 갱신
+        if doc is None:
+            doc = QTextDocument(self)
+            if memo.content and Qt.mightBeRichText(memo.content):
+                doc.setHtml(memo.content)
+            else:
+                doc.setPlainText(memo.content)
+            doc.clearUndoRedoStacks()  # 최초 내용 주입은 취소 대상이 아니다
+        self._doc_cache[memo.id] = doc
+        # 방금 넣은 항목이 맨 뒤이므로 앞에서 버리면 현재 문서는 절대 안 걸린다
+        while len(self._doc_cache) > UNDO_CACHE_SIZE:
+            self._doc_cache.pop(next(iter(self._doc_cache))).deleteLater()
+        return doc
+
+    def _show_scratch(self, content: str) -> None:
+        """메모가 아닌 내용을 임시 문서에 띄운다. 캐시된 메모 문서를
+        건드리지 않기 위한 것 — 직접 setHtml하면 그 메모의 undo 스택이 날아간다."""
+        self.editor.setDocument(self._scratch_doc)
+        if content and Qt.mightBeRichText(content):
+            self._scratch_doc.setHtml(content)
+        else:
+            self._scratch_doc.setPlainText(content)
+        self._scratch_doc.clearUndoRedoStacks()
+
+    def _forget_doc(self, memo_id: int) -> None:
+        """캐시된 문서를 버린다. 에디터 밖에서 내용이 바뀐 경우(버전 복원) 필수 —
+        안 버리면 낡은 문서가 다시 붙는다."""
+        doc = self._doc_cache.pop(memo_id, None)
+        if doc is None:
+            return
+        if doc is self.editor.document():
+            self.editor.setDocument(self._scratch_doc)
+        doc.deleteLater()
+
     def _load_memo(self, memo: Memo) -> None:
         self.current_memo = memo
         self.title_input.blockSignals(True)
@@ -3470,16 +3822,14 @@ class SlideMemoWindow(QWidget):
         family = memo.font_family or self.editor_font.family()
         size = memo.font_size or self.editor_font.pointSize() or 11
         editor_font = QFont(family, size)
-        self.editor.setFont(editor_font)
         # 제목은 본문 크기와 무관하게 13pt 고정 (family만 일치)
         title_font = QFont(family, 13)
         title_font.setBold(True)
         self.title_input.setFont(title_font)
-        # content가 HTML이면 setHtml, 옛 plain text 메모면 setPlainText
-        if memo.content and Qt.mightBeRichText(memo.content):
-            self.editor.setHtml(memo.content)
-        else:
-            self.editor.setPlainText(memo.content)
+        # 메모 전용 문서로 교체 (내용도 문서가 들고 온다)
+        self.editor.setDocument(self._document_for(memo))
+        # setFont는 "현재 문서"의 기본 폰트를 바꾸므로 반드시 setDocument 뒤에 와야 한다
+        self.editor.setFont(editor_font)
         self.title_input.blockSignals(False)
         self.editor.blockSignals(False)
         # round-trip된 HTML로 동기화 → 불필요한 자동저장 방지
@@ -3488,17 +3838,19 @@ class SlideMemoWindow(QWidget):
         self._apply_memo_theme(memo.color)
         # 메모 탭의 회전 텍스트도 그 메모의 family를 따라가도록 클래스 변수 갱신
         MemoTabButton.app_font_family = family
+        self._update_pin_btn()
 
     def _clear_editor(self) -> None:
         self.current_memo = None
         self.title_input.blockSignals(True)
         self.editor.blockSignals(True)
         self.title_input.clear()
-        self.editor.clear()
+        self._show_scratch("")  # editor.clear()는 붙어 있는 메모 문서를 지워버린다
         self.title_input.blockSignals(False)
         self.editor.blockSignals(False)
         self._update_color_buttons(DEFAULT_COLOR)
         self._apply_memo_theme(DEFAULT_COLOR)
+        self._update_pin_btn()
 
     def _apply_memo_theme(self, color_name: str | None) -> None:
         """선택된 메모 색을 본문(메모장) 배경/입력 요소에 반영."""
@@ -3558,19 +3910,28 @@ class SlideMemoWindow(QWidget):
         except KeyError:
             return
         menu = QMenu()
+        # 아이콘은 상단 버튼과 같은 Material Symbols. 메뉴 배경이 어두워 틴트가 필요하다.
         pin_act = menu.addAction(
-            "📌 고정 해제" if memo.is_pinned else "📌 고정"
+            menu_icon("menu_keep_off.svg" if memo.is_pinned else "menu_keep.svg"),
+            "고정 해제" if memo.is_pinned else "고정",
         )
+        hist_act = menu.addAction(menu_icon("menu_history.svg"), "이전 버전…")
+        export_act = menu.addAction(menu_icon("menu_export.svg"), "내보내기…")
         menu.addSeparator()
-        del_act = menu.addAction("🗑 휴지통으로 이동")
+        del_act = menu.addAction(menu_icon("menu_delete.svg"), "휴지통으로 이동")
         chosen = menu.exec(button.mapToGlobal(pos))
         self.raise_()
 
+        if chosen == hist_act:
+            self._show_versions(memo_id)
+            return
+
+        if chosen == export_act:
+            self._export_memo(memo_id)
+            return
+
         if chosen == pin_act:
-            self.db.set_pinned(memo_id, not memo.is_pinned)
-            if self.current_memo and self.current_memo.id == memo_id:
-                self.current_memo.is_pinned = not memo.is_pinned
-            self._refresh_memo_tabs()
+            self._set_pinned(memo_id, not memo.is_pinned)
             return
 
         if chosen == del_act:
@@ -3609,6 +3970,103 @@ class SlideMemoWindow(QWidget):
                     self._clear_editor()
             else:
                 self._refresh_memo_tabs()
+
+    # ----- 고정 -----
+    def _set_pinned(self, memo_id: int, pinned: bool) -> None:
+        """고정 상태 변경 + 화면 갱신. 탭 우클릭 메뉴와 상단 버튼이 함께 쓴다."""
+        self.db.set_pinned(memo_id, pinned)
+        if self.current_memo and self.current_memo.id == memo_id:
+            self.current_memo.is_pinned = pinned
+        self._refresh_memo_tabs()
+        self._update_pin_btn()
+
+    def _toggle_pin_current(self) -> None:
+        if self.current_memo is None:
+            self._show_toast("고정할 메모를 먼저 선택하세요.")
+            return
+        self._set_pinned(self.current_memo.id, not self.current_memo.is_pinned)
+
+    def _update_pin_btn(self) -> None:
+        """버튼은 '누르면 일어날 일'을 보여준다 — 고정 상태면 해제 아이콘."""
+        if not hasattr(self, "pin_btn"):
+            return
+        pinned = bool(self.current_memo and self.current_memo.is_pinned)
+        self.pin_btn.setIcon(self._keep_off_icon if pinned else self._keep_icon)
+        self.pin_btn.setToolTip("고정 해제" if pinned else "메모 고정")
+        self.pin_btn.setEnabled(self.current_memo is not None)
+
+    # ----- 내보내기 -----
+    def _export_current_memo(self) -> None:
+        if self.current_memo is None:
+            self._show_toast("내보낼 메모를 먼저 선택하세요.")
+            return
+        self._export_memo(self.current_memo.id)
+
+    def _export_memo(self, memo_id: int) -> None:
+        """메모를 .md 또는 .txt 파일로 저장. 확장자로 형식을 정한다."""
+        if self.current_memo and self.current_memo.id == memo_id:
+            self.save_now()  # 편집 중인 내용까지 내보내려면 먼저 확정
+        try:
+            memo = self.db.get(memo_id)
+        except KeyError:
+            return
+        suggested = Path.home() / f"{_safe_filename(memo.title)}.odt"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "메모 내보내기",
+            str(suggested),
+            # Qt가 .docx를 못 쓴다 (지원: HTML/ODF/markdown/plaintext). ODF는 Word가
+            # 그대로 여는 개방 표준이라 이걸 쓴다 — 라벨에 용도를 밝힌다.
+            "문서 — Word에서 열기 (*.odt);;마크다운 (*.md);;텍스트 (*.txt)",
+        )
+        if not path:
+            return
+        suffix = Path(path).suffix.lower()
+        try:
+            if suffix == ".odt":
+                # ODF는 Qt가 직접 파일로 쓴다 (zip 컨테이너라 텍스트로는 못 씀)
+                writer = QTextDocumentWriter(path)
+                writer.setFormat(b"ODF")
+                if not writer.write(_memo_document(memo)):
+                    self._show_toast("내보내기 실패: 파일을 쓸 수 없습니다.")
+                    return
+            else:
+                Path(path).write_text(
+                    _memo_as_text(memo, markdown=suffix != ".txt"), encoding="utf-8"
+                )
+        except OSError as e:
+            self._show_toast(f"내보내기 실패: {e}")
+            return
+        self._show_toast(f"저장했습니다: {Path(path).name}")
+
+    # ----- 버전 히스토리 -----
+    def _show_current_versions(self) -> None:
+        if self.current_memo is None:
+            self._show_toast("메모를 먼저 선택하세요.")
+            return
+        self._show_versions(self.current_memo.id)
+
+    def _show_versions(self, memo_id: int) -> None:
+        """이전 버전 목록을 열고, 고른 버전으로 되돌린다."""
+        is_current = bool(self.current_memo and self.current_memo.id == memo_id)
+        if is_current:
+            self.save_now()  # 편집 중인 내용을 확정해야 목록이 최신 상태를 반영한다
+        versions = self.db.list_versions(memo_id)
+        if not versions:
+            self._show_toast("아직 저장된 이전 버전이 없습니다.")
+            return
+        dlg = VersionDialog(versions, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        version = dlg.selected()
+        if version is None:
+            return
+        memo = self.db.restore_version(version.id)
+        self._forget_doc(memo_id)  # 캐시된 문서는 되돌리기 전 내용을 들고 있다
+        if is_current:
+            self._load_memo(memo)
+        self._refresh_memo_tabs()
+        self._show_toast(f"{_version_label(version)} 버전으로 되돌렸습니다.")
 
     # ----- text change / autosave -----
     def _on_text_changed(self) -> None:
@@ -3663,6 +4121,8 @@ class SlideMemoWindow(QWidget):
         if title == self.current_memo.title and content == self.current_memo.content:
             return
         try:
+            # 덮어쓰기 전에 이전 내용을 버전으로 보관 (간격 제한은 db.snapshot이 판단)
+            self.db.snapshot(self.current_memo.id)
             self.current_memo = self.db.update(
                 self.current_memo.id, title=title, content=content
             )
@@ -3691,9 +4151,8 @@ class SlideMemoWindow(QWidget):
         QApplication.clipboard().setText(text)
         # 자기 자신이 복사한 내용은 클립보드 캡쳐 알림으로 다시 띄우지 않게 기록
         self._last_self_copy = text
-        # 1초간 체크 아이콘 피드백
-        self.copy_btn.setIcon(self._check_icon)
-        QTimer.singleShot(1000, lambda: self.copy_btn.setIcon(self._copy_icon))
+        # 버튼이 내보내기로 바뀌어 아이콘 피드백을 줄 자리가 없다 → 토스트로 알린다
+        self._show_toast("본문을 복사했습니다.")
 
     # ----- 클립보드 자동 캡쳐 -----
     def _check_clipboard(self) -> None:
@@ -3935,7 +4394,7 @@ def _set_windows_app_user_model_id() -> None:
         pass  # 구버전 Windows 등 — 아이콘이 기본값으로 떨어지더라도 앱은 정상 동작
 
 
-APP_VERSION = "1.0.9"
+APP_VERSION = "1.1.0"
 _GITHUB_REPO = "yujeong0411/SlideMemo"
 
 
