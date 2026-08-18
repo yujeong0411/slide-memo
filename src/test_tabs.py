@@ -90,6 +90,51 @@ for _side in ("left", "right"):
     # 각진 쪽 모서리는 꽉 차 있어야 한다
     assert alpha_at(img, square_x, 1) > 200, (_side, alpha_at(img, square_x, 1))
 
+# ----- 탭 테두리 -----
+# 접힘 상태에서 색이 비슷한 탭끼리 경계가 뭉개져서 낱개로 윤곽을 준다 (4면 전부).
+Tab.side = "right"
+_tab = Tab(_memo)
+_tab.update_style(selected=False)
+_qss = _tab.styleSheet()
+# 선 색은 그 탭 색을 어둡게 한 것에서 파생된다 (탭마다 달라지는 게 의도)
+_outline = m._hex_to_rgba(_tab._sel_color, Tab.OUTLINE_ALPHA)
+assert f"border: 1px solid {_outline}" in _qss, _qss
+assert "border: none" not in _qss, _qss  # 어느 면도 빠지면 안 된다
+# 색이 다른 탭은 선 색도 달라야 한다 (무채색으로 굳으면 여기서 걸린다)
+_other = Tab(Memo(id=2, title="t", content="", color="blossom", created_at="", updated_at=""))
+_other.update_style(selected=False)
+assert _other._sel_color != _tab._sel_color
+assert m._hex_to_rgba(_other._sel_color, Tab.OUTLINE_ALPHA) in _other.styleSheet()
+# 선택 시엔 선택 테두리(3px)가 이긴다
+_tab.update_style(selected=True)
+assert f"{Tab.SEL_BORDER_WIDTH}px solid" in _tab.styleSheet(), _tab.styleSheet()
+
+
+def _lum_rgb(c):
+    return 0.299 * c.red() + 0.587 * c.green() + 0.114 * c.blue()
+
+
+# 실제로 4면에 그려지는지 픽셀로 확인 — 각 변의 1px이 안쪽보다 뚜렷하게 어두워야 한다
+_t = Tab(_memo)
+_t.resize(W, H)
+_t.update_style(selected=False)
+_pm = QPixmap(_t.size())
+_pm.fill(QColor(255, 255, 255))
+_t.render(_pm, QPoint(), QRegion(), QWidget.RenderFlag.DrawChildren)
+_im = _pm.toImage()
+# 높이는 setFixedHeight로 고정돼 resize가 안 먹는다 → 실제 위젯 크기로 읽어야 한다
+_w, _h = _t.width(), _t.height()
+_mx, _my = _w // 2, _h // 2  # 라운드 모서리를 피해 각 변의 가운데에서 읽는다
+for _tag, _edge, _inner in (
+    ("위", (_mx, 0), (_mx, 4)),
+    ("아래", (_mx, _h - 1), (_mx, _h - 5)),
+    ("왼쪽", (0, _my), (4, _my)),
+    ("오른쪽", (_w - 1, _my), (_w - 5, _my)),
+):
+    _gap = _lum_rgb(_im.pixelColor(*_edge)) - _lum_rgb(_im.pixelColor(*_inner))
+    assert _gap < -12, (f"{_tag} 테두리가 안 보인다", _gap)
+
+
 # ----- 본문과 인덱스 컬럼의 이음매 -----
 # 펼치면 컬럼 뒤를 본문 배경으로 채운다. 둘이 좌우로 붙으므로 그라데이션이 세로가
 # 아니면(예: 대각선) 폭이 다른 만큼 진행도가 어긋나 경계가 드러난다.

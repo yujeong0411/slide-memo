@@ -26,6 +26,22 @@ d3 = m._gradient_def("grad:#000000,#ffffff,#ff0000")
 assert len(d3["stops"]) == 3 and d3["stops"][0][0] == 0.0 and d3["stops"][-1][0] == 1.0
 
 
+# ----- 사용자 색 슬롯 -----
+# 저장 문자열 ↔ 목록 왕복. DB 값도 신뢰 경계라 깨진 값은 걸러져야 한다.
+assert m.parse_color_slots("") == []                       # 아무것도 추가 안 함 → 점 2개
+assert m.parse_color_slots("grad:#abc|grad:#def") == ["grad:#abc", "grad:#def"]
+assert m.parse_color_slots("grad:#abc||") == ["grad:#abc"]  # 구버전 마이그레이션 빈칸
+assert m.parse_color_slots("ivory|blush") == ["ivory", "blush"]   # 구버전 이름 프리셋
+assert m.parse_color_slots("grad:#abc|;background:red") == ["grad:#abc"]  # QSS 주입 차단
+assert len(m.parse_color_slots("|".join(["grad:#abc"] * 9))) == m.MAX_USER_SLOTS
+_slots = ["grad:#abc", "grad:#def"]
+assert m.parse_color_slots("|".join(_slots)) == _slots      # 저장 → 로드 왕복
+
+# 슬롯 값은 전부 ColorDot 배경으로 들어간다 → KeyError 없이 렌더 가능해야
+for _v in ["grad:#abc", "ivory", "#ff0000"]:
+    assert m.gradient_qss(_v) if m.is_gradient(_v) else m.resolve_color(_v)
+
+
 # ----- 스크롤바 대비 -----
 # 원래 버그: 전역 STYLE이 흰색 18%라 밝은 파스텔 메모색 위에서 안 보였다.
 # 색을 다시 만질 때 같은 실수를 하면 여기서 걸린다.

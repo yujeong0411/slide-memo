@@ -81,7 +81,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from database import DEFAULT_COLOR, IMAGES_DIR, Memo, MemoDatabase, MemoVersion
+from database import (
+    DEFAULT_COLOR,
+    IMAGES_DIR,
+    Memo,
+    MemoDatabase,
+    MemoVersion,
+    normalize_color,
+)
 
 
 # ----- 상수 -----
@@ -179,10 +186,21 @@ GRADIENTS = {
         "representative": "#BADFDB",
     },
 }
-# 팔레트: 앞 2개는 고정 그라데이션, 뒤 3개는 사용자가 우클릭으로 편집하는 슬롯.
+# 팔레트: 아이덴티티 색 2개는 고정. 그 뒤는 사용자가 +로 직접 추가하는 슬롯(0~4개)이라
+# 아무것도 추가하지 않으면 점은 2개만 보인다.
 COLOR_FIXED = ["sunrise", "blossom"]
-USER_SLOT_KEYS = ["user_slot_1", "user_slot_2", "user_slot_3"]
-USER_SLOT_DEFAULTS = ["ivory", "blush", "mint"]
+USER_SLOTS_KEY = "user_slots"
+MAX_USER_SLOTS = 4
+# v1.0.9의 고정 슬롯 3칸. 사용자가 실제로 편집한 값만 행이 있으므로 그대로 이어받는다.
+_LEGACY_SLOT_KEYS = ["user_slot_1", "user_slot_2", "user_slot_3"]
+_SLOTS_UNSET = "\x00"  # 설정 행이 아예 없음 (빈 슬롯 목록 ""과 구분)
+
+
+def parse_color_slots(raw: str) -> list[str]:
+    """저장된 슬롯 문자열 → 색 목록. DB 값도 신뢰 경계라 정규화를 통과 못하면 버린다
+    (ColorDot이 그대로 QSS에 넣으므로 깨진 값은 크래시/주입이 된다)."""
+    slots = [p.strip() for p in raw.split("|")]
+    return [p for p in slots if p and normalize_color(p) == p][:MAX_USER_SLOTS]
 
 
 def is_gradient(name: str | None) -> bool:
@@ -644,6 +662,11 @@ class MemoTabButton(QPushButton):
     app_font_family: str = ""  # 글로벌 폰트 family (회전 텍스트에 사용)
 
     SEL_BORDER_WIDTH = 3  # 선택 표시 테두리 굵기 (px)
+    # 탭 테두리. 접으면 색이 비슷한 탭끼리 경계가 뭉개져서 낱개로 윤곽을 준다.
+    # 색은 그 탭 색을 어둡게 한 것(_sel_color)에서 파생시킨다 — 탭마다 선 색이
+    # 달라지지만 탭 색 자체가 다르므로 그게 맞다. 튜닝 노브: 올리면 진해진다.
+    # 4면 전부 두르므로 펼쳤을 때 본문과 맞닿는 면에도 선이 남는다 (의도된 선택).
+    OUTLINE_ALPHA = 0.35
     # 1.0 = 불투명. 본문과 같은 선명도로 보이게 한다 (낮출수록 비쳐 보임).
     BG_ALPHA = 1.0
     PIN_ICON_SIZE = 16    # 고정 표시 아이콘 한 변 (px)
@@ -755,8 +778,10 @@ class MemoTabButton(QPushButton):
         if getattr(self, "_style_state", None) != state:
             self._style_state = state
             pw = MemoTabButton.SEL_BORDER_WIDTH
+            outline = _hex_to_rgba(self._sel_color, MemoTabButton.OUTLINE_ALPHA)
             border = (
-                f"border: {pw}px solid {self._sel_color};" if selected else "border: none;"
+                f"border: {pw}px solid {self._sel_color};" if selected
+                else f"border: 1px solid {outline};"
             )
             self.setStyleSheet(
                 f"QPushButton {{"
@@ -769,7 +794,7 @@ class MemoTabButton(QPushButton):
 
 
 class ColorDot(QPushButton):
-    """색상 선택용 작은 원형 버튼. editable이면 우클릭으로 색 편집 요청."""
+    """색상 선택용 작은 원형 버튼. editable이면 우클릭으로 편집/삭제 메뉴 요청."""
 
     edit_requested = pyqtSignal()
 
@@ -780,7 +805,7 @@ class ColorDot(QPushButton):
         self._selected = False
         self.setFixedSize(16, 16)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip(color_name + ("  (우클릭: 색 편집)" if editable else ""))
+        self.setToolTip(color_name + ("  (우클릭: 편집·삭제)" if editable else ""))
         if editable:
             self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             self.customContextMenuRequested.connect(lambda _p: self.edit_requested.emit())
@@ -789,7 +814,7 @@ class ColorDot(QPushButton):
     def set_color(self, color_name: str) -> None:
         self.color_name = color_name
         if self.editable:
-            self.setToolTip(color_name + "  (우클릭: 색 편집)")
+            self.setToolTip(color_name + "  (우클릭: 편집·삭제)")
         self.set_selected(self._selected)
 
     def set_selected(self, selected: bool) -> None:
@@ -799,7 +824,8 @@ class ColorDot(QPushButton):
         if is_gradient(self.color_name):
             bg = gradient_qss(self.color_name)
         else:
-            bg = COLORS[self.color_name]
+            # COLORS[...] 직접 인덱싱은 저장된 슬롯이 솔리드 hex일 때 KeyError였다
+            bg = resolve_color(self.color_name)
         self.setStyleSheet(
             f"background: {bg};"
             f" border: {border_w}px solid {border_color};"
@@ -2213,11 +2239,15 @@ class SlideMemoWindow(QWidget):
         self._load_display_mode()  # Tool 플래그 결정에 필요
         self._setup_window()
         self._setup_fonts()
-        self._color_slots = [
-            self.db.get_setting_str(k, d)
-            for k, d in zip(USER_SLOT_KEYS, USER_SLOT_DEFAULTS)
-        ]
+        # 센티널로 "행 없음"과 "빈 값"을 구분한다. 빈 문자열로 판단하면 슬롯을 전부
+        # 지웠을 때 마이그레이션이 다시 돌아 구버전 슬롯이 되살아난다.
+        raw = self.db.get_setting_str(USER_SLOTS_KEY, _SLOTS_UNSET)
+        if raw == _SLOTS_UNSET:  # 구버전 마이그레이션: 편집해둔 슬롯만 행이 있다
+            raw = "|".join(self.db.get_setting_str(k, "") for k in _LEGACY_SLOT_KEYS)
+        self._color_slots = parse_color_slots(raw)
         self._build_ui()
+        # 색 점은 _build_ui 이후에 — setVisible이 아직 부모 없는 위젯을 별도 창으로 띄운다
+        self._rebuild_color_dots()
         self._setup_animation()
         self._setup_shortcuts()
         self._setup_autosave()
@@ -2548,31 +2578,21 @@ class SlideMemoWindow(QWidget):
         title_row.setContentsMargins(0, 0, 0, 0)
         title_row.setSpacing(4)
         title_row.addWidget(self.title_input, stretch=1)
+        self.title_row = title_row
         self.color_dots: list[ColorDot] = []
-        for name in COLOR_FIXED:
-            dot = ColorDot(name)
-            dot.clicked.connect(lambda _c, d=dot: self._on_color_changed(d.color_name))
-            title_row.addWidget(dot)
-            self.color_dots.append(dot)
-        for slot_idx, value in enumerate(self._color_slots):
-            dot = ColorDot(value, editable=True)
-            dot.clicked.connect(lambda _c, d=dot: self._on_color_changed(d.color_name))
-            dot.edit_requested.connect(lambda i=slot_idx, d=dot: self._edit_color_slot(i, d))
-            title_row.addWidget(dot)
-            self.color_dots.append(dot)
-        # 사용자 지정 색상 버튼 (+): 클릭 시 색상 선택 다이얼로그
-        self.custom_color_btn = QPushButton("+")
-        self.custom_color_btn.setFixedSize(16, 16)
-        self.custom_color_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.custom_color_btn.setToolTip("사용자 지정 색상...")
-        self.custom_color_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.custom_color_btn.setStyleSheet(
+        # 색 추가 버튼 (+): 팔레트에 새 슬롯을 만든다. 슬롯이 꽉 차면 숨는다.
+        self.add_color_btn = QPushButton("+")
+        self.add_color_btn.setFixedSize(16, 16)
+        self.add_color_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.add_color_btn.setToolTip("색 추가...")
+        self.add_color_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.add_color_btn.setStyleSheet(
             "background-color: rgba(0,0,0,0.05); color: #1e1e2e;"
             " border: 1px dashed rgba(0,0,0,0.4); border-radius: 8px;"
             " font-weight: bold;"
         )
-        self.custom_color_btn.clicked.connect(self._on_custom_color)
-        title_row.addWidget(self.custom_color_btn)
+        self.add_color_btn.clicked.connect(self._add_color_slot)
+        title_row.addWidget(self.add_color_btn)
         ep.addLayout(title_row)
 
         # 에디터 (서식바가 참조하므로 먼저 생성)
@@ -3859,29 +3879,9 @@ class SlideMemoWindow(QWidget):
         # 색상 점 버튼은 항상 자기 색깔 유지하므로 별도 처리 없음.
 
     def _update_color_buttons(self, current_color: str) -> None:
-        dot_values = [d.color_name for d in self.color_dots]
-        is_preset = (
-            current_color in COLORS
-            or current_color in GRADIENTS
-            or current_color in dot_values
-        )
+        # 팔레트에 없는 색(슬롯 삭제 후 등)이면 아무 점도 선택 표시되지 않는다.
         for dot in self.color_dots:
             dot.set_selected(dot.color_name == current_color)
-        # 커스텀(+) 버튼: 프리셋이 아니면 그 색을 칠하고 선택 강조
-        if is_preset:
-            self.custom_color_btn.setText("+")
-            self.custom_color_btn.setStyleSheet(
-                "background-color: rgba(0,0,0,0.05); color: #1e1e2e;"
-                " border: 1px dashed rgba(0,0,0,0.4); border-radius: 8px;"
-                " font-weight: bold;"
-            )
-        else:
-            bg = gradient_qss(current_color) if is_gradient(current_color) else resolve_color(current_color)
-            self.custom_color_btn.setText("")
-            self.custom_color_btn.setStyleSheet(
-                f"background-color: {bg};"
-                f" border: 2px solid #1e1e2e; border-radius: 8px;"
-            )
 
     # ----- new / delete -----
     def create_new_memo(self) -> None:
@@ -4083,18 +4083,57 @@ class SlideMemoWindow(QWidget):
         self._apply_memo_theme(actual)
         self._refresh_memo_tabs()
 
-    def _on_custom_color(self) -> None:
-        """다색 그라데이션 다이얼로그로 사용자 지정 색을 적용."""
-        if self.current_memo is None:
-            return
-        cur = self.current_memo.color
-        prefill = [c for _s, c in _gradient_def(cur)["stops"]] if is_gradient(cur) else None
-        dlg = GradientDialog(prefill, self)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._on_color_changed("grad:" + ",".join(dlg.values()))
+    def _rebuild_color_dots(self) -> None:
+        """색 점을 다시 그린다: 고정 2개 + 사용자 슬롯(0~MAX_USER_SLOTS). 슬롯을 추가·
+        삭제하면 개수가 바뀌므로 매번 새로 만든다."""
+        for dot in self.color_dots:
+            self.title_row.removeWidget(dot)
+            dot.deleteLater()
+        self.color_dots = []
+        for i, name in enumerate(COLOR_FIXED + self._color_slots):
+            editable = i >= len(COLOR_FIXED)
+            dot = ColorDot(name, editable=editable)
+            dot.clicked.connect(lambda _c, d=dot: self._on_color_changed(d.color_name))
+            if editable:
+                dot.edit_requested.connect(lambda d=dot: self._show_slot_menu(d))
+            # + 버튼은 항상 맨 끝이므로 그 앞에 끼워 넣는다
+            self.title_row.insertWidget(self.title_row.count() - 1, dot)
+            self.color_dots.append(dot)
+        self.add_color_btn.setVisible(len(self._color_slots) < MAX_USER_SLOTS)
+        self._update_color_buttons(
+            self.current_memo.color if self.current_memo else DEFAULT_COLOR
+        )
 
-    def _edit_color_slot(self, slot_idx: int, dot: ColorDot) -> None:
-        """편집 가능한 팔레트 슬롯(뒤 3개)의 색을 바꾼다. DB 설정에 영구 저장."""
+    def _save_color_slots(self) -> None:
+        self.db.set_setting_str(USER_SLOTS_KEY, "|".join(self._color_slots))
+
+    def _show_slot_menu(self, dot: ColorDot) -> None:
+        menu = QMenu()
+        edit_act = menu.addAction("색 편집…")
+        del_act = menu.addAction("삭제")
+        chosen = menu.exec(dot.mapToGlobal(dot.rect().bottomLeft()))
+        self.raise_()
+        if chosen == edit_act:
+            self._edit_color_slot(dot)
+        elif chosen == del_act:
+            self._delete_color_slot(dot)
+
+    def _add_color_slot(self) -> None:
+        """+ 버튼: 팔레트에 슬롯을 추가하고 현재 메모에 바로 적용."""
+        if len(self._color_slots) >= MAX_USER_SLOTS:
+            return
+        dlg = GradientDialog(None, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        value = "grad:" + ",".join(dlg.values())
+        self._color_slots.append(value)
+        self._save_color_slots()
+        self._rebuild_color_dots()
+        self._on_color_changed(value)
+
+    def _edit_color_slot(self, dot: ColorDot) -> None:
+        """사용자 슬롯의 색을 바꾼다. DB 설정에 영구 저장."""
+        slot_idx = self.color_dots.index(dot) - len(COLOR_FIXED)
         cur = dot.color_name
         prefill = [c for _s, c in _gradient_def(cur)["stops"]] if is_gradient(cur) else None
         dlg = GradientDialog(prefill, self)
@@ -4102,7 +4141,7 @@ class SlideMemoWindow(QWidget):
             return
         value = "grad:" + ",".join(dlg.values())
         self._color_slots[slot_idx] = value
-        self.db.set_setting_str(USER_SLOT_KEYS[slot_idx], value)
+        self._save_color_slots()
         dot.set_color(value)
         # 현재 메모가 방금 편집한 슬롯 색을 쓰고 있었다면 새 색으로 즉시 갱신
         if self.current_memo is not None and self.current_memo.color == cur:
@@ -4111,6 +4150,13 @@ class SlideMemoWindow(QWidget):
             self._update_color_buttons(
                 self.current_memo.color if self.current_memo else DEFAULT_COLOR
             )
+
+    def _delete_color_slot(self, dot: ColorDot) -> None:
+        """슬롯을 팔레트에서 뺀다. 그 색을 쓰던 메모의 색은 그대로 남는다
+        (메모 color 컬럼에 값이 통째로 저장돼 있어 팔레트와 무관)."""
+        del self._color_slots[self.color_dots.index(dot) - len(COLOR_FIXED)]
+        self._save_color_slots()
+        self._rebuild_color_dots()
 
     def save_now(self) -> None:
         if self.current_memo is None:
@@ -4450,6 +4496,30 @@ class UpdateDialog(QDialog):
         self.accept()
 
 
+PALETTE_NOTICE_KEY = "seen_palette_notice_1_1_0"
+
+
+def _show_palette_notice(window: "SlideMemoWindow", db: MemoDatabase, is_upgrade: bool) -> None:
+    """색 팔레트 개편 안내를 업그레이드 사용자에게 딱 한 번 띄운다.
+    신규 설치는 바뀐 게 없으니 제외. 플래그를 먼저 저장해 다시 뜨는 일이 없게 한다."""
+    if not is_upgrade or db.get_setting_str(PALETTE_NOTICE_KEY, "") == "1":
+        return
+    db.set_setting_str(PALETTE_NOTICE_KEY, "1")
+    box = QMessageBox(window)
+    box.setWindowTitle("색 팔레트가 바뀌었어요")
+    box.setIcon(QMessageBox.Icon.Information)
+    box.setText("메모 색을 직접 고르고 관리할 수 있게 바뀌었습니다.")
+    box.setInformativeText(
+        "· 기본 색은 2개만 남고, <b>+ 버튼</b>으로 원하는 색을 최대 4개까지 추가합니다.<br>"
+        "· 추가한 색 위에서 <b>우클릭</b>하면 편집·삭제할 수 있어요.<br>"
+        "· 직접 편집해두셨던 색은 그대로 옮겨왔습니다.<br>"
+        "· <b>기존 메모의 색은 그대로</b>입니다."
+    )
+    box.setWindowFlags(box.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+    box.exec()
+    window._force_topmost()
+
+
 def main() -> int:
     # HiDPI 환경에서 좌표/스케일 어긋남 방지 (QApplication 생성 전에 호출)
     QApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -4508,7 +4578,8 @@ def main() -> int:
     for removed in db.cleanup_old_trash(days=30):
         _delete_memo_images(removed.content)
     # 활성 메모가 하나도 없으면 빈 메모 1개를 자동 생성 (첫 실행 / 모두 삭제 직후 모두 포함)
-    if not db.list_all():
+    is_upgrade = bool(db.list_all())  # 메모가 이미 있으면 신규 설치가 아니다
+    if not is_upgrade:
         db.create()
 
     window = SlideMemoWindow(db)
@@ -4521,6 +4592,7 @@ def main() -> int:
     window._tray = tray  # 참조 유지
 
     splash.finish(window)
+    _show_palette_notice(window, db, is_upgrade)
 
     _checker = UpdateChecker()
     _checker.update_available.connect(
