@@ -4440,7 +4440,7 @@ def _set_windows_app_user_model_id() -> None:
         pass  # 구버전 Windows 등 — 아이콘이 기본값으로 떨어지더라도 앱은 정상 동작
 
 
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 _GITHUB_REPO = "yujeong0411/SlideMemo"
 
 
@@ -4496,7 +4496,7 @@ class UpdateDialog(QDialog):
         self.accept()
 
 
-PALETTE_NOTICE_KEY = "seen_palette_notice_1_1_0"
+PALETTE_NOTICE_KEY = "seen_palette_notice_1_1_1"
 
 
 def _show_palette_notice(window: "SlideMemoWindow", db: MemoDatabase, is_upgrade: bool) -> None:
