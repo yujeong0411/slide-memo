@@ -69,4 +69,12 @@ assert m.theme_for("#101020")["scroll"].startswith("rgba(245"), m.theme_for("#10
 # 그라데이션도 대표색 기준 hex를 돌려준다
 assert m.theme_for("grad:#ffd9a0,#ffb3c1")["scroll"].startswith("#")
 
+# v1.1.1: '어두운 커스텀 그라데이션'만 theme_for에서 scroll 키가 빠져 있었다. 그 색이 DB에
+# 남아 켤 때마다 KeyError → 앱이 안 켜졌다. theme_for 결과만 보면 못 잡으니 실제로
+# stylesheet까지 만들어본다. 밝기 판정선이 0.55라 빨강·파랑 같은 평범한 색도 '어두움'이다.
+for _c in ["sunrise", "grad:#ff0000", "grad:#4a90d9", "grad:#101020",
+           "grad:#ffb3c1", "#ff0000", "#fff7c4", "peach", None]:
+    for _side in ("right", "left"):
+        assert "#bodyPanel" in m.body_stylesheet(m.theme_for(_c), _side), (_c, _side)
+
 print("colors OK")

@@ -379,62 +379,36 @@ def _text_color_for(hex_color: str) -> str:
     return "#1e1e2e" if luminance > 0.55 else "#f5f5f5"
 
 
-# 프리셋은 라이트 톤이라 어두운 글자, 커스텀 다크 색이면 밝은 글자로 전환.
-# 그라데이션은 라이트 톤 가정 → 어두운 글자 + 에디터 투명 처리(bodyPanel 한 장에 그라데이션이 비쳐 보이게).
 def theme_for(color: str | None) -> dict[str, str]:
-    if is_gradient(color):
-        # 세로 방향 — 탭(MemoTabButton)과 인덱스 컬럼 채움도 세로라, 셋이 같은
-        # y 범위를 공유해 좌우로 붙어도 색이 이어진다. 대각선이면 폭이 다른 위젯끼리
-        # 진행도가 어긋나 경계가 드러난다.
-        bg = gradient_qss(color, coords=(0, 0, 0, 1))
-        # 대표색 밝기로 글자색 결정 → 커스텀 어두운 그라데이션도 가독성 유지
-        if _text_color_for(resolve_color(color)) == "#1e1e2e":
-            return {
-                "bg": bg,
-                "editor_bg": "transparent",
-                "text": "#1e1e2e",
-                "text_sub": "rgba(30, 30, 46, 0.55)",
-                "border": "rgba(0, 0, 0, 0.15)",
-                "focus": "#1e1e2e",
-                "input_bg": "rgba(255, 255, 255, 0.35)",
-                # 스크롤바: 메모 자기 색의 진한 톤 (탭 선택 띠와 같은 방식)
-                "scroll": _darken_hex(resolve_color(color), 0.35),
-                "scroll_hover": _darken_hex(resolve_color(color), 0.22),
-            }
-        return {
-            "bg": bg,
-            "editor_bg": "transparent",
-            "text": "#f5f5f5",
-            "text_sub": "rgba(245, 245, 245, 0.6)",
-            "border": "rgba(255, 255, 255, 0.22)",
-            "focus": "#f5f5f5",
-            "input_bg": "rgba(255, 255, 255, 0.10)",
-        }
+    """어떤 색이든 항상 같은 키 집합을 돌려준다. 갈래마다 dict를 따로 만들면 한 갈래에
+    키가 빠져도 그 색을 쓰는 사람이 나올 때까지 아무도 모르고, 그 색은 DB에 남으므로
+    켤 때마다 KeyError가 나서 앱이 아예 안 켜진다 (v1.1.1 '어두운 커스텀 그라데이션')."""
+    grad = is_gradient(color)
+    # 대표색 밝기로 글자색 결정 → 커스텀 어두운 색/그라데이션도 가독성 유지
     base = resolve_color(color)
-    if _text_color_for(base) == "#1e1e2e":
-        return {
-            "bg": base,
-            "editor_bg": base,
-            "text": "#1e1e2e",
-            "text_sub": "rgba(30, 30, 46, 0.55)",
-            "border": "rgba(0, 0, 0, 0.15)",
-            "focus": "#1e1e2e",
-            "input_bg": "rgba(0, 0, 0, 0.05)",
-            # 스크롤바: 메모 자기 색의 진한 톤 (탭 선택 띠와 같은 방식)
-            "scroll": _darken_hex(base, 0.35),
-            "scroll_hover": _darken_hex(base, 0.22),
-        }
+    light = _text_color_for(base) == "#1e1e2e"
+    if light:
+        input_bg = "rgba(255, 255, 255, 0.35)" if grad else "rgba(0, 0, 0, 0.05)"
+    else:
+        input_bg = "rgba(255, 255, 255, 0.10)"
     return {
-        "bg": base,
-        "editor_bg": base,
-        "text": "#f5f5f5",
-        "text_sub": "rgba(245, 245, 245, 0.6)",
-        "border": "rgba(255, 255, 255, 0.22)",
-        "focus": "#f5f5f5",
-        "input_bg": "rgba(255, 255, 255, 0.10)",
-        # 어두운 배경에선 진하게 하면 오히려 묻힌다 → 밝은 쪽으로
-        "scroll": "rgba(245, 245, 245, 0.55)",
-        "scroll_hover": "rgba(245, 245, 245, 0.85)",
+        # 그라데이션은 세로 방향 — 탭(MemoTabButton)과 인덱스 컬럼 채움도 세로라, 셋이
+        # 같은 y 범위를 공유해 좌우로 붙어도 색이 이어진다. 대각선이면 폭이 다른
+        # 위젯끼리 진행도가 어긋나 경계가 드러난다.
+        "bg": gradient_qss(color, coords=(0, 0, 0, 1)) if grad else base,
+        # 그라데이션은 bodyPanel 한 장에 비쳐 보이도록 에디터를 투명 처리
+        "editor_bg": "transparent" if grad else base,
+        "text": "#1e1e2e" if light else "#f5f5f5",
+        "text_sub": "rgba(30, 30, 46, 0.55)" if light else "rgba(245, 245, 245, 0.6)",
+        "border": "rgba(0, 0, 0, 0.15)" if light else "rgba(255, 255, 255, 0.22)",
+        "focus": "#1e1e2e" if light else "#f5f5f5",
+        "input_bg": input_bg,
+        # 밝은 배경이면 메모 자기 색의 진한 톤 (탭 선택 띠와 같은 방식).
+        # 어두운 배경에선 진하게 하면 오히려 묻힌다 → 밝은 쪽으로.
+        "scroll": _darken_hex(base, 0.35) if light else "rgba(245, 245, 245, 0.55)",
+        "scroll_hover": (
+            _darken_hex(base, 0.22) if light else "rgba(245, 245, 245, 0.85)"
+        ),
     }
 
 
@@ -3874,8 +3848,15 @@ class SlideMemoWindow(QWidget):
 
     def _apply_memo_theme(self, color_name: str | None) -> None:
         """선택된 메모 색을 본문(메모장) 배경/입력 요소에 반영."""
-        t = theme_for(color_name)
-        self.body.setStyleSheet(body_stylesheet(t, self.side))
+        # 이 함수는 시작 시 _load_memo 경로에서 무조건 실행된다. 여기서 예외가 나면
+        # 그 색이 DB에 남아 있는 한 앱이 영영 안 켜지고, 사용자는 데이터를 지우는 것
+        # 말고 방법이 없어진다(v1.1.1 실제 사고). 색 하나 잘못 그리는 편이 낫다.
+        try:
+            sheet = body_stylesheet(theme_for(color_name), self.side)
+        except Exception as e:
+            print(f"[theme] {color_name!r} 적용 실패, 기본색으로 대체: {e}")
+            sheet = body_stylesheet(theme_for(DEFAULT_COLOR), self.side)
+        self.body.setStyleSheet(sheet)
         # 색상 점 버튼은 항상 자기 색깔 유지하므로 별도 처리 없음.
 
     def _update_color_buttons(self, current_color: str) -> None:
