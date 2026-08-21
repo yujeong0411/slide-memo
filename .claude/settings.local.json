@@ -27,7 +27,22 @@
       "PowerShell(Stop-Process *)",
       "PowerShell(cd \"C:\\\\Users\\\\choiy\\\\Desktop\\\\SlideMemo\\\\dist\"; $proc = Start-Process -FilePath \".\\\\SlideMemo.exe\" -RedirectStandardOutput \"..\\\\debug_out.txt\" -RedirectStandardError \"..\\\\debug_err.txt\" -NoNewWindow -PassThru -Wait; Write-Host \"Exit: $\\($proc.ExitCode\\)\")",
       "Bash(git commit -m ' *)",
-      "PowerShell(.venv\\\\Scripts\\\\python.exe -m PyInstaller SlideMemo.spec --clean 2>&1)"
+      "PowerShell(.venv\\\\Scripts\\\\python.exe -m PyInstaller SlideMemo.spec --clean 2>&1)",
+      "Bash(./.venv/Scripts/python.exe src/test_hide.py)",
+      "Bash(./.venv/Scripts/python.exe src/test_boot.py)",
+      "Bash(./.venv/Scripts/python.exe src/test_tabs.py)",
+      "Bash(./.venv/Scripts/python.exe _hotkey_e2e.py)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(./.venv/Scripts/python.exe -)",
+      "PowerShell(.\\\\bump_version.ps1 1.2.0 -NoCommit)",
+      "PowerShell(uv lock *)",
+      "PowerShell(git *)",
+      "PowerShell($p = Start-Process \"dist\\\\SlideMemo\\\\SlideMemo.exe\" -PassThru; Start-Sleep -Seconds 6; $alive = -not $p.HasExited; \"alive=$alive\"; if \\($alive\\) { $w = Get-Process SlideMemo -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle }; \"window=$\\($w.MainWindowTitle\\)\"; Stop-Process -Id $p.Id -Force -Confirm:$false })",
+      "PowerShell(& \"C:\\\\Program Files \\(x86\\)\\\\Inno Setup 6\\\\ISCC.exe\" SlideMemo.iss 2>&1 | Select-Object -Last 4; Get-Item installer\\\\SlideMemo-Setup.exe | Select-Object Name, @{n='MB';e={[math]::Round\\($_.Length/1MB,1\\)}}, LastWriteTime)",
+      "PowerShell(& \"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" release create v1.2.0 --title \"Slide Memo v1.2.0\" --generate-notes installer\\\\SlideMemo-Setup.exe)",
+      "PowerShell($gh = Get-Command gh -ErrorAction SilentlyContinue; if \\($gh\\) { $gh.Source } else { Get-ChildItem \"C:\\\\Program Files\\\\GitHub CLI\",\"$env:LOCALAPPDATA\\\\Programs\" -Filter gh.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName })",
+      "PowerShell(Test-Path *)",
+      "PowerShell(Get-Item *)"
     ]
   }
 }
