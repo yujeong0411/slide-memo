@@ -6,6 +6,9 @@ dependencies = [
     "keyring>=25.7.0",
     "litellm>=1.85.1",
     "numpy>=2.4.6",
+    # audio_recorder가 Whisper 호출에 직접 쓴다. litellm이 끌고 오긴 하지만
+    # 간접 의존에 기대면 litellm이 끊는 날 녹음 기능만 조용히 죽는다.
+    "openai>=1.0.0",
     "pyqt6>=6.11.0",
     "sounddevice>=0.5.5",
     "soundfile>=0.13.1",

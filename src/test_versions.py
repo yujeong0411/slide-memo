@@ -51,3 +51,64 @@ assert len(db.list_versions(m2.id)) == 1
 
 db.close()
 print("versions OK")
+
+
+def test_ai_replace_snapshots_first():
+    """AI 결과로 본문을 덮어쓰기 전에 직전 상태가 버전으로 남는지."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import tempfile
+    from pathlib import Path
+    from PyQt6.QtWidgets import QApplication
+    import main as M
+
+    app = QApplication.instance() or QApplication([])
+    with tempfile.TemporaryDirectory() as d:
+        db = MemoDatabase(Path(d) / "t.db")
+        memo = db.create(title="t", content="<p>사진 있는 본문</p>")
+        win = M.SlideMemoWindow(db)
+        win._load_memo(memo)
+        win.editor.setHtml('<p><img src="x.png">원래 내용</p>')
+        before = win.editor.toHtml()
+
+        win._apply_ai_result("summarize", "요약된 평문")
+
+        assert "요약된 평문" in win.editor.toPlainText()
+        assert "<img" in win.editor.toHtml(), "덮어쓰기 후 이미지가 사라졌다"
+        versions = db.list_versions(memo.id)
+        assert versions, "AI 적용 전 버전이 남지 않았다"
+        assert versions[0].content == before, "직전 상태가 아닌 내용이 저장됐다"
+        assert "img" in versions[0].content, "이미지가 포함된 상태로 복구 불가"
+        win.db.close()
+    print("ai-replace snapshot OK")
+
+
+test_ai_replace_snapshots_first()
+
+
+def test_search_escapes_like_wildcards():
+    """검색어의 %와 _가 와일드카드로 새지 않는지."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
+        db = MemoDatabase(Path(d) / "s.db")
+        db.create(title="할인 100% 적용", content="")
+        db.create(title="100원 짜리", content="")
+        db.create(title="a_b 파일", content="")
+        db.create(title="axb 파일", content="")
+
+        hits = [m.title for m in db.search("100%")]
+        assert hits == ["할인 100% 적용"], hits
+
+        hits = [m.title for m in db.search("a_b")]
+        assert hits == ["a_b 파일"], hits
+
+        # 이스케이프 문자 자체도 리터럴로 다뤄져야 한다
+        db.create(title="경로 C:\temp", content="")
+        assert [m.title for m in db.search("C:\temp")] == ["경로 C:\temp"]
+        db.close()
+    print("search escape OK")
+
+
+test_search_escapes_like_wildcards()

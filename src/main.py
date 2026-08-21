@@ -40,6 +40,7 @@ from PyQt6.QtGui import (
     QTextCharFormat,
     QTextCursor,
     QTextDocument,
+    QTextDocumentFragment,
     QTextDocumentWriter,
     QTextImageFormat,
     QTextListFormat,
@@ -82,6 +83,7 @@ from PyQt6.QtWidgets import (
 )
 
 from database import (
+    APP_DIR,
     DEFAULT_COLOR,
     IMAGES_DIR,
     Memo,
@@ -94,7 +96,7 @@ from database import (
 # ----- 상수 -----
 TAB_WIDTH = 36          # 인덱스 가로 (기본값; 설정에서 조절)
 TAB_WIDTH_MIN = 24
-TAB_WIDTH_MAX = 60
+TAB_WIDTH_MAX = 100
 EXPANDED_WIDTH = 520
 HEIGHT_RATIO = 0.55
 ANIM_DURATION = 150  # body 페이드 시간
@@ -878,6 +880,14 @@ class RichPasteTextEdit(QTextEdit):
 
         if has_text:
             self.textCursor().insertText(source.text(), QTextCharFormat())
+            return
+
+        # text/plain 없이 text/html만 주는 소스(일부 웹앱·아웃룩 웹 등).
+        # 그대로 super()에 넘기면 원본 글꼴/크기/색이 통째로 따라 붙으므로
+        # html에서 평문만 뽑아 서식 없이 넣는다.
+        if source.hasHtml():
+            plain = QTextDocumentFragment.fromHtml(source.html()).toPlainText()
+            self.textCursor().insertText(plain, QTextCharFormat())
             return
 
         super().insertFromMimeData(source)
@@ -2813,6 +2823,12 @@ class SlideMemoWindow(QWidget):
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
         t = event.type()
+        # 콤보박스 드롭다운 등 팝업이 떠 있으면 z-order를 건드리지 않는다.
+        # raise_()가 창 그룹을 재정렬하면서 방금 열린 팝업을 덮어버려
+        # "드롭다운이 내려왔다 바로 사라지는" 현상이 생긴다.
+        # (nativeEvent의 topmost 강제도 같은 이유로 팝업 중엔 건너뛴다)
+        if QApplication.activePopupWidget() is not None:
+            return False
         if t == QEvent.Type.Enter:
             w = obj
             while w is not None:
@@ -2929,7 +2945,9 @@ class SlideMemoWindow(QWidget):
         # 텍스트 수집: 선택 영역 우선, 없으면 전체 본문
         cursor = self.editor.textCursor()
         text = cursor.selectedText() if cursor.hasSelection() else self.editor.toPlainText()
-        text = text.strip()
+        # toPlainText/selectedText는 이미지를 U+FFFC로, 줄바꿈을 U+2029로 준다.
+        # 그대로 보내면 모델이 정체불명의 문자를 그대로 옮겨 적는다.
+        text = text.replace("\ufffc", "").replace("\u2029", "\n").strip()
         if not text:
             self._show_toast("처리할 텍스트가 없습니다.")
             return
@@ -2945,6 +2963,11 @@ class SlideMemoWindow(QWidget):
         self._ai_pending = feature_key
         self._show_ai_progress(f"⏳ AI {feature['label']} 중...")
 
+        # 직전 워커 정리. parent=self라 재할당만으로는 안 죽고 창의 자식으로 쌓인다.
+        # 여기 도달했다는 건 위 isRunning() 검사를 통과했다는 뜻이라 안전하다.
+        # (커스텀 finished 시그널이 QThread.finished를 가려서 그쪽엔 못 붙인다)
+        if self._ai_worker is not None:
+            self._ai_worker.deleteLater()
         self._ai_worker = AIWorker(feature_key, provider, model, text, parent=self)
         self._ai_worker.finished.connect(
             lambda k, r, t: self._on_ai_finished(k, r, t, show_preview)
@@ -3042,6 +3065,9 @@ class SlideMemoWindow(QWidget):
             )
             return
         from audio_recorder import WhisperWorker
+        # 직전 워커 정리 (위 _ai_worker와 같은 이유). 아직 변환 중이면 두고 간다.
+        if self._whisper_worker is not None and not self._whisper_worker.isRunning():
+            self._whisper_worker.deleteLater()
         self._whisper_worker = WhisperWorker(saved, api_key, parent=self)
         self._whisper_worker.finished.connect(
             lambda text: self._on_whisper_finished(text, saved)
@@ -3114,7 +3140,9 @@ class SlideMemoWindow(QWidget):
         self._ai_status_lbl.hide()
 
         # 토큰 사용량 누적
-        prev = int(self.db.get_setting_str("ai_usage_tokens", "0") or "0")
+        # get_setting_int는 값이 깨졌을 때 기본값으로 떨어진다. 문자열로 읽어
+        # int()를 돌리면 시그널 핸들러 안에서 ValueError가 나 앱이 죽는다.
+        prev = self.db.get_setting_int("ai_usage_tokens", 0)
         self.db.set_setting_str("ai_usage_tokens", str(prev + tokens))
 
         if show_preview:
@@ -3167,25 +3195,37 @@ class SlideMemoWindow(QWidget):
         output = feature.get("output", "replace")
         cursor = self.editor.textCursor()
 
+        # AI 결과는 평문이라 본문을 덮어쓰면 이미지·서식이 함께 사라진다.
+        # 되돌릴 수 있게 적용 직전 상태를 버전으로 남긴다 (Ctrl+Alt+Z).
+        # save_now를 먼저 불러 편집 중이던 내용을 DB에 반영한 뒤 스냅샷을 떠야
+        # 자동저장 이후 친 내용까지 정확히 보존된다.
+        if self.current_memo is not None:
+            self.save_now()
+            self.db.snapshot(self.current_memo.id, force=True)
+
         if output == "title":
             self.title_input.setText(result)
-            self._show_toast(f"✓ 제목이 생성되었습니다.")
+            self._show_toast("✓ 제목이 생성되었습니다.")
         elif output == "replace":
-            if cursor.hasSelection():
-                cursor.insertText(result)
-            else:
+            # AI 응답은 평문이라 그대로 덮어쓰면 첨부 이미지가 같이 사라진다.
+            # 교체 대상 안에 있던 <img>를 모아 뒀다가 결과 뒤에 다시 붙인다.
+            # 원래 자리는 못 지킨다 — 응답에 이미지 위치 표시가 없기 때문.
+            # (자리까지 지키려면 자리표시자를 넣어 보내고 응답에서 되찾아야 하는데,
+            #  모델이 표시자를 지우면 그대로 유실된다. 뒤에 붙이는 쪽이 안전하다.)
+            if not cursor.hasSelection():
                 cursor.select(QTextCursor.SelectionType.Document)
-                cursor.insertText(result)
+            imgs = re.findall(r"<img[^>]*>", cursor.selection().toHtml())
+            cursor.insertText(result)
+            if imgs:
+                cursor.insertHtml("<br>" + "".join(imgs))
             self.editor.setTextCursor(cursor)
+            self._show_toast(
+                "✓ 적용했습니다. 이미지는 아래로 옮겨졌습니다 (Ctrl+Alt+Z로 복구)"
+                if imgs else "✓ 적용했습니다. Ctrl+Alt+Z로 이전 내용 복구"
+            )
         elif output == "append":
             cursor.movePosition(QTextCursor.MoveOperation.End)
             cursor.insertText(f"\n\n{result}")
-            self.editor.setTextCursor(cursor)
-        elif output == "insert":
-            # 커서 위치에 이어 쓰기 (현재 위치 기준)
-            if not cursor.hasSelection():
-                cursor.movePosition(QTextCursor.MoveOperation.End)
-            cursor.insertText(f" {result}")
             self.editor.setTextCursor(cursor)
 
         self.editor.setFocus()
@@ -4287,6 +4327,14 @@ class SlideMemoWindow(QWidget):
             return
         try:
             self.save_now()
+        except Exception as e:
+            # 예외가 올라가면 event.accept()에 못 닿아 창은 안 닫히는데 DB만
+            # 닫힌 먹통 상태가 된다. 종료는 진행하되 조용히 넘기지는 않는다 —
+            # 마지막 편집이 날아가는 상황이라 사용자가 알아야 한다.
+            print(f"[close] 종료 중 저장 실패: {e}")
+            QMessageBox.warning(
+                self, "저장 실패", f"마지막 내용을 저장하지 못했습니다.\n\n{e}"
+            )
         finally:
             self.db.close()
         event.accept()
@@ -4312,6 +4360,22 @@ def _memo_image_paths(html: str) -> list[Path]:
         except OSError:
             continue
     return out
+
+
+def _cleanup_old_recordings(days: int = 30) -> None:
+    """변환 실패로 temp/에 남은 녹음 파일 정리 (휴지통과 같은 30일 기준).
+
+    Whisper 실패·키 없음일 때는 일부러 파일을 남긴다 — 그래야 사용자가 되찾을
+    수 있다. 다만 지금까지 아무도 안 지워서 계속 쌓이기만 했다.
+    """
+    cutoff = datetime.now().timestamp() - days * 86400
+    for p in (APP_DIR / "temp").glob("recording_*.wav"):
+        try:
+            if p.stat().st_mtime < cutoff:
+                p.unlink()
+                print(f"[temp] {days}일 경과 → 임시 녹음 삭제: {p.name}")
+        except OSError:
+            pass
 
 
 def _delete_memo_images(html: str) -> None:
@@ -4558,6 +4622,7 @@ def main() -> int:
     # 30일 지난 휴지통 항목 자동 영구삭제 (+ 첨부 이미지 정리)
     for removed in db.cleanup_old_trash(days=30):
         _delete_memo_images(removed.content)
+    _cleanup_old_recordings(days=30)
     # 활성 메모가 하나도 없으면 빈 메모 1개를 자동 생성 (첫 실행 / 모두 삭제 직후 모두 포함)
     is_upgrade = bool(db.list_all())  # 메모가 이미 있으면 신규 설치가 아니다
     if not is_upgrade:

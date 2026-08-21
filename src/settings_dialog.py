@@ -163,7 +163,7 @@ class SettingsDialog(QDialog):
 
         # 가로 폭 슬라이더 (24 ~ 60 px) — 각 메모 탭(슬라이드 노출 폭)
         self._tab_width_slider = QSlider(Qt.Orientation.Horizontal)
-        self._tab_width_slider.setRange(24, 60)
+        self._tab_width_slider.setRange(24, 100)
         self._tab_width_slider.setSingleStep(1)
         self._tab_width_slider.setPageStep(4)
         self._tab_width_lbl = QLabel("30 px")
@@ -315,7 +315,12 @@ class SettingsDialog(QDialog):
         rec_max_row.addStretch(1)
         outer.addLayout(rec_max_row)
 
-        # Whisper 전용 OpenAI 키 입력 (메인 AI 제공자와 별개로 등록 가능)
+        # Whisper용 OpenAI 키. AI 제공자가 OpenAI면 keyring 항목이 같아서
+        # 칸이 두 개면 서로 덮어쓴다 → 그때는 이 칸을 숨기고 안내만 띄운다.
+        self._whisper_key_widget = QWidget()
+        wk_col = QVBoxLayout(self._whisper_key_widget)
+        wk_col.setContentsMargins(0, 0, 0, 0)
+        wk_col.setSpacing(6)
         whisper_key_row = QHBoxLayout()
         self._whisper_key_edit = QLineEdit()
         self._whisper_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
@@ -334,11 +339,11 @@ class SettingsDialog(QDialog):
         self._whisper_test_btn.setFixedWidth(60)
         self._whisper_test_btn.clicked.connect(self._run_whisper_test)
         whisper_key_row.addWidget(self._whisper_test_btn)
-        outer.addLayout(whisper_key_row)
+        wk_col.addLayout(whisper_key_row)
         self._whisper_test_lbl = QLabel()
         self._whisper_test_lbl.setStyleSheet("font-size: 9pt;")
         self._whisper_test_lbl.setWordWrap(True)
-        outer.addWidget(self._whisper_test_lbl)
+        wk_col.addWidget(self._whisper_test_lbl)
 
         # OpenAI 키 발급 페이지 링크
         whisper_key_help = QLabel(
@@ -349,10 +354,17 @@ class SettingsDialog(QDialog):
             lambda url: QDesktopServices.openUrl(QUrl(url))
         )
         whisper_key_help.setStyleSheet("font-size: 9pt;")
-        outer.addWidget(whisper_key_help)
+        wk_col.addWidget(whisper_key_help)
+        outer.addWidget(self._whisper_key_widget)
+
+        self._whisper_shared_lbl = QLabel(
+            "※ AI 제공자가 OpenAI라 위에 등록한 키를 그대로 사용합니다."
+        )
+        self._whisper_shared_lbl.setStyleSheet("color: gray; font-size: 9pt;")
+        self._whisper_shared_lbl.setWordWrap(True)
+        outer.addWidget(self._whisper_shared_lbl)
 
         rec_note = QLabel(
-            "※ AI 제공자가 OpenAI라면 위 키와 같은 저장소를 공유합니다. "
             "Whisper API 비용: 분당 약 $0.006. 마이크 권한 필요."
         )
         rec_note.setStyleSheet("color: gray; font-size: 9pt;")
@@ -441,7 +453,7 @@ class SettingsDialog(QDialog):
         self._display_mode_combo.setCurrentIndex(max(0, idx))
 
         # 인덱스 탭 설정 (값/범위는 main.py 상수와 동일)
-        tab_w = max(24, min(self.db.get_setting_int("tab_width", 30), 60))
+        tab_w = max(24, min(self.db.get_setting_int("tab_width", 30), 100))
         self._tab_width_slider.setValue(tab_w)
         self._tab_width_lbl.setText(f"{tab_w} px")
         tab_h = max(60, min(self.db.get_setting_int("memo_tab_height", 116), 200))
@@ -490,7 +502,7 @@ class SettingsDialog(QDialog):
         )
         max_s = self.db.get_setting_int("recording_max_seconds", 300)
         self._recording_max_spin.setValue(max(60, min(max_s, 600)))
-        # Whisper용 OpenAI 키 (메인 provider와 별개)
+        # Whisper용 OpenAI 키 (provider가 openai면 같은 항목을 공유)
         self._whisper_original_key = load_api_key("openai") or ""
         self._whisper_key_edit.setText(self._whisper_original_key)
 
@@ -504,6 +516,12 @@ class SettingsDialog(QDialog):
 
         self._key_row_widget.setVisible(needs_key)
         self._key_help_lbl.setVisible(needs_key)
+
+        # provider가 openai면 Whisper도 같은 keyring 항목을 쓴다.
+        # 칸을 따로 두면 한쪽 저장이 다른 쪽을 덮어쓰므로 안내로 대체한다.
+        shared_openai = provider == "openai"
+        self._whisper_key_widget.setVisible(not shared_openai)
+        self._whisper_shared_lbl.setVisible(shared_openai)
 
         if needs_key:
             url = _KEY_HELP_URLS.get(provider, "")
@@ -519,6 +537,14 @@ class SettingsDialog(QDialog):
         models = PROVIDERS.get(provider, {}).get("models", [])
         for m in models:
             self._model_combo.addItem(m, m)
+        # 이미 고른 모델이 목록에서 빠졌으면(구버전 ID 등) 항목으로 되살려 둔다.
+        # 그냥 두면 콤보가 0번으로 떨어져 사용자가 고른 적 없는 모델로 조용히
+        # 바뀐다 — 0번은 대개 가장 비싼 모델이라 요금까지 달라진다.
+        if current_model and current_model not in models:
+            self._model_combo.addItem(f"{current_model} (이전 버전)", current_model)
+            models = models + [current_model]
+        if current_model not in models:
+            current_model = PROVIDERS.get(provider, {}).get("default_model", "")
         if current_model in models:
             self._model_combo.setCurrentIndex(models.index(current_model))
         self._model_combo.blockSignals(False)
@@ -609,10 +635,10 @@ class SettingsDialog(QDialog):
         # API 키 — 변경된 경우만 keyring 갱신
         if PROVIDERS.get(provider, {}).get("needs_key"):
             new_key = self._key_edit.text().strip()
-            if new_key and new_key != self._original_key:
-                if self._original_key:
-                    delete_api_key(provider)
-                save_api_key(provider, new_key)
+            if new_key != (self._original_key or ""):
+                delete_api_key(provider)      # 비웠으면 지우고 끝
+                if new_key:
+                    save_api_key(provider, new_key)
 
         self.db.set_setting_str(
             AI_KEY_ENABLED, "1" if self._ai_enabled_chk.isChecked() else "0"
@@ -661,9 +687,10 @@ class SettingsDialog(QDialog):
         self.db.set_setting_int(
             "recording_max_seconds", self._recording_max_spin.value()
         )
-        # Whisper 키 — 변경됐을 때만 keyring 갱신
+        # Whisper 키 — 변경됐을 때만 keyring 갱신.
+        # provider가 openai면 같은 항목이라 위 블록이 이미 처리했다 (덮어쓰기 방지).
         whisper_key = self._whisper_key_edit.text().strip()
-        if whisper_key != self._whisper_original_key:
+        if provider != "openai" and whisper_key != self._whisper_original_key:
             if self._whisper_original_key:
                 delete_api_key("openai")
             if whisper_key:

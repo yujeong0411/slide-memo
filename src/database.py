@@ -116,13 +116,15 @@ class MemoDatabase:
 
     def _init_schema(self) -> None:
         # 새 DB는 처음부터 최신 스키마. 기존 DB는 _migrate()가 보강.
+        # color 기본값은 DEFAULT_COLOR에서 끌어온다 — 하드코딩해 두면 상수를
+        # 바꿀 때 스키마만 옛 값으로 남는다 (실제로 'ivory'로 어긋나 있었다).
         self.conn.executescript(
-            """
+            f"""
             CREATE TABLE IF NOT EXISTS memos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL DEFAULT '',
                 content TEXT NOT NULL DEFAULT '',
-                color TEXT NOT NULL DEFAULT 'ivory',
+                color TEXT NOT NULL DEFAULT '{DEFAULT_COLOR}',
                 is_pinned INTEGER NOT NULL DEFAULT 0,
                 deleted_at TEXT DEFAULT NULL,
                 font_family TEXT NOT NULL DEFAULT '',
@@ -399,10 +401,14 @@ class MemoDatabase:
         kw = (keyword or "").strip()
         if not kw:
             return self.list_all(sort)
-        like = f"%{kw}%"
+        # LIKE에서 %와 _는 와일드카드다. 검색어에 들어 있으면 리터럴로 다뤄야
+        # "100%"가 "100"으로 시작하는 모든 메모를 잡는 일이 없다.
+        esc = kw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{esc}%"
         rows = self.conn.execute(
             f"SELECT * FROM memos"
-            f" WHERE deleted_at IS NULL AND (title LIKE ? OR content LIKE ?)"
+            f" WHERE deleted_at IS NULL AND"
+            f" (title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')"
             f" ORDER BY {self._order_by(sort)}",
             (like, like),
         ).fetchall()

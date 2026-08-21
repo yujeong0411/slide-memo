@@ -21,7 +21,8 @@ KEYRING_SERVICE = "memo_slide_ai"
 PROVIDERS: dict[str, dict[str, Any]] = {
     "anthropic": {
         "name": "Anthropic",
-        "models": ["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5"],
+        "models": ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
+        # 기본값은 haiku 유지 — 사용자가 자기 키로 결제하므로 가장 싼 쪽에서 시작.
         "default_model": "claude-haiku-4-5",
         "key_format": "sk-ant-...",
         "needs_key": True,
