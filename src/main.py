@@ -2188,6 +2188,7 @@ if sys.platform == "win32":
     _WM_WINDOWPOSCHANGING = 0x0046
     _SWP_NOZORDER = 0x0004
     _HWND_TOPMOST = -1
+    _WM_HOTKEY = 0x0312
 
     class _WINDOWPOS(ctypes.Structure):
         _fields_ = [
@@ -2253,6 +2254,7 @@ class SlideMemoWindow(QWidget):
         # 폰트 캐시가 미리 트리거된다.
         self._warm_up_body()
         QApplication.instance().installEventFilter(self)
+        self._register_hotkey()  # Ctrl+Shift+Z 전역 숨기기/복귀
 
     def _warm_up_body(self) -> None:
         try:
@@ -2291,10 +2293,11 @@ class SlideMemoWindow(QWidget):
         for btn in (self.settings_btn, self.trash_btn,
                     self.col_empty_btn, self.col_back_btn):
             btn.setIconSize(QSize(size, size))
-        # new_tab_btn의 "＋" 텍스트 크기도 함께 줄임
-        font = self.new_tab_btn.font()
-        font.setPointSize(max(9, int(size * 0.85)))
-        self.new_tab_btn.setFont(font)
+        # 텍스트 글리프 버튼("＋", "»")의 크기도 함께 줄임
+        for b in (self.new_tab_btn, self.hide_btn):
+            font = b.font()
+            font.setPointSize(max(9, int(size * 0.85)))
+            b.setFont(font)
 
     def _load_display_mode(self) -> None:
         """display_mode: 'tray' / 'taskbar' / 'both'."""
@@ -2311,6 +2314,25 @@ class SlideMemoWindow(QWidget):
         if self.display_mode == "tray":
             flags |= Qt.WindowType.Tool
         return flags
+
+    _HOTKEY_ID = 1
+
+    def _register_hotkey(self) -> None:
+        """Ctrl+Shift+Z 전역 토글(잠깐 숨기기/복귀).
+
+        다른 앱이 선점했으면 등록만 실패하고 앱은 정상 동작한다.
+        setWindowFlags가 native 창을 재생성하면 등록이 창과 함께 사라지므로
+        그때마다 다시 불러야 한다."""
+        if sys.platform != "win32":
+            return
+        try:
+            import ctypes
+            # MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT(꾹 누를 때 반복 토글 방지), 'Z'
+            ctypes.windll.user32.RegisterHotKey(
+                int(self.winId()), self._HOTKEY_ID, 0x0002 | 0x0004 | 0x4000, 0x5A
+            )
+        except Exception:
+            pass
 
     def _force_topmost(self) -> None:
         """Qt raise_() + Windows API SetWindowPos로 TOPMOST z-order 강제 재설정."""
@@ -2329,6 +2351,14 @@ class SlideMemoWindow(QWidget):
         if sys.platform == "win32" and eventType == b"windows_generic_MSG":
             try:
                 msg = wintypes.MSG.from_address(int(message))
+                # 전역 단축키 (Ctrl+Shift+Z) → 잠깐 숨기기/복귀 토글.
+                # hide()된 창에도 메시지가 오므로 숨김 상태에서 복귀 트리거로 동작.
+                if msg.message == _WM_HOTKEY and msg.wParam == self._HOTKEY_ID:
+                    if self.isVisible():
+                        self.hide_bar()
+                    else:
+                        self.show_bar()
+                    return True, 0
                 # 다이얼로그/팝업(색상 선택·설정·확인창·서식 팝업 등)이 열려 있으면
                 # topmost를 강제하지 않는다 — 안 그러면 메모창이 그 위로 올라가 팝업을 가림.
                 if (
@@ -2652,6 +2682,11 @@ class SlideMemoWindow(QWidget):
         self.drag_grip = DragGrip(self.tab_column)
         col_layout.addWidget(self.drag_grip)
 
+        # 컬럼 우클릭 → 잠깐 숨기기 메뉴 (자기 메뉴 없는 자식 위젯의 우클릭은
+        # 컬럼까지 버블링되므로 그립·설정·휴지통 버튼 위에서도 동작)
+        self.tab_column.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tab_column.customContextMenuRequested.connect(self._show_column_menu)
+
         # 스크롤 가능한 탭 목록
         self.tab_scroll = QScrollArea(self.tab_column)
         self.tab_scroll.setObjectName("tabScroll")
@@ -2674,6 +2709,15 @@ class SlideMemoWindow(QWidget):
         col_layout.addWidget(self.tab_scroll, stretch=1)
 
         # 하단: 설정 + 휴지통 + 새 메모 버튼
+        # 잠깐 숨기기 — 화면 가장자리 쪽 화살표 글리프 (« / »는 _apply_side_layout에서 설정)
+        self.hide_btn = QPushButton()
+        self.hide_btn.setObjectName("newTabBtn")
+        self.hide_btn.setFixedHeight(NEW_TAB_HEIGHT)
+        self.hide_btn.setToolTip("잠깐 숨기기 (Ctrl+Shift+Z)")
+        self.hide_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.hide_btn.clicked.connect(self.hide_bar)
+        col_layout.addWidget(self.hide_btn)
+
         self.settings_btn = QPushButton()
         self.settings_btn.setObjectName("settingsBtn")
         self.settings_btn.setFixedHeight(NEW_TAB_HEIGHT)
@@ -2772,6 +2816,8 @@ class SlideMemoWindow(QWidget):
             if self.side == "left"
             else Qt.LayoutDirection.LeftToRight
         )
+        # 숨기기 화살표는 화면 가장자리(밀어 넣는 방향)를 가리킨다
+        self.hide_btn.setText("»" if self.side == "right" else "«")
         # 라운드 방향은 side에만 의존한다 → side가 바뀌는 이 지점에서만 갱신
         self._update_column_style()
 
@@ -3325,6 +3371,7 @@ class SlideMemoWindow(QWidget):
             return
         was_visible = self.isVisible()
         self.setWindowFlags(self._window_flags_for_mode())
+        self._register_hotkey()  # setWindowFlags가 native 창 재생성 → 등록도 날아감
         # 트레이 가시성
         tray = getattr(self, "_tray", None)
         if tray is not None:
@@ -3415,7 +3462,7 @@ class SlideMemoWindow(QWidget):
 
     def expand(self) -> None:
         if not self.isVisible():
-            self.show()
+            self.show_bar()  # 잠깐 숨김 중에 호출돼도 임시 트레이까지 원상 복구
         if self.is_expanded:
             self.raise_()
             self.activateWindow()
@@ -3452,6 +3499,43 @@ class SlideMemoWindow(QWidget):
         self.fade_anim.setStartValue(self.body_opacity.opacity())
         self.fade_anim.setEndValue(0.0)
         self.fade_anim.start()
+
+    # ----- 잠깐 숨기기 / 복귀 (트레이) -----
+    def hide_bar(self) -> None:
+        """바 전체를 잠깐 숨긴다. 복귀는 트레이 아이콘 클릭. 세션 한정(저장 안 함)."""
+        if not self.isVisible():
+            return
+        self.save_now()
+        # taskbar 모드는 평소 트레이가 꺼져 있어 숨기면 돌아올 길이 없다 →
+        # 숨김 동안만 트레이를 켠다 (show_bar에서 모드대로 복원).
+        tray = getattr(self, "_tray", None)
+        if tray is not None:
+            tray.show()
+        self.hide()
+
+    def show_bar(self) -> None:
+        """hide_bar로 숨긴 바를 이전 상태(펼침/접힘) 그대로 다시 꺼낸다."""
+        if self.isVisible():
+            return
+        self.setGeometry(self._expanded_geometry())
+        if self.is_expanded:
+            self.clearMask()
+        else:
+            self.setMask(self._collapsed_mask_region())
+        self.show()
+        self._force_topmost()
+        self._update_handles()
+        tray = getattr(self, "_tray", None)
+        if tray is not None and self.display_mode == "taskbar":
+            tray.hide()
+
+    def _show_column_menu(self, pos) -> None:
+        menu = QMenu()
+        hide_act = menu.addAction("잠깐 숨기기 (트레이 클릭으로 복귀)")
+        chosen = menu.exec(self.tab_column.mapToGlobal(pos))
+        self.raise_()
+        if chosen == hide_act:
+            self.hide_bar()
 
     # ----- memo tab column -----
     def _refresh_memo_tabs(self, *, select_first: bool = False) -> None:
@@ -3764,13 +3848,14 @@ class SlideMemoWindow(QWidget):
     def _update_column_style(self) -> None:
         """탭 컬럼 하단 버튼들의 바깥면 라운드를 현재 side에 맞춘다.
 
-        3개(설정·휴지통·추가)가 한 덩어리로 보여야 하므로 맨 위와 맨 아래 모서리만
-        둥글게 하고 가운데(휴지통)는 각지게 둔다. 그립은 직접 그리므로 다시
+        4개(숨기기·설정·휴지통·추가)가 한 덩어리로 보여야 하므로 맨 위와 맨 아래
+        모서리만 둥글게 하고 가운데는 각지게 둔다. 그립은 직접 그리므로 다시
         칠하라고만 알린다.
         """
         side = MemoTabButton.side
         for btn, top, bottom in (
-            (self.settings_btn, True, False),
+            (self.hide_btn, True, False),
+            (self.settings_btn, False, False),
             (self.trash_btn, False, False),
             (self.new_tab_btn, False, True),
         ):
@@ -4441,6 +4526,19 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
     toggle_act = QAction("열기 / 접기", menu)
     toggle_act.triggered.connect(window.toggle)
     menu.addAction(toggle_act)
+    hide_act = QAction("잠깐 숨기기", menu)
+
+    def _toggle_hidden() -> None:
+        if window.isVisible():
+            window.hide_bar()
+        else:
+            window.show_bar()
+
+    hide_act.triggered.connect(_toggle_hidden)
+    menu.addAction(hide_act)
+    menu.aboutToShow.connect(
+        lambda: hide_act.setText("잠깐 숨기기" if window.isVisible() else "다시 보이기")
+    )
     side_act = QAction("왼쪽 / 오른쪽 가장자리 전환", menu)
     side_act.triggered.connect(window.toggle_side)
     menu.addAction(side_act)
@@ -4465,7 +4563,10 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
 
     def on_activate(reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            window.toggle()
+            if window.isVisible():
+                window.toggle()
+            else:
+                window.show_bar()
 
     tray.activated.connect(on_activate)
     return tray
