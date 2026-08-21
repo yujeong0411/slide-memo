@@ -4587,7 +4587,7 @@ def _set_windows_app_user_model_id() -> None:
 
 
 APP_VERSION = "1.2.0"
-_GITHUB_REPO = "yujeong0411/SlideMemo"
+_GITHUB_REPO = "yujeong0411/slide-memo"
 
 
 class UpdateChecker(QThread):
