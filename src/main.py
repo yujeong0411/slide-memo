@@ -2143,15 +2143,23 @@ class GuideBubble(QWidget):
         self._on_next = None
         self._on_skip = None
         self.setFixedWidth(270)
+        # 둥근 모서리를 살리려면 창 자체는 투명하고, 안쪽 카드가 배경을 그려야 한다
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setStyleSheet(
-            "QWidget { background: #1e1e2e; color: #cdd6f4; border-radius: 8px; }"
+            "QWidget#guideCard { background: #1e1e2e; border-radius: 8px; }"
+            " QLabel { color: #cdd6f4; background: transparent; }"
             " QLabel#guideStep { color: #7f849c; font-size: 9pt; }"
             " QPushButton { background: transparent; color: #7f849c;"
             " border: none; font-size: 9pt; padding: 2px 4px; }"
             " QPushButton#guideNext { background: #89b4fa; color: #1e1e2e;"
             " border-radius: 6px; padding: 5px 14px; font-weight: bold; }"
         )
-        lay = QVBoxLayout(self)
+        shell = QVBoxLayout(self)
+        shell.setContentsMargins(0, 0, 0, 0)
+        card = QWidget()
+        card.setObjectName("guideCard")
+        shell.addWidget(card)
+        lay = QVBoxLayout(card)
         lay.setContentsMargins(14, 12, 14, 10)
         lay.setSpacing(10)
         self.text_lbl = QLabel()
@@ -2189,13 +2197,23 @@ class GuideBubble(QWidget):
         self.raise_()
 
     def _place_beside(self, anchor: QWidget) -> None:
-        """설명 대상 옆(화면 안쪽 방향)에 세로 중앙을 맞춰 놓는다."""
+        """설명 대상의 높이에 맞추되, 가로로는 창 바깥에 둔다.
+
+        대상 위젯 기준으로 밀면 말풍선이 본문 위를 덮어 정작 가리키는 것을 가린다.
+        접힘 상태에서는 창 폭이 아니라 실제로 보이는 컬럼이 기준이다
+        (접힘=마스크로 컬럼만 노출, 나머지 폭은 투명).
+        """
         g = QRect(anchor.mapToGlobal(QPoint(0, 0)), anchor.size())
         scr = self._win._screen_rect()
-        if self._win.side == "right":
-            x = g.left() - self.width() - 14
+        if self._win.is_expanded:
+            ref = self._win.geometry()
         else:
-            x = g.right() + 14
+            col = self._win.tab_column
+            ref = QRect(col.mapToGlobal(QPoint(0, 0)), col.size())
+        if self._win.side == "right":
+            x = ref.left() - self.width() - 14
+        else:
+            x = ref.right() + 14
         x = max(scr.x() + 8, min(x, scr.x() + scr.width() - self.width() - 8))
         y = g.center().y() - self.height() // 2
         y = max(scr.y() + 8, min(y, scr.y() + scr.height() - self.height() - 8))
