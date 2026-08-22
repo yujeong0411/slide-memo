@@ -153,8 +153,23 @@ class SettingsDialog(QDialog):
         self._clipboard_capture_chk = QCheckBox("메모 앱 펼칠 때 클립보드 자동 감지")
         outer.addWidget(self._clipboard_capture_chk)
 
+        # 사용법 안내(말풍선 가이드) 다시 보기 — 창을 닫으면 처음부터 시작한다
+        guide_row = QHBoxLayout()
+        guide_row.setContentsMargins(0, 6, 0, 0)
+        guide_btn = QPushButton("사용법 가이드 다시 보기")
+        guide_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        guide_btn.clicked.connect(self._request_guide_restart)
+        guide_row.addWidget(guide_btn)
+        guide_row.addStretch(1)
+        outer.addLayout(guide_row)
+
         outer.addStretch(1)
         return w
+
+    def _request_guide_restart(self) -> None:
+        """설정 창이 닫힌 뒤 메인 창이 가이드를 다시 시작한다 (여기선 표시만)."""
+        self.restart_guide_requested = True
+        self.accept()
 
     def _build_tab_geometry_group(self) -> QGroupBox:
         group = QGroupBox("인덱스 탭 설정")

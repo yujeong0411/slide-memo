@@ -2119,6 +2119,89 @@ class ClickableLabel(QLabel):
         super().mouseReleaseEvent(event)
 
 
+GUIDE_BAR_KEY = "guide_bar_done"    # 1단계(바 다루기) 안내 완료
+GUIDE_BODY_KEY = "guide_body_done"  # 2단계(메모 쓰기) 안내 완료
+
+
+class GuideBubble(QWidget):
+    """가이드 말풍선. 설명할 위젯 옆에 붙는다.
+
+    바 자체가 항상 위(topmost) 창이라 말풍선도 같은 급이어야 뒤로 안 숨는다.
+    (_zorder_locked가 이 창이 떠 있는 동안 바의 topmost 재점령을 막는다)"""
+
+    def __init__(self, win: "SlideMemoWindow") -> None:
+        # 부모를 win으로 두되 Tool 플래그라 독립 창이다 — 부모가 정리될 때 같이
+        # 사라지므로 종료 중에 홀로 남아 죽는 일이 없다.
+        super().__init__(
+            win,
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint,
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self._win = win
+        self._on_next = None
+        self._on_skip = None
+        self.setFixedWidth(270)
+        self.setStyleSheet(
+            "QWidget { background: #1e1e2e; color: #cdd6f4; border-radius: 8px; }"
+            " QLabel#guideStep { color: #7f849c; font-size: 9pt; }"
+            " QPushButton { background: transparent; color: #7f849c;"
+            " border: none; font-size: 9pt; padding: 2px 4px; }"
+            " QPushButton#guideNext { background: #89b4fa; color: #1e1e2e;"
+            " border-radius: 6px; padding: 5px 14px; font-weight: bold; }"
+        )
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(14, 12, 14, 10)
+        lay.setSpacing(10)
+        self.text_lbl = QLabel()
+        self.text_lbl.setWordWrap(True)
+        lay.addWidget(self.text_lbl)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        self.skip_btn = QPushButton("건너뛰기")
+        self.skip_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.skip_btn.clicked.connect(lambda: self._on_skip and self._on_skip())
+        self.step_lbl = QLabel()
+        self.step_lbl.setObjectName("guideStep")
+        self.next_btn = QPushButton("다음")
+        self.next_btn.setObjectName("guideNext")
+        self.next_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.next_btn.clicked.connect(lambda: self._on_next and self._on_next())
+        row.addWidget(self.skip_btn)
+        row.addStretch(1)
+        row.addWidget(self.step_lbl)
+        row.addWidget(self.next_btn)
+        lay.addLayout(row)
+
+    def show_step(self, text, anchor, index, total, on_next, on_skip) -> None:
+        self.text_lbl.setText(text)
+        self.step_lbl.setText(f"{index}/{total}")
+        self.next_btn.setText("완료" if index == total else "다음")
+        self._on_next, self._on_skip = on_next, on_skip
+        # 줄바꿈된 실제 높이를 잡아준다 — adjustSize만으론 긴 문구가 잘린다
+        inner_w = self.width() - 28  # 좌우 마진 14+14
+        self.text_lbl.setFixedWidth(inner_w)
+        self.text_lbl.setFixedHeight(max(0, self.text_lbl.heightForWidth(inner_w)))
+        self.adjustSize()
+        self._place_beside(anchor)
+        self.show()
+        self.raise_()
+
+    def _place_beside(self, anchor: QWidget) -> None:
+        """설명 대상 옆(화면 안쪽 방향)에 세로 중앙을 맞춰 놓는다."""
+        g = QRect(anchor.mapToGlobal(QPoint(0, 0)), anchor.size())
+        scr = self._win._screen_rect()
+        if self._win.side == "right":
+            x = g.left() - self.width() - 14
+        else:
+            x = g.right() + 14
+        x = max(scr.x() + 8, min(x, scr.x() + scr.width() - self.width() - 8))
+        y = g.center().y() - self.height() // 2
+        y = max(scr.y() + 8, min(y, scr.y() + scr.height() - self.height() - 8))
+        self.move(x, y)
+
+
 class ResizeHandle(QWidget):
     """창 가장자리에 깔리는 투명 드래그 핸들. edge ∈ {left, top, bottom}."""
 
@@ -2238,6 +2321,11 @@ class SlideMemoWindow(QWidget):
         self.trash_mode = False
         self._trash_preview_id: int | None = None  # 휴지통에서 미리보기 중인 메모
         self._quitting = False
+        # 가이드(말풍선) 상태
+        self._guide: GuideBubble | None = None
+        self._guide_steps_queue: list[tuple[str, object]] = []
+        self._guide_index = 0
+        self._guide_which = "bar"
         self._ai_worker: object | None = None
         self._ai_pending: str | None = None  # 진행 중인 feature_key
         # 음성 녹음 상태 (Phase 9-2)
@@ -2367,6 +2455,7 @@ class SlideMemoWindow(QWidget):
             QApplication.activePopupWidget() is not None
             or QApplication.activeModalWidget() is not None
             or QToolTip.isVisible()  # 툴팁도 topmost 창이라 순서 싸움에 진다
+            or (self._guide is not None and self._guide.isVisible())
         )
 
     def _force_topmost(self) -> None:
@@ -2949,6 +3038,16 @@ class SlideMemoWindow(QWidget):
         w = QApplication.focusWidget()
         return w is not None and (w is self.body or self.body.isAncestorOf(w))
 
+    def _maybe_start_body_guide(self) -> None:
+        """메모를 처음 펼친 순간이 본문 사용법을 알려주기 좋은 자리다."""
+        if self.trash_mode or self.guide_running():
+            return
+        if self.db.get_setting_int(GUIDE_BODY_KEY, 0):
+            return
+        if not self.db.get_setting_int(GUIDE_BAR_KEY, 0):
+            return  # 1단계부터 끝나고 나서
+        QTimer.singleShot(500, lambda: self.start_guide("body"))
+
     def _on_fade_done(self) -> None:
         # 접힘 fade-out 종료 → setMask로 tab_column만 노출. 윈도우 폭은 그대로
         # (펼친 폭). setGeometry 호출 없음 → layered window 깜빡임 없음.
@@ -2956,6 +3055,12 @@ class SlideMemoWindow(QWidget):
             self.setMask(self._collapsed_mask_region())
             self._update_handles()
             self.raise_()  # B안: 탭으로 접힌 직후 z-order 재점령
+
+    def restart_guide(self) -> None:
+        """설정의 '가이드 다시 보기'. 1단계부터, 2단계는 다음 펼침 때 이어진다."""
+        self.db.set_setting_int(GUIDE_BAR_KEY, 0)
+        self.db.set_setting_int(GUIDE_BODY_KEY, 0)
+        QTimer.singleShot(200, lambda: self.start_guide("bar"))
 
     def _open_settings(self) -> None:
         from settings_dialog import SettingsDialog
@@ -2967,6 +3072,8 @@ class SlideMemoWindow(QWidget):
         self._apply_window_opacity()
         self._refresh_ai_bar()
         self._force_topmost()
+        if getattr(dlg, "restart_guide_requested", False):
+            self.restart_guide()
 
     def _refresh_ai_bar(self) -> None:
         enabled = self.db.get_setting_str("ai_enabled", "0") == "1"
@@ -3343,6 +3450,82 @@ class SlideMemoWindow(QWidget):
         self._ai_status_lbl.setText(msg)
         self._ai_status_lbl.show()
 
+    # ----- 가이드 (말풍선 투어) -----
+    def _guide_script(self, which: str) -> list[tuple[str, object]]:
+        """(문구, 대상 위젯을 돌려주는 함수) 목록. 한 번에 4개를 넘기지 않는다 —
+        길어지면 끝까지 보는 사람이 급격히 줄어서, 나머지는 만든 적 없는 셈이 된다."""
+        if which == "bar":
+            return [
+                ("탭을 클릭하면 메모가 펼쳐집니다. 다시 클릭하거나 Esc를 누르면 접혀요.",
+                 lambda: self._first_tab_btn() or self.tab_scroll),
+                ("＋ 또는 Ctrl+N으로 새 메모를 만듭니다.",
+                 lambda: self.new_tab_btn),
+                ("바 안쪽 가장자리를 마우스로 끌면 가로 폭이, 위·아래 끝을 끌면"
+                 " 세로 길이가 바뀝니다.",
+                 lambda: self.tab_column),
+                ("바를 우클릭하면 설정·휴지통·좌우 전환이 있습니다."
+                 " »(Ctrl+Shift+Z)를 누르면 잠깐 숨겼다가 트레이 아이콘으로 되돌립니다.",
+                 lambda: self.hide_btn),
+            ]
+        return [
+            ("제목과 본문은 자동으로 저장됩니다. 바로 저장하려면 Ctrl+S.",
+             lambda: self.title_input),
+            ("굵게(Ctrl+B)·기울임·색·목록·표 같은 서식을 쓸 수 있어요.",
+             lambda: self.format_toolbar),
+            ("색 점을 누르면 메모 색이 바뀌고, + 로 나만의 색을 추가합니다.",
+             lambda: self.add_color_btn),
+            ("위쪽 줄에서 검색(Ctrl+F)과 정렬, 📌 고정, 내보내기를 씁니다.",
+             lambda: self.search_input),
+        ]
+
+    def _first_tab_btn(self) -> QWidget | None:
+        for i in range(self.tabs_layout.count()):
+            w = self.tabs_layout.itemAt(i).widget()
+            if isinstance(w, MemoTabButton):
+                return w
+        return None
+
+    def guide_running(self) -> bool:
+        return bool(self._guide_steps_queue)
+
+    def start_guide(self, which: str = "bar") -> None:
+        self._guide_which = which
+        self._guide_steps_queue = self._guide_script(which)
+        self._guide_index = 0
+        self._show_guide_step()
+
+    def _show_guide_step(self) -> None:
+        if self._guide_index >= len(self._guide_steps_queue):
+            self._finish_guide()
+            return
+        text, anchor_of = self._guide_steps_queue[self._guide_index]
+        anchor = anchor_of()
+        if anchor is None:  # 그 위젯이 지금 없으면 건너뛴다 (휴지통 모드 등)
+            self._guide_index += 1
+            self._show_guide_step()
+            return
+        if self._guide is None:
+            self._guide = GuideBubble(self)
+        self._guide.show_step(
+            text, anchor,
+            self._guide_index + 1, len(self._guide_steps_queue),
+            self._next_guide_step, self._finish_guide,
+        )
+
+    def _next_guide_step(self) -> None:
+        self._guide_index += 1
+        self._show_guide_step()
+
+    def _finish_guide(self) -> None:
+        """끝까지 봤든 건너뛰었든 다시 뜨지 않는다 (설정에서 다시 볼 수 있음)."""
+        if self._guide is not None:
+            self._guide.hide()
+        self.db.set_setting_int(
+            GUIDE_BAR_KEY if self._guide_which == "bar" else GUIDE_BODY_KEY, 1
+        )
+        self._guide_steps_queue = []
+        self._force_topmost()
+
     def _on_toast_clicked(self) -> None:
         action, self._toast_action = self._toast_action, None
         if action is None:
@@ -3573,6 +3756,7 @@ class SlideMemoWindow(QWidget):
         self._check_clipboard()
         self.raise_()
         self.activateWindow()
+        self._maybe_start_body_guide()
 
     def collapse(self, *, exit_trash: bool = True) -> None:
         if not self.is_expanded:
@@ -3595,6 +3779,8 @@ class SlideMemoWindow(QWidget):
         if not self.isVisible():
             return
         self.save_now()
+        if self._guide is not None and self._guide.isVisible():
+            self._finish_guide()  # 바가 사라지면 가리킬 대상도 없다
         # taskbar 모드는 평소 트레이가 꺼져 있어 숨기면 돌아올 길이 없다 →
         # 숨김 동안만 트레이를 켠다 (show_bar에서 모드대로 복원).
         tray = getattr(self, "_tray", None)
@@ -4723,13 +4909,16 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
     menu.addSeparator()
     settings_act = QAction("⚙ 설정", menu)
     def _open_settings_from_tray() -> None:
-        SettingsDialog(window.db, window).exec()
+        dlg = SettingsDialog(window.db, window)
+        dlg.exec()
         window.apply_side_settings()
         window.apply_tab_geometry_settings()
         window.apply_display_mode_settings()
         window._apply_window_opacity()
         window._refresh_ai_bar()
         window._force_topmost()
+        if getattr(dlg, "restart_guide_requested", False):
+            window.restart_guide()
 
     settings_act.triggered.connect(_open_settings_from_tray)
     menu.addAction(settings_act)
@@ -4845,6 +5034,9 @@ WHATS_NEW: list[tuple[str, list[str]]] = [
         " 그 탭이 화면 가운데 오도록 자동 스크롤합니다.",
         "새 메모에 입력한 글자가 <b>설정한 글꼴·크기와 다르게 찍히던 문제</b>를"
         " 고쳤습니다.",
+        "<b>사용법 가이드</b>가 생겼습니다 — 바 다루는 법 4단계, 메모를 처음 펼칠 때"
+        " 쓰는 법 4단계. <b>설정 → 사용법 가이드 다시 보기</b>에서 언제든 다시 볼 수"
+        " 있습니다.",
     ]),
     ("1.3.0", [
         "<b>바 크기를 마우스로</b> — 바 안쪽 가장자리를 끌면 <b>가로 폭</b>이,"
@@ -5002,6 +5194,14 @@ def main() -> int:
     splash.finish(window)
     _show_palette_notice(window, db, is_upgrade)
     _show_whats_new(window, db, is_upgrade)
+    if not db.get_setting_int(GUIDE_BAR_KEY, 0):
+        if is_upgrade:
+            # 이미 쓰고 있는 사람에게 갑자기 튜토리얼을 띄우지 않는다.
+            # (필요하면 설정 → 가이드 다시 보기)
+            db.set_setting_int(GUIDE_BAR_KEY, 1)
+            db.set_setting_int(GUIDE_BODY_KEY, 1)
+        else:
+            QTimer.singleShot(700, lambda: window.start_guide("bar"))
 
     _checker = UpdateChecker()
     _checker.update_available.connect(
