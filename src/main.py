@@ -2701,6 +2701,7 @@ class SlideMemoWindow(QWidget):
             "background: rgba(30,30,46,0.82); color: #cdd6f4;"
             " font-size: 9pt; padding: 4px 10px; border-radius: 6px;"
         )
+        self._toast_lbl.setWordWrap(True)  # 좁은 메모창에서도 잘리지 않게
         self._toast_lbl.hide()
         self._toast_timer = QTimer(self)
         self._toast_timer.setSingleShot(True)
@@ -2744,9 +2745,9 @@ class SlideMemoWindow(QWidget):
         self.tab_scroll.setWidget(self.tabs_container)
         # 새 탭이 생기면 스크롤 범위는 레이아웃이 끝난 뒤에야 갱신된다.
         # 그 순간을 잡아 예약된 스크롤을 처리한다 (_scroll_to_memo 참고).
-        self._pending_scroll_id: int | None = None
+        self._pending_scroll: tuple[int, int] | None = None
         self.tab_scroll.verticalScrollBar().rangeChanged.connect(
-            self._try_scroll_to_pending
+            self._apply_pending_scroll
         )
         col_layout.addWidget(self.tab_scroll, stretch=1)
 
@@ -3357,13 +3358,22 @@ class SlideMemoWindow(QWidget):
             else Qt.CursorShape.ArrowCursor
         )
         self._toast_lbl.setText(msg)
-        self._toast_lbl.adjustSize()
-        # body 하단 중앙 위치
+        # 크기는 글자에 맞춘다. 다만 좁은 메모창을 넘지 않게 폭을 제한하고,
+        # 넘칠 땐 줄바꿈해서 높이로 흡수한다 (예전엔 최소 160px + 여백 20px을
+        # 강제해 짧은 문구에도 상자가 크고, 긴 문구는 본문 밖으로 삐져나왔다).
         bw = self.body.width()
         bh = self.body.height()
-        tw = self._toast_lbl.width() + 20
-        th = self._toast_lbl.height()
-        self._toast_lbl.setFixedSize(max(tw, 160), th + 6)
+        # 지난번 setFixedSize가 sizeHint까지 그 값으로 고정해버리므로 먼저 푼다
+        self._toast_lbl.setMinimumSize(0, 0)
+        self._toast_lbl.setMaximumSize(16777215, 16777215)
+        fm = self._toast_lbl.fontMetrics()
+        pad_w, pad_h = 24, 12  # 스타일시트 padding(4px 10px) + 여유
+        max_w = max(80, bw - 24)
+        w = min(fm.horizontalAdvance(msg) + pad_w, max_w)
+        h = self._toast_lbl.heightForWidth(w)
+        if h <= 0:
+            h = fm.height() + pad_h
+        self._toast_lbl.setFixedSize(w, h)
         x = (bw - self._toast_lbl.width()) // 2
         y = bh - self._toast_lbl.height() - 12
         self._toast_lbl.move(x, y)
@@ -3703,28 +3713,38 @@ class SlideMemoWindow(QWidget):
         """그 메모의 탭이 보이도록 탭 목록을 스크롤한다. 목록이 길면 새로 만든
         메모가 화면 밖에 생겨 "아무 일도 안 일어난 것처럼" 보인다.
 
-        탭을 방금 새로 만든 참이면 스크롤 범위가 아직 옛 값이라 지금 스크롤해봐야
-        거기에 막힌다 → 예약해두고, 범위가 실제로 갱신되는 순간(rangeChanged)에
-        한 번 더 시도한다. 이미 보이는 탭이면 아무 일도 일어나지 않는다.
+        위젯 좌표 대신 '몇 번째 탭인가'로 목표 위치를 계산한다 — 탭을 방금 다시
+        만든 참이면 위젯 좌표가 아직 전부 0이라 그걸로 스크롤하면 맨 위로 튄다.
+        (탭 높이는 고정, 간격·여백 0이라 index × 높이가 곧 위치)
         """
-        self._pending_scroll_id = memo_id
-        self._try_scroll_to_pending()
-
-    def _try_scroll_to_pending(self, *_args) -> None:
-        memo_id = self._pending_scroll_id
-        if memo_id is None:
-            return
+        idx = None
         for i in range(self.tabs_layout.count()):
-            btn = self.tabs_layout.itemAt(i).widget()
-            if isinstance(btn, MemoTabButton) and btn.memo_id == memo_id:
-                sb = self.tab_scroll.verticalScrollBar()
-                self.tab_scroll.ensureWidgetVisible(btn)
-                # 범위가 아직 0이면(레이아웃 전) 스크롤이 먹지 않는다 → 예약을 남겨
-                # 두고 rangeChanged에서 다시 시도한다.
-                if sb.maximum() > 0:
-                    self._pending_scroll_id = None
-                return
-        self._pending_scroll_id = None  # 그 탭이 없다 (검색 필터 등) → 포기
+            w = self.tabs_layout.itemAt(i).widget()
+            if isinstance(w, MemoTabButton) and w.memo_id == memo_id:
+                idx = i
+                break
+        if idx is None:  # 검색 필터 등으로 목록에 없음
+            self._pending_scroll = None
+            return
+        tab_h = MemoTabButton.button_height
+        vp_h = self.tab_scroll.viewport().height()
+        # 뷰포트 가운데쯤에 오도록 (맨 끝 탭이면 아래 clamp가 알아서 붙인다)
+        target = max(0, idx * tab_h - max(0, (vp_h - tab_h) // 2))
+        self._pending_scroll = (target, 5)
+        self._apply_pending_scroll()
+
+    def _apply_pending_scroll(self, *_args) -> None:
+        """예약된 스크롤 적용. 탭이 막 늘어난 직후엔 스크롤 범위가 아직 옛 값이라
+        목표에 못 닿는다 → 범위가 갱신되는 순간(rangeChanged)에 다시 불린다."""
+        if self._pending_scroll is None:
+            return
+        target, tries = self._pending_scroll
+        sb = self.tab_scroll.verticalScrollBar()
+        sb.setValue(target)
+        if sb.value() == target or tries <= 0:
+            self._pending_scroll = None
+        else:
+            self._pending_scroll = (target, tries - 1)
 
     def _update_trash_btn(self) -> None:
         """휴지통은 내용이 있을 때만 컬럼에 나타난다 — 비었을 때 눌러봐야 빈 화면이라
@@ -3912,7 +3932,7 @@ class SlideMemoWindow(QWidget):
         if not self.is_expanded:
             return
         self._show_toast(
-            "휴지통으로 보냈습니다 · 되돌리려면 클릭",
+            "휴지통으로 보냄 · 되돌리기",
             5000,
             on_click=lambda: self._undo_delete(memo_id),
         )
@@ -4822,7 +4842,7 @@ WHATS_NEW: list[tuple[str, list[str]]] = [
         "<b>Delete 키로 삭제</b> — 탭을 고른 뒤 Delete를 누르면 휴지통으로 갑니다."
         " (본문을 편집 중일 땐 평소처럼 글자가 지워집니다)",
         "<b>새 메모가 보이게</b> — ＋로 만든 메모의 탭이 목록 밖에 생기면"
-        " 그 위치로 자동 스크롤합니다.",
+        " 그 탭이 화면 가운데 오도록 자동 스크롤합니다.",
         "새 메모에 입력한 글자가 <b>설정한 글꼴·크기와 다르게 찍히던 문제</b>를"
         " 고쳤습니다.",
     ]),

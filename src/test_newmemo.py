@@ -6,7 +6,7 @@ from pathlib import Path
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
-from PyQt6.QtCore import QEvent, Qt
+from PyQt6.QtCore import QEvent, QEventLoop, QPoint, Qt, QTimer
 from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import QApplication
 
@@ -35,17 +35,29 @@ typed = win.editor.textCursor().charFormat().font()
 assert (typed.family(), typed.pointSize()) == ("Consolas", 14), typed.family()
 
 # ----- 새 메모 탭이 보이도록 스크롤 -----
-win.sort_combo.setCurrentIndex(1)  # 수정일 ↑ → 새 메모가 목록 맨 아래
+# 고정 메모가 위를 차지하면 새 메모 탭은 목록 중간에 생긴다. 위젯 좌표로 스크롤하면
+# 탭이 아직 레이아웃 전(전부 y=0)이라 맨 위로 튀고, 정작 새 탭은 화면 밖에 남는다.
+for mid in [mm.id for mm in db.list_all()][:8]:
+    db.set_pinned(mid, True)
+win._refresh_memo_tabs()
 app.processEvents()
 sb = win.tab_scroll.verticalScrollBar()
-sb.setValue(0)
-win.create_new_memo()
-# 스크롤 범위는 탭이 만들어진 다음 레이아웃 패스에서야 갱신된다 (실제 앱의
-# 이벤트 루프에 해당) → 그 뒤에 예약된 스크롤이 실행된다
-for _ in range(5):
-    app.processEvents()
+sb.setValue(sb.maximum())
+app.processEvents()
 assert sb.maximum() > 0, "탭이 넘치지 않아 스크롤 검증이 무의미하다"
-assert sb.value() == sb.maximum(), (sb.value(), sb.maximum())
+
+win.create_new_memo()
+loop = QEventLoop()  # 스크롤 범위 갱신은 다음 레이아웃 패스에서 온다
+QTimer.singleShot(200, loop.quit)
+loop.exec()
+
+idx = [i for i in range(win.tabs_layout.count())
+       if win.tabs_layout.itemAt(i).widget().memo_id == win.current_memo.id][0]
+btn = win.tabs_layout.itemAt(idx).widget()
+vp = win.tab_scroll.viewport()
+top = btn.mapTo(vp, QPoint(0, 0)).y()
+assert idx > 0, "고정 메모 아래에 생겨야 검증이 의미 있다"
+assert 0 <= top and top + btn.height() <= vp.height(), (idx, top, vp.height())
 
 # ----- Delete 키 -----
 def press_delete():
@@ -61,5 +73,12 @@ win.tab_scroll.setFocus()  # 본문 밖 (탭 클릭 직후와 같은 상태)
 app.processEvents()
 press_delete()
 assert db.count_trashed() == before + 1, "본문 밖 Delete가 메모를 안 지웠다"
+
+# 위젯을 파이썬이 먼저 놓아버리면 Qt 종료 중에 죽는다 (offscreen에서 재현) →
+# 창을 먼저 정리하고 끝낸다.
+del btn, vp
+win.close()
+win.deleteLater()
+app.processEvents()
 
 print("newmemo OK")
