@@ -117,6 +117,7 @@ DISPLAY_MODES = ("tray", "taskbar", "both")
 MIN_W = 280
 MIN_H = 200
 RESIZE_GRIP = 6  # 가장자리 드래그 핸들 두께(px)
+HIDE_HOTKEY_LABEL = "Ctrl+Shift+Z"  # 잠깐 숨기기/복귀 전역 단축키 (표시용)
 
 WEEKDAYS_KO = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
 
@@ -2113,17 +2114,19 @@ class ResizeHandle(QWidget):
         super().__init__(parent)
         self.edge = edge
         self.setStyleSheet("background: transparent;")
-        if edge in ("left", "right"):
+        if edge in ("left", "right", "tab"):
             self.setCursor(Qt.CursorShape.SizeHorCursor)
         else:
             self.setCursor(Qt.CursorShape.SizeVerCursor)
         self._press_global = None
         self._start_geom = None
+        self._start_tab_w = 0
 
     def mousePressEvent(self, event):  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton:
             self._press_global = event.globalPosition().toPoint()
             self._start_geom = self.window().geometry()
+            self._start_tab_w = getattr(self.window(), "tab_width", 0)
             event.accept()
             return
         super().mousePressEvent(event)
@@ -2135,6 +2138,13 @@ class ResizeHandle(QWidget):
         if not isinstance(win, SlideMemoWindow):
             return
         delta = event.globalPosition().toPoint() - self._press_global
+        if self.edge == "tab":
+            # 접힘 상태: 컬럼 안쪽 가장자리 드래그 → 바(인덱스 컬럼) 폭 조절.
+            # 창 geometry는 그대로고 mask만 넓어진다 (접힘=mask 폭이 곧 바 폭).
+            dx = delta.x() if win.side == "left" else -delta.x()
+            win._apply_tab_width(self._start_tab_w + dx)
+            event.accept()
+            return
         g = self._start_geom
         screen = win._screen_rect()
 
@@ -2161,6 +2171,8 @@ class ResizeHandle(QWidget):
             if g.y() + new_h > max_bottom:
                 new_h = max_bottom - g.y()
             win.setGeometry(g.x(), g.y(), g.width(), new_h)
+        if not win.is_expanded:  # 접힘 = 보이는 건 마스크라 높이 변화를 따라가야
+            win.setMask(win._collapsed_mask_region())
         event.accept()
 
     def mouseReleaseEvent(self, event):  # noqa: N802
@@ -2169,7 +2181,10 @@ class ResizeHandle(QWidget):
             self._start_geom = None
             win = self.window()
             if isinstance(win, SlideMemoWindow):
-                win._save_user_size()
+                if self.edge == "tab":
+                    win.db.set_setting_int("tab_width", win.tab_width)
+                else:
+                    win._save_user_size()
             event.accept()
             return
         super().mouseReleaseEvent(event)
@@ -2713,7 +2728,7 @@ class SlideMemoWindow(QWidget):
         self.hide_btn = QPushButton()
         self.hide_btn.setObjectName("newTabBtn")
         self.hide_btn.setFixedHeight(NEW_TAB_HEIGHT)
-        self.hide_btn.setToolTip("잠깐 숨기기 (Ctrl+Shift+Z)")
+        self.hide_btn.setToolTip(f"잠깐 숨기기 ({HIDE_HOTKEY_LABEL})")
         self.hide_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.hide_btn.clicked.connect(self.hide_bar)
         col_layout.addWidget(self.hide_btn)
@@ -2784,6 +2799,8 @@ class SlideMemoWindow(QWidget):
         self.handle_right = ResizeHandle(self.container, "right")
         self.handle_top = ResizeHandle(self.container, "top")
         self.handle_bottom = ResizeHandle(self.container, "bottom")
+        # 접힘 상태 전용: 바 폭(tab_width) 조절
+        self.handle_tab = ResizeHandle(self.container, "tab")
 
         # 좌/우 가장자리 레이아웃 적용
         self._apply_side_layout()
@@ -2824,9 +2841,9 @@ class SlideMemoWindow(QWidget):
     def _update_handles(self) -> None:
         """리사이즈 핸들 위치 + 가시성 갱신 (side / 펼침 상태 반영).
         - 좌/우 핸들: 펼친 상태에서만 본문 가장자리 폭 조절용
-        - handle_top/bottom: 펼친 상태에서만 본문 영역 위/아래 (tab_column 영역 위에는
-          DragGrip이 위치 이동을 담당하므로 안 깔린다)
-        - tab_col_bottom_grip (col_layout 안의 위젯): + 버튼 아래에 항상 깔림"""
+        - handle_top/bottom: 세로 길이 조절. 펼침이면 본문 위/아래, 접힘이면
+          컬럼 위/아래 (마스크 안이라야 잡힌다)
+        - handle_tab: 접힘 상태에서만, 컬럼 안쪽 가장자리 = 바 폭 조절"""
         if not hasattr(self, "handle_left"):
             return
         w = self.container.width()
@@ -2846,13 +2863,24 @@ class SlideMemoWindow(QWidget):
             )
             self.handle_right.setVisible(show)
             self.handle_left.setVisible(False)
-        self.handle_top.setGeometry(body_x, 0, body_w, RESIZE_GRIP)
-        self.handle_bottom.setGeometry(body_x, h - RESIZE_GRIP, body_w, RESIZE_GRIP)
-        self.handle_top.setVisible(show)
-        self.handle_bottom.setVisible(show)
+        # 세로 길이는 접힘/펼침 모두 조절 가능 — 다만 접힘일 땐 마스크 밖(본문
+        # 영역)에 깔면 잡을 수 없으니 컬럼 위/아래로 옮긴다.
+        grip_x, grip_w = (body_x, body_w) if show else (
+            (body_w if self.side == "right" else 0), self.tab_width
+        )
+        self.handle_top.setGeometry(grip_x, 0, grip_w, RESIZE_GRIP)
+        self.handle_bottom.setGeometry(grip_x, h - RESIZE_GRIP, grip_w, RESIZE_GRIP)
+        self.handle_top.setVisible(True)
+        self.handle_bottom.setVisible(True)
+        # 접힘 전용 폭 핸들: 컬럼의 본문 쪽(안쪽) 가장자리
+        self.handle_tab.setGeometry(
+            body_w if self.side == "right" else self.tab_width - RESIZE_GRIP,
+            RESIZE_GRIP, RESIZE_GRIP, grip_h,
+        )
+        self.handle_tab.setVisible(not show)
         for hw in (
             self.handle_left, self.handle_right,
-            self.handle_top, self.handle_bottom,
+            self.handle_top, self.handle_bottom, self.handle_tab,
         ):
             hw.raise_()
 
@@ -3390,26 +3418,30 @@ class SlideMemoWindow(QWidget):
             self._force_topmost()
             self._update_handles()
 
+    def _apply_tab_width(self, w: int) -> None:
+        """바(인덱스 컬럼) 폭 즉시 반영. DB 저장은 호출측 담당."""
+        self.tab_width = w = max(TAB_WIDTH_MIN, min(w, TAB_WIDTH_MAX))
+        self.tab_column.setFixedWidth(w)
+        self.container.setMinimumWidth(w)
+        self.setMinimumWidth(w)
+        self._apply_btn_icon_sizes()  # 아이콘/폰트도 폭 비례
+        if not self.is_expanded:  # 접힘 = mask 폭이 곧 바 폭
+            self.setMask(self._collapsed_mask_region())
+        self._update_handles()
+        self._update_trash_btn()  # 배지 위치가 tab_width 기준
+
     def apply_tab_geometry_settings(self) -> None:
         """설정 다이얼로그 OK 후 호출. 인덱스 탭 폭/각 탭 높이를 DB에서 재로드해 반영.
         접힌 상태면 윈도우 폭도 즉시 반영, 펼친 상태면 다음 접기 때 반영.
         """
         self._load_tab_geometry()
-        # 폭 즉시 반영 (탭 컬럼 + 컨테이너 최소 폭)
-        self.tab_column.setFixedWidth(self.tab_width)
-        self.container.setMinimumWidth(self.tab_width)
-        self.setMinimumWidth(self.tab_width)
-        # 컬럼 버튼 아이콘/폰트 크기 반응형 갱신
-        self._apply_btn_icon_sizes()
+        if not self.is_expanded:
+            self.setGeometry(self._collapsed_geometry())
+        self._apply_tab_width(self.tab_width)
         # 각 메모 탭 높이 갱신 → 탭 다시 그리기
         MemoTabButton.button_height = self.memo_tab_height
         self._refresh_memo_tabs()
         self._update_tabs_selected()
-        # 접힌 상태면 mask 영역(tab_width 변경 반영)도 다시 적용
-        if not self.is_expanded:
-            self.setGeometry(self._collapsed_geometry())
-            self.setMask(self._collapsed_mask_region())
-        self._update_handles()
 
     def _expanded_geometry(self) -> QRect:
         rect = self._screen_rect()
@@ -3431,7 +3463,7 @@ class SlideMemoWindow(QWidget):
             x = self.user_width - self.tab_width
         else:
             x = 0
-        return QRegion(QRect(x, 0, self.tab_width, self.user_height))
+        return QRegion(QRect(x, 0, self.tab_width, self.height()))
 
     def _position_collapsed(self) -> None:
         self.setGeometry(self._collapsed_geometry())
@@ -3512,6 +3544,15 @@ class SlideMemoWindow(QWidget):
         if tray is not None:
             tray.show()
         self.hide()
+        # 숨기면 안내를 띄울 화면이 사라진다 → 복귀 방법은 트레이 풍선으로만
+        # 알릴 수 있다. 숨김은 드문 의도적 동작이라 매번 띄운다.
+        if tray is not None:
+            tray.showMessage(
+                "Slide Memo를 숨겼어요",
+                f"{HIDE_HOTKEY_LABEL} 또는 트레이 아이콘 클릭으로 다시 꺼냅니다.",
+                tray.icon(),
+                5000,
+            )
 
     def show_bar(self) -> None:
         """hide_bar로 숨긴 바를 이전 상태(펼침/접힘) 그대로 다시 꺼낸다."""
@@ -3531,7 +3572,9 @@ class SlideMemoWindow(QWidget):
 
     def _show_column_menu(self, pos) -> None:
         menu = QMenu()
-        hide_act = menu.addAction("잠깐 숨기기 (트레이 클릭으로 복귀)")
+        hide_act = menu.addAction(
+            f"잠깐 숨기기 ({HIDE_HOTKEY_LABEL} / 트레이 클릭으로 복귀)"
+        )
         chosen = menu.exec(self.tab_column.mapToGlobal(pos))
         self.raise_()
         if chosen == hide_act:
@@ -4526,7 +4569,7 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
     toggle_act = QAction("열기 / 접기", menu)
     toggle_act.triggered.connect(window.toggle)
     menu.addAction(toggle_act)
-    hide_act = QAction("잠깐 숨기기", menu)
+    hide_act = QAction(f"잠깐 숨기기 ({HIDE_HOTKEY_LABEL})", menu)
 
     def _toggle_hidden() -> None:
         if window.isVisible():
@@ -4537,7 +4580,10 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
     hide_act.triggered.connect(_toggle_hidden)
     menu.addAction(hide_act)
     menu.aboutToShow.connect(
-        lambda: hide_act.setText("잠깐 숨기기" if window.isVisible() else "다시 보이기")
+        lambda: hide_act.setText(
+            f"잠깐 숨기기 ({HIDE_HOTKEY_LABEL})" if window.isVisible()
+            else f"다시 보이기 ({HIDE_HOTKEY_LABEL})"
+        )
     )
     side_act = QAction("왼쪽 / 오른쪽 가장자리 전환", menu)
     side_act.triggered.connect(window.toggle_side)
@@ -4569,6 +4615,7 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
                 window.show_bar()
 
     tray.activated.connect(on_activate)
+    tray.messageClicked.connect(window.show_bar)
     return tray
 
 
@@ -4586,8 +4633,16 @@ def _set_windows_app_user_model_id() -> None:
         pass  # 구버전 Windows 등 — 아이콘이 기본값으로 떨어지더라도 앱은 정상 동작
 
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.3.0"
 _GITHUB_REPO = "yujeong0411/slide-memo"
+
+
+def _ver_tuple(v: str) -> tuple[int, ...]:
+    """'v1.2.0' → (1, 2, 0). 형식이 깨졌으면 빈 튜플(= 가장 낮은 버전)."""
+    try:
+        return tuple(int(x) for x in v.strip().lstrip("v").split("."))
+    except ValueError:
+        return ()
 
 
 class UpdateChecker(QThread):
@@ -4605,9 +4660,7 @@ class UpdateChecker(QThread):
             tag = data.get("tag_name", "").lstrip("v")
             if not tag:
                 return
-            current = tuple(int(x) for x in APP_VERSION.split("."))
-            latest = tuple(int(x) for x in tag.split("."))
-            if latest > current:
+            if _ver_tuple(tag) > _ver_tuple(APP_VERSION):
                 self.update_available.emit(APP_VERSION, tag)
         except Exception:
             pass
@@ -4640,6 +4693,66 @@ class UpdateDialog(QDialog):
             QUrl(f"https://github.com/{_GITHUB_REPO}/releases/latest/download/SlideMemo-Setup.exe")
         )
         self.accept()
+
+
+WHATS_NEW_KEY = "seen_whatsnew_version"
+# 업데이트 후 첫 실행에 보여줄 변경사항. 새 버전마다 맨 위에 한 덩어리씩 쌓는다.
+# (팝업으로 따로 안내한 색 팔레트 개편(1.1.1)은 _show_palette_notice가 담당)
+WHATS_NEW: list[tuple[str, list[str]]] = [
+    ("1.3.0", [
+        "<b>바 크기를 마우스로</b> — 바 안쪽 가장자리를 끌면 <b>가로 폭</b>이,"
+        " 위/아래 가장자리를 끌면 <b>세로 길이</b>가 바뀝니다."
+        " (설정 → 인덱스 탭 설정에서 숫자로도 조절)",
+        "바를 숨길 때 <b>되돌리는 방법을 트레이 알림</b>으로 알려줍니다."
+        " 알림을 클릭하면 바로 돌아옵니다.",
+    ]),
+    ("1.2.0", [
+        "<b>잠깐 숨기기</b> — 탭 열 하단 <b>»</b> 버튼, 탭 열 우클릭, 트레이 메뉴,"
+        " 또는 전역 단축키 <b>Ctrl+Shift+Z</b>로 바를 통째로 감춥니다."
+        " 같은 단축키나 트레이 아이콘 클릭으로 원래 상태 그대로 돌아옵니다.",
+    ]),
+    ("1.1.3", [
+        "설정 드롭다운, 붙여넣기 서식, AI 결과 덮어쓰기 등 버그를 묶어 고쳤습니다.",
+        "어두운 커스텀 그라데이션 메모에서 앱이 안 켜지던 문제를 고쳤습니다.",
+    ]),
+    ("1.1.0", [
+        "<b>버전 기록</b> — 메모를 우클릭해 이전 내용으로 되돌릴 수 있습니다."
+        " (5분 간격, 최근 20개 보관)",
+        "<b>파일 내보내기</b> — 메모를 파일로 저장합니다.",
+    ]),
+]
+
+
+def _whats_new_since(seen: str) -> list[tuple[str, list[str]]]:
+    """seen 버전 이후의 변경사항만. seen이 비었거나 깨졌으면 전부."""
+    seen_t = _ver_tuple(seen)
+    return [(v, lines) for v, lines in WHATS_NEW if _ver_tuple(v) > seen_t]
+
+
+def _show_whats_new(window: "SlideMemoWindow", db: MemoDatabase, is_upgrade: bool) -> None:
+    """업데이트 후 첫 실행에 '새로운 기능'을 한 번 띄운다.
+    마지막으로 안내한 버전을 DB에 남겨, 그 사이에 건너뛴 릴리즈 내용까지 함께
+    보여준다 (기록이 없으면 = 안내 기능 이전 사용자라 전부 보여준다)."""
+    if not is_upgrade:  # 신규 설치는 전부 처음 보는 기능이라 안내할 게 없다
+        db.set_setting_str(WHATS_NEW_KEY, APP_VERSION)
+        return
+    items = _whats_new_since(db.get_setting_str(WHATS_NEW_KEY, ""))
+    if not items:
+        return
+    db.set_setting_str(WHATS_NEW_KEY, APP_VERSION)  # 먼저 저장 — 다시 뜨지 않게
+    box = QMessageBox(window)
+    box.setWindowTitle("새로운 기능")
+    box.setIcon(QMessageBox.Icon.Information)
+    box.setText(f"Slide Memo가 v{APP_VERSION}로 업데이트되었습니다.")
+    box.setInformativeText(
+        "<br>".join(
+            f"<b>v{v}</b><br>" + "".join(f"&nbsp;· {ln}<br>" for ln in lines)
+            for v, lines in items
+        )
+    )
+    box.setWindowFlags(box.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+    box.exec()
+    window._force_topmost()
 
 
 PALETTE_NOTICE_KEY = "seen_palette_notice_1_1_1"
@@ -4740,6 +4853,7 @@ def main() -> int:
 
     splash.finish(window)
     _show_palette_notice(window, db, is_upgrade)
+    _show_whats_new(window, db, is_upgrade)
 
     _checker = UpdateChecker()
     _checker.update_available.connect(

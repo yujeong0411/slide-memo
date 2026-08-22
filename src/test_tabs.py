@@ -230,4 +230,45 @@ assert 0 <= _badge.x() <= _win.tab_width - _badge.width(), (
     _badge.x(), _badge.width(), _win.tab_width
 )
 
+# ----- 접힘 상태 바 폭 드래그 -----
+# 핸들은 컬럼의 "안쪽" 가장자리에 있어야 한다 (마스크 밖에 놓이면 잡을 수 없다)
+_win._position_collapsed()
+_win._update_handles()
+_mask = _win._collapsed_mask_region().boundingRect()
+_hg = _win.handle_tab.geometry()
+assert _win.handle_tab.isVisibleTo(_win), "접힘인데 폭 핸들이 숨김"
+assert _mask.x() <= _hg.x() and _hg.right() <= _mask.right(), (_hg, _mask)
+
+_before = _win.tab_width
+_win._apply_tab_width(_before + 20)
+assert _win.tab_width == _before + 20, _win.tab_width
+assert _win.tab_column.width() == _win.tab_width
+assert _win._collapsed_mask_region().boundingRect().width() == _win.tab_width
+
+_win._apply_tab_width(9999)  # clamp
+assert _win.tab_width == m.TAB_WIDTH_MAX, _win.tab_width
+_win._apply_tab_width(0)
+assert _win.tab_width == m.TAB_WIDTH_MIN, _win.tab_width
+
+# 펼치면 폭 핸들은 물러나고 본문 가장자리 핸들이 나온다
+_win.is_expanded = True
+_win._update_handles()
+assert not _win.handle_tab.isVisibleTo(_win), "펼침인데 폭 핸들이 살아있음"
+
+# ----- 접힘 상태 세로 길이 -----
+# 위/아래 핸들이 마스크(=컬럼) 안에 있어야 접힌 채로도 잡힌다
+_win.is_expanded = False
+_win._position_collapsed()
+_win._update_handles()
+_mask = _win._collapsed_mask_region().boundingRect()
+for _h in (_win.handle_top, _win.handle_bottom):
+    _g = _h.geometry()
+    assert _h.isVisibleTo(_win), "접힘인데 세로 핸들이 숨김"
+    assert _mask.x() <= _g.x() and _g.right() <= _mask.right(), (_g, _mask)
+
+# 마스크 높이는 저장값이 아니라 현재 창 높이를 따라간다 (드래그 중 실시간)
+_g = _win.geometry()
+_win.setGeometry(_g.x(), _g.y(), _g.width(), _g.height() - 80)
+assert _win._collapsed_mask_region().boundingRect().height() == _g.height() - 80
+
 print("tabs OK")
