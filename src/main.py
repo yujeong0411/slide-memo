@@ -78,6 +78,7 @@ from PyQt6.QtWidgets import (
     QTextBrowser,
     QTextEdit,
     QToolButton,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -2349,6 +2350,15 @@ class SlideMemoWindow(QWidget):
         except Exception:
             pass
 
+    def _zorder_locked(self) -> bool:
+        """z-order를 건드리면 안 되는 상태. 지금 topmost를 다시 밀어 올리면
+        방금 뜬 팝업/모달/툴팁이 그 아래로 깔려 가려진다."""
+        return (
+            QApplication.activePopupWidget() is not None
+            or QApplication.activeModalWidget() is not None
+            or QToolTip.isVisible()  # 툴팁도 topmost 창이라 순서 싸움에 진다
+        )
+
     def _force_topmost(self) -> None:
         """Qt raise_() + Windows API SetWindowPos로 TOPMOST z-order 강제 재설정."""
         self.raise_()
@@ -2374,13 +2384,11 @@ class SlideMemoWindow(QWidget):
                     else:
                         self.show_bar()
                     return True, 0
-                # 다이얼로그/팝업(색상 선택·설정·확인창·서식 팝업 등)이 열려 있으면
-                # topmost를 강제하지 않는다 — 안 그러면 메모창이 그 위로 올라가 팝업을 가림.
-                if (
-                    msg.message == _WM_WINDOWPOSCHANGING
-                    and QApplication.activeModalWidget() is None
-                    and QApplication.activePopupWidget() is None
-                ):
+                # 다이얼로그/팝업/툴팁이 떠 있으면 topmost를 강제하지 않는다 —
+                # 안 그러면 메모창이 그 위로 올라가 방금 뜬 것을 가린다.
+                # (툴팁이 뜰 때 Windows가 보내는 z-order 변경 알림에 그대로
+                #  반응하면, 툴팁이 뜬 순간 창이 다시 앞으로 나와 덮어버린다)
+                if msg.message == _WM_WINDOWPOSCHANGING and not self._zorder_locked():
                     wp = _WINDOWPOS.from_address(msg.lParam)
                     # SWP_NOZORDER가 없을 때(=z-order가 실제로 바뀌는 경우)만 개입.
                     # 단순 이동/리사이즈는 건드리지 않는다.
@@ -2897,11 +2905,11 @@ class SlideMemoWindow(QWidget):
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
         t = event.type()
-        # 콤보박스 드롭다운 등 팝업이 떠 있으면 z-order를 건드리지 않는다.
-        # raise_()가 창 그룹을 재정렬하면서 방금 열린 팝업을 덮어버려
-        # "드롭다운이 내려왔다 바로 사라지는" 현상이 생긴다.
-        # (nativeEvent의 topmost 강제도 같은 이유로 팝업 중엔 건너뛴다)
-        if QApplication.activePopupWidget() is not None:
+        # 팝업/모달/툴팁이 떠 있으면 z-order를 건드리지 않는다. raise_()가 창
+        # 그룹을 재정렬하면서 방금 뜬 것을 덮어버려 "드롭다운이 내려왔다 바로
+        # 사라지는" / "툴팁이 바 뒤로 숨는" 현상이 생긴다.
+        # (nativeEvent의 topmost 강제도 같은 이유로 건너뛴다)
+        if self._zorder_locked():
             return False
         if t == QEvent.Type.Enter:
             w = obj
@@ -4705,6 +4713,7 @@ WHATS_NEW: list[tuple[str, list[str]]] = [
         " (설정 → 인덱스 탭 설정에서 숫자로도 조절)",
         "바를 숨길 때 <b>되돌리는 방법을 트레이 알림</b>으로 알려줍니다."
         " 알림을 클릭하면 바로 돌아옵니다.",
+        "바 위 <b>툴팁이 바 뒤로 가려지던 문제</b>를 고쳤습니다.",
     ]),
     ("1.2.0", [
         "<b>잠깐 숨기기</b> — 탭 열 하단 <b>»</b> 버튼, 탭 열 우클릭, 트레이 메뉴,"
