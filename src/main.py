@@ -2467,8 +2467,9 @@ class SlideMemoWindow(QWidget):
         restored.setPosition(position, QTextCursor.MoveMode.KeepAnchor)
         self.editor.setTextCursor(restored)
         self.editor.blockSignals(False)
-        # 위젯 기본 폰트 (새 입력에도 적용)
+        # 위젯 + 문서 기본 폰트 (서식 없는 새 입력에도 적용)
         memo_font = QFont(family, size)
+        self.editor.document().setDefaultFont(memo_font)
         self.editor.setFont(memo_font)
         # 제목 — bold + size는 항상 13pt 고정 (본문만 크기 따라가게)
         title_font = QFont(family, 13)
@@ -2741,6 +2742,12 @@ class SlideMemoWindow(QWidget):
         self.tabs_layout.setSpacing(0)  # 인덱스를 하나의 띠처럼 붙임
         self.tabs_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.tab_scroll.setWidget(self.tabs_container)
+        # 새 탭이 생기면 스크롤 범위는 레이아웃이 끝난 뒤에야 갱신된다.
+        # 그 순간을 잡아 예약된 스크롤을 처리한다 (_scroll_to_memo 참고).
+        self._pending_scroll_id: int | None = None
+        self.tab_scroll.verticalScrollBar().rangeChanged.connect(
+            self._try_scroll_to_pending
+        )
         col_layout.addWidget(self.tab_scroll, stretch=1)
 
         # 하단: 설정 + 휴지통 + 새 메모 버튼
@@ -2924,6 +2931,22 @@ class SlideMemoWindow(QWidget):
         elif t == QEvent.Type.ApplicationActivate:
             self.raise_()
         return False
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        """Delete = 지금 메모를 휴지통으로 (휴지통 모드에선 영구 삭제).
+
+        본문/제목/검색창이 포커스를 쥐고 있으면 그쪽이 Delete를 먼저 먹으므로
+        글자 지우기와 충돌하지 않는다. 탭을 클릭한 직후처럼 포커스가 본문 밖에
+        있을 때만 여기까지 올라온다."""
+        if event.key() == Qt.Key.Key_Delete and not self._focus_in_body():
+            self._delete_current_memo()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _focus_in_body(self) -> bool:
+        w = QApplication.focusWidget()
+        return w is not None and (w is self.body or self.body.isAncestorOf(w))
 
     def _on_fade_done(self) -> None:
         # 접힘 fade-out 종료 → setMask로 tab_column만 노출. 윈도우 폭은 그대로
@@ -3676,6 +3699,33 @@ class SlideMemoWindow(QWidget):
             self._load_memo(memos[0])
             self._update_tabs_selected()
 
+    def _scroll_to_memo(self, memo_id: int) -> None:
+        """그 메모의 탭이 보이도록 탭 목록을 스크롤한다. 목록이 길면 새로 만든
+        메모가 화면 밖에 생겨 "아무 일도 안 일어난 것처럼" 보인다.
+
+        탭을 방금 새로 만든 참이면 스크롤 범위가 아직 옛 값이라 지금 스크롤해봐야
+        거기에 막힌다 → 예약해두고, 범위가 실제로 갱신되는 순간(rangeChanged)에
+        한 번 더 시도한다. 이미 보이는 탭이면 아무 일도 일어나지 않는다.
+        """
+        self._pending_scroll_id = memo_id
+        self._try_scroll_to_pending()
+
+    def _try_scroll_to_pending(self, *_args) -> None:
+        memo_id = self._pending_scroll_id
+        if memo_id is None:
+            return
+        for i in range(self.tabs_layout.count()):
+            btn = self.tabs_layout.itemAt(i).widget()
+            if isinstance(btn, MemoTabButton) and btn.memo_id == memo_id:
+                sb = self.tab_scroll.verticalScrollBar()
+                self.tab_scroll.ensureWidgetVisible(btn)
+                # 범위가 아직 0이면(레이아웃 전) 스크롤이 먹지 않는다 → 예약을 남겨
+                # 두고 rangeChanged에서 다시 시도한다.
+                if sb.maximum() > 0:
+                    self._pending_scroll_id = None
+                return
+        self._pending_scroll_id = None  # 그 탭이 없다 (검색 필터 등) → 포기
+
     def _update_trash_btn(self) -> None:
         """휴지통은 내용이 있을 때만 컬럼에 나타난다 — 비었을 때 눌러봐야 빈 화면이라
         상시 아이콘은 자리값을 못 한다. 지운 직후(=복구가 필요한 순간)엔 배지와 함께
@@ -3876,6 +3926,7 @@ class SlideMemoWindow(QWidget):
         self._refresh_memo_tabs()
         self._load_memo(memo)
         self._update_tabs_selected()
+        self._scroll_to_memo(memo_id)
         self._show_toast("되돌렸습니다.")
 
     def _preview_trashed(self, memo_id: int) -> None:
@@ -4051,8 +4102,12 @@ class SlideMemoWindow(QWidget):
         title_font.setBold(True)
         self.title_input.setFont(title_font)
         # 메모 전용 문서로 교체 (내용도 문서가 들고 온다)
-        self.editor.setDocument(self._document_for(memo))
-        # setFont는 "현재 문서"의 기본 폰트를 바꾸므로 반드시 setDocument 뒤에 와야 한다
+        doc = self._document_for(memo)
+        # 문서마다 기본 폰트를 직접 박아준다. editor.setFont()는 위젯 폰트만 바꿀 뿐
+        # 따로 만든 QTextDocument의 defaultFont까지 따라오지 않아서, 서식이 없는
+        # 새 메모에 입력하면 앱 기본 폰트(더 작고 다른 글꼴)로 찍혔다.
+        doc.setDefaultFont(editor_font)
+        self.editor.setDocument(doc)
         self.editor.setFont(editor_font)
         self.title_input.blockSignals(False)
         self.editor.blockSignals(False)
@@ -4112,6 +4167,7 @@ class SlideMemoWindow(QWidget):
         self._load_memo(memo)
         self._refresh_memo_tabs()
         self._update_tabs_selected()
+        self._scroll_to_memo(memo.id)
         self.expand()
         self.title_input.setFocus()
 
@@ -4129,7 +4185,7 @@ class SlideMemoWindow(QWidget):
         hist_act = menu.addAction(menu_icon("menu_history.svg"), "이전 버전…")
         export_act = menu.addAction(menu_icon("menu_export.svg"), "내보내기…")
         menu.addSeparator()
-        del_act = menu.addAction(menu_icon("menu_delete.svg"), "휴지통으로 이동")
+        del_act = menu.addAction(menu_icon("menu_delete.svg"), "휴지통으로 이동 (Delete)")
         chosen = menu.exec(button.mapToGlobal(pos))
         self.raise_()
 
@@ -4763,6 +4819,12 @@ WHATS_NEW: list[tuple[str, list[str]]] = [
         "<b>삭제가 한 번에</b> — 확인 창을 없앴습니다. 지운 직후 뜨는"
         " <b>‘되돌리려면 클릭’</b> 토스트로 바로 복구할 수 있습니다.",
         "바 우클릭 메뉴에 <b>설정·휴지통·좌우 가장자리 전환</b>이 추가됐습니다.",
+        "<b>Delete 키로 삭제</b> — 탭을 고른 뒤 Delete를 누르면 휴지통으로 갑니다."
+        " (본문을 편집 중일 땐 평소처럼 글자가 지워집니다)",
+        "<b>새 메모가 보이게</b> — ＋로 만든 메모의 탭이 목록 밖에 생기면"
+        " 그 위치로 자동 스크롤합니다.",
+        "새 메모에 입력한 글자가 <b>설정한 글꼴·크기와 다르게 찍히던 문제</b>를"
+        " 고쳤습니다.",
     ]),
     ("1.3.0", [
         "<b>바 크기를 마우스로</b> — 바 안쪽 가장자리를 끌면 <b>가로 폭</b>이,"

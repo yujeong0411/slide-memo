@@ -71,6 +71,7 @@ export const guideContent = `
 | <Shortcut>Ctrl+F</Shortcut> | 메모 검색 |
 | <Shortcut>Ctrl+Shift+C</Shortcut> | 메모 전체 텍스트 복사 |
 | <Shortcut>Ctrl+Shift+D</Shortcut> | 현재 메모 휴지통으로 이동 |
+| <Shortcut>Delete</Shortcut> | 현재 메모 휴지통으로 이동 (본문 편집 중에는 글자 삭제) |
 | <Shortcut>Ctrl+Shift+Z</Shortcut> | 바 잠깐 숨기기 / 다시 보이기 (전역) |
 | <Shortcut>Esc</Shortcut> | 메모 접기 / AI 작업 취소 |
 
@@ -199,6 +200,9 @@ export const guideContent = `
 ## 릴리즈 노트
 
 ### v1.4.0
+- <Shortcut>Delete</Shortcut> 키로 메모 삭제 (본문 편집 중에는 평소대로 글자 삭제)
+- ＋로 새 메모를 만들면 그 탭이 보이도록 탭 목록 자동 스크롤
+- 새 메모에 입력한 글자가 설정한 글꼴·크기와 다르게 찍히던 문제 수정
 - 바 하단 아이콘 정리 — 설정 아이콘 제거 (설정은 트레이 아이콘 우클릭 / 탭 열 우클릭 메뉴로)
 - 휴지통 아이콘은 휴지통에 메모가 있을 때만 표시
 - 메모 삭제 시 확인 창 제거 — 대신 "되돌리려면 클릭" 토스트로 즉시 복구
