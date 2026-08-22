@@ -24,7 +24,7 @@ QToolTip.showText(QPoint(10, 10), "설정")
 assert QToolTip.isVisible()
 assert win._zorder_locked(), "툴팁이 떠 있는데 창을 앞으로 올리면 툴팁이 가려진다"
 # 툴팁 중 hover(Enter)로도 raise_()를 타면 안 된다 → eventFilter가 즉시 손 뗌
-assert win.eventFilter(win.settings_btn, QEvent(QEvent.Type.Enter)) is False
+assert win.eventFilter(win.new_tab_btn, QEvent(QEvent.Type.Enter)) is False
 
 QToolTip.hideText()
 app.processEvents()  # 툴팁 숨김은 다음 이벤트 루프에서 반영된다

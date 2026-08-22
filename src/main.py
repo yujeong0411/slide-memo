@@ -2108,6 +2108,17 @@ class DragGrip(QWidget):
         super().mouseReleaseEvent(event)
 
 
+class ClickableLabel(QLabel):
+    """클릭할 수 있는 라벨. 토스트의 '되돌리기'에만 쓴다."""
+
+    clicked = pyqtSignal()
+
+    def mouseReleaseEvent(self, event):  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+
 class ResizeHandle(QWidget):
     """창 가장자리에 깔리는 투명 드래그 핸들. edge ∈ {left, top, bottom}."""
 
@@ -2306,8 +2317,7 @@ class SlideMemoWindow(QWidget):
         """tab_width에 따라 컬럼 버튼 아이콘/폰트 크기를 비례 조절.
         (DragGrip은 paintEvent에서 자체 폭 기반으로 그리므로 자동 반응)"""
         size = max(12, min(int(self.tab_width * 0.55), 32))
-        for btn in (self.settings_btn, self.trash_btn,
-                    self.col_empty_btn, self.col_back_btn):
+        for btn in (self.trash_btn, self.col_empty_btn, self.col_back_btn):
             btn.setIconSize(QSize(size, size))
         # 텍스트 글리프 버튼("＋", "»")의 크기도 함께 줄임
         for b in (self.new_tab_btn, self.hide_btn):
@@ -2682,7 +2692,9 @@ class SlideMemoWindow(QWidget):
         body_layout.addWidget(editor_panel, stretch=1)
 
         # 토스트 메시지 (body 하단 중앙, 평소엔 숨김)
-        self._toast_lbl = QLabel(self.body)
+        self._toast_lbl = ClickableLabel(self.body)
+        self._toast_action = None  # 토스트를 누르면 실행할 동작 (없으면 그냥 알림)
+        self._toast_lbl.clicked.connect(self._on_toast_clicked)
         self._toast_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._toast_lbl.setStyleSheet(
             "background: rgba(30,30,46,0.82); color: #cdd6f4;"
@@ -2740,15 +2752,6 @@ class SlideMemoWindow(QWidget):
         self.hide_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.hide_btn.clicked.connect(self.hide_bar)
         col_layout.addWidget(self.hide_btn)
-
-        self.settings_btn = QPushButton()
-        self.settings_btn.setObjectName("settingsBtn")
-        self.settings_btn.setFixedHeight(NEW_TAB_HEIGHT)
-        self.settings_btn.setToolTip("설정")
-        self.settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.settings_btn.setIcon(QIcon(str(_asset("settings_icon.svg"))))
-        self.settings_btn.clicked.connect(self._open_settings)
-        col_layout.addWidget(self.settings_btn)
 
         self.trash_btn = QPushButton()
         self.trash_btn.setObjectName("trashBtn")
@@ -3316,7 +3319,20 @@ class SlideMemoWindow(QWidget):
         self._ai_status_lbl.setText(msg)
         self._ai_status_lbl.show()
 
-    def _show_toast(self, msg: str, duration_ms: int = 2500) -> None:
+    def _on_toast_clicked(self) -> None:
+        action, self._toast_action = self._toast_action, None
+        if action is None:
+            return
+        self._toast_timer.stop()
+        self._toast_lbl.hide()
+        action()
+
+    def _show_toast(self, msg: str, duration_ms: int = 2500, on_click=None) -> None:
+        self._toast_action = on_click
+        self._toast_lbl.setCursor(
+            Qt.CursorShape.PointingHandCursor if on_click
+            else Qt.CursorShape.ArrowCursor
+        )
         self._toast_lbl.setText(msg)
         self._toast_lbl.adjustSize()
         # body 하단 중앙 위치
@@ -3579,13 +3595,30 @@ class SlideMemoWindow(QWidget):
             tray.hide()
 
     def _show_column_menu(self, pos) -> None:
+        """바(탭 열) 우클릭 메뉴. 상시 아이콘에서 뺀 기능들이 여기에 모인다.
+        (설정은 트레이 아이콘 우클릭 메뉴에도 그대로 있다)"""
         menu = QMenu()
+        settings_act = menu.addAction(menu_icon("settings_icon.svg"), "설정")
+        n = self.db.count_trashed()
+        trash_act = menu.addAction(
+            menu_icon("menu_delete.svg"),
+            f"휴지통 ({n})" if n else "휴지통 (비어 있음)",
+        )
+        trash_act.setEnabled(n > 0)
+        menu.addSeparator()
+        side_act = menu.addAction("왼쪽 / 오른쪽 가장자리 전환")
         hide_act = menu.addAction(
             f"잠깐 숨기기 ({HIDE_HOTKEY_LABEL} / 트레이 클릭으로 복귀)"
         )
         chosen = menu.exec(self.tab_column.mapToGlobal(pos))
         self.raise_()
-        if chosen == hide_act:
+        if chosen == settings_act:
+            self._open_settings()
+        elif chosen == trash_act:
+            self._toggle_trash_mode()
+        elif chosen == side_act:
+            self.toggle_side()
+        elif chosen == hide_act:
             self.hide_bar()
 
     # ----- memo tab column -----
@@ -3644,8 +3677,12 @@ class SlideMemoWindow(QWidget):
             self._update_tabs_selected()
 
     def _update_trash_btn(self) -> None:
+        """휴지통은 내용이 있을 때만 컬럼에 나타난다 — 비었을 때 눌러봐야 빈 화면이라
+        상시 아이콘은 자리값을 못 한다. 지운 직후(=복구가 필요한 순간)엔 배지와 함께
+        스스로 나타난다. 휴지통 모드일 땐 나가는 길이 col_back_btn이므로 숨긴다."""
         n = self.db.count_trashed()
         self.trash_btn.setToolTip(f"휴지통 ({n})" if n else "휴지통")
+        self.trash_btn.setVisible(n > 0 and not self.trash_mode)
         if n > 0:
             self._trash_badge.setText(str(n) if n < 100 else "99+")
             self._trash_badge.adjustSize()
@@ -3701,9 +3738,9 @@ class SlideMemoWindow(QWidget):
         self._trash_preview_id = None
         self.editor.setReadOnly(False)
         self.title_input.setReadOnly(False)
+        self._update_trash_btn()  # 남은 항목이 있으면 다시 나타난다
         self.col_empty_btn.hide()
         self.col_back_btn.hide()
-        self.trash_btn.show()
         self.pin_btn.show()
         self.export_btn.show()
         self.new_tab_btn.show()
@@ -3793,16 +3830,10 @@ class SlideMemoWindow(QWidget):
             if self.trash_mode and neighbor is not None:
                 self._preview_trashed(neighbor.id)
             return
-        # 일반 모드: 현재 메모 → 휴지통
+        # 일반 모드: 현재 메모 → 휴지통.
+        # 확인창은 두지 않는다 — 휴지통으로 가는 되돌릴 수 있는 동작이라,
+        # 물어보는 것보다 바로 하고 되돌릴 길을 주는 쪽이 빠르고 안전하다.
         if self.current_memo is None:
-            return
-        reply = QMessageBox.question(
-            self,
-            "삭제 확인",
-            "이 메모를 휴지통으로 보낼까요?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
             return
         memo_id = self.current_memo.id
         all_memos = self.db.list_all(sort=self._current_sort_key())
@@ -3823,6 +3854,29 @@ class SlideMemoWindow(QWidget):
         else:
             self.collapse()
             self._clear_editor()
+        self._toast_deleted(memo_id)
+
+    def _toast_deleted(self, memo_id: int) -> None:
+        """삭제 직후 되돌릴 기회를 준다. 접힘 상태에선 토스트가 뜰 본문이 안 보이므로,
+        그땐 컬럼에 나타나는 휴지통 아이콘이 복구 경로 역할을 한다."""
+        if not self.is_expanded:
+            return
+        self._show_toast(
+            "휴지통으로 보냈습니다 · 되돌리려면 클릭",
+            5000,
+            on_click=lambda: self._undo_delete(memo_id),
+        )
+
+    def _undo_delete(self, memo_id: int) -> None:
+        try:
+            memo = self.db.restore(memo_id)
+        except KeyError:
+            self._show_toast("이미 사라진 메모입니다.")
+            return
+        self._refresh_memo_tabs()
+        self._load_memo(memo)
+        self._update_tabs_selected()
+        self._show_toast("되돌렸습니다.")
 
     def _preview_trashed(self, memo_id: int) -> None:
         """휴지통 메모 내용을 읽기 전용으로 에디터에 표시 (current_memo는 안 건드림)."""
@@ -3899,14 +3953,14 @@ class SlideMemoWindow(QWidget):
     def _update_column_style(self) -> None:
         """탭 컬럼 하단 버튼들의 바깥면 라운드를 현재 side에 맞춘다.
 
-        4개(숨기기·설정·휴지통·추가)가 한 덩어리로 보여야 하므로 맨 위와 맨 아래
-        모서리만 둥글게 하고 가운데는 각지게 둔다. 그립은 직접 그리므로 다시
-        칠하라고만 알린다.
+        숨기기·(휴지통)·추가가 한 덩어리로 보여야 하므로 맨 위와 맨 아래 모서리만
+        둥글게 하고 가운데는 각지게 둔다. 휴지통은 비어 있으면 아예 숨으므로,
+        그때는 숨기기와 추가가 맞붙어도 바깥 모서리 규칙은 그대로 유지된다.
+        그립은 직접 그리므로 다시 칠하라고만 알린다.
         """
         side = MemoTabButton.side
         for btn, top, bottom in (
             (self.hide_btn, True, False),
-            (self.settings_btn, False, False),
             (self.trash_btn, False, False),
             (self.new_tab_btn, False, True),
         ):
@@ -4092,14 +4146,7 @@ class SlideMemoWindow(QWidget):
             return
 
         if chosen == del_act:
-            reply = QMessageBox.question(
-                self,
-                "삭제 확인",
-                "이 메모를 휴지통으로 보낼까요?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if reply != QMessageBox.StandardButton.Yes:
-                return
+            # 확인창 없이 바로 휴지통으로 (되돌리기는 토스트/휴지통)
             is_current = bool(self.current_memo and self.current_memo.id == memo_id)
 
             # 삭제 전에 이웃 메모 확인
@@ -4127,6 +4174,7 @@ class SlideMemoWindow(QWidget):
                     self._clear_editor()
             else:
                 self._refresh_memo_tabs()
+            self._toast_deleted(memo_id)
 
     # ----- 고정 -----
     def _set_pinned(self, memo_id: int, pinned: bool) -> None:
@@ -4641,7 +4689,7 @@ def _set_windows_app_user_model_id() -> None:
         pass  # 구버전 Windows 등 — 아이콘이 기본값으로 떨어지더라도 앱은 정상 동작
 
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.4.0"
 _GITHUB_REPO = "yujeong0411/slide-memo"
 
 
@@ -4707,6 +4755,15 @@ WHATS_NEW_KEY = "seen_whatsnew_version"
 # 업데이트 후 첫 실행에 보여줄 변경사항. 새 버전마다 맨 위에 한 덩어리씩 쌓는다.
 # (팝업으로 따로 안내한 색 팔레트 개편(1.1.1)은 _show_palette_notice가 담당)
 WHATS_NEW: list[tuple[str, list[str]]] = [
+    ("1.4.0", [
+        "<b>바 하단을 정리했습니다</b> — 설정 아이콘을 뺐습니다."
+        " 설정은 <b>트레이 아이콘 우클릭</b> 또는 <b>바 우클릭</b> 메뉴에 있습니다.",
+        "<b>휴지통은 필요할 때만</b> — 비어 있으면 아이콘이 숨고, 메모를 지우면"
+        " 개수 배지와 함께 다시 나타납니다.",
+        "<b>삭제가 한 번에</b> — 확인 창을 없앴습니다. 지운 직후 뜨는"
+        " <b>‘되돌리려면 클릭’</b> 토스트로 바로 복구할 수 있습니다.",
+        "바 우클릭 메뉴에 <b>설정·휴지통·좌우 가장자리 전환</b>이 추가됐습니다.",
+    ]),
     ("1.3.0", [
         "<b>바 크기를 마우스로</b> — 바 안쪽 가장자리를 끌면 <b>가로 폭</b>이,"
         " 위/아래 가장자리를 끌면 <b>세로 길이</b>가 바뀝니다."
