@@ -3064,7 +3064,10 @@ class SlideMemoWindow(QWidget):
             return
         if not self.db.get_setting_int(GUIDE_BAR_KEY, 0):
             return  # 1단계부터 끝나고 나서
-        QTimer.singleShot(500, lambda: self.start_guide("body"))
+        QTimer.singleShot(500, self._start_body_guide)
+
+    def _start_body_guide(self) -> None:
+        self.start_guide("body")
 
     def _on_fade_done(self) -> None:
         # 접힘 fade-out 종료 → setMask로 tab_column만 노출. 윈도우 폭은 그대로
@@ -3078,7 +3081,10 @@ class SlideMemoWindow(QWidget):
         """설정의 '가이드 다시 보기'. 1단계부터, 2단계는 다음 펼침 때 이어진다."""
         self.db.set_setting_int(GUIDE_BAR_KEY, 0)
         self.db.set_setting_int(GUIDE_BODY_KEY, 0)
-        QTimer.singleShot(200, lambda: self.start_guide("bar"))
+        QTimer.singleShot(200, self._start_bar_guide)
+
+    def _start_bar_guide(self) -> None:
+        self.start_guide("bar")
 
     def _open_settings(self) -> None:
         from settings_dialog import SettingsDialog
@@ -5127,9 +5133,15 @@ def _show_whats_new(window: "SlideMemoWindow", db: MemoDatabase, is_upgrade: boo
             for v, lines in items
         )
     )
+    # 기존 사용자는 가이드가 생긴 줄 모른다 → 여기서 바로 볼 수 있게 한다
+    guide_btn = box.addButton("사용법 가이드 보기", QMessageBox.ButtonRole.ActionRole)
+    ok_btn = box.addButton("확인", QMessageBox.ButtonRole.AcceptRole)
+    box.setDefaultButton(ok_btn)
     box.setWindowFlags(box.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     box.exec()
     window._force_topmost()
+    if box.clickedButton() is guide_btn:
+        window.restart_guide()  # 1단계부터, 2단계는 다음 펼침 때 이어진다
 
 
 PALETTE_NOTICE_KEY = "seen_palette_notice_1_1_1"

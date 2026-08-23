@@ -6,7 +6,15 @@ from pathlib import Path
 
 os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
+from PyQt6.QtCore import QEventLoop, QTimer
 from PyQt6.QtWidgets import QApplication
+
+
+def settle(ms: int = 350) -> None:
+    """예약된 가이드 시작 타이머가 실제로 돌게 둔다 (창을 먼저 닫으면 죽는다)."""
+    loop = QEventLoop()
+    QTimer.singleShot(ms, loop.quit)
+    loop.exec()
 
 import main as m
 from database import MemoDatabase
@@ -78,10 +86,31 @@ assert later_db.get_setting_int(m.GUIDE_BAR_KEY, 0) == 1, "거절했는데 다�
 assert later_db.get_setting_int(m.GUIDE_BODY_KEY, 0) == 1
 fresh_win.close(); later_win.close()
 
+# ----- 업데이트 팝업에서 바로 가이드 보기 -----
+# 기존 사용자는 가이드가 생긴 것 자체를 모르므로, '새로운 기능' 팝업이 입구가 된다.
+up_db = MemoDatabase(Path(tempfile.mkdtemp()) / "up.db")
+up_db.set_setting_str(m.WHATS_NEW_KEY, "1.3.0")  # v1.3.0까지 본 사용자
+up_db.set_setting_int(m.GUIDE_BAR_KEY, 1)        # 업그레이드라 가이드는 건너뛴 상태
+up_db.set_setting_int(m.GUIDE_BODY_KEY, 1)
+up_db.create(title="쓰던 메모")
+up_win = m.SlideMemoWindow(up_db)
+_answer("사용법 가이드 보기")
+m._show_whats_new(up_win, up_db, True)
+assert up_db.get_setting_int(m.GUIDE_BAR_KEY, 0) == 0, "가이드를 보겠다는데 완료 상태 그대로다"
+assert up_db.get_setting_int(m.GUIDE_BODY_KEY, 0) == 0, "2단계도 이어져야 한다"
+assert up_db.get_setting_str(m.WHATS_NEW_KEY, "") == m.APP_VERSION, "안내 기록은 남아야 한다"
+settle()  # 예약된 시작이 실제로 도는지까지 확인
+assert up_win.guide_running(), "팝업에서 눌렀는데 가이드가 시작되지 않았다"
+up_win._finish_guide()
+up_win.close()
+
 # ----- 설정에서 다시 보기 -----
 win.restart_guide()
 assert db.get_setting_int(m.GUIDE_BAR_KEY, 0) == 0
 assert db.get_setting_int(m.GUIDE_BODY_KEY, 0) == 0
+settle()
+assert win.guide_running(), "설정에서 다시 보기를 눌렀는데 시작되지 않았다"
+win._finish_guide()
 
 win.close()
 win.deleteLater()
