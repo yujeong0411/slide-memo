@@ -24,4 +24,21 @@ _vers = [m._ver_tuple(v) for v, _ in m.WHATS_NEW]
 assert _vers == sorted(_vers, reverse=True), _vers
 assert all(lines for _, lines in m.WHATS_NEW), "내용 없는 버전 항목"
 
+# ----- 신규 설치 판정 -----
+# 메모 개수로만 판단하면 "메모를 전부 지운 사용자"가 신규 설치로 오인되고,
+# 그러면 업데이트 안내가 조용히 '본 것'으로 처리돼 영영 안 뜬다 (v1.4.0 실제 사고).
+import tempfile
+from pathlib import Path
+
+from database import MemoDatabase
+
+_db = MemoDatabase(Path(tempfile.mkdtemp()) / "fresh.db")
+assert _db.is_fresh_install(), "방금 만든 DB는 신규 설치다"
+_memo = _db.create(title="a")
+assert not _db.is_fresh_install()
+_db.soft_delete(_memo.id)
+assert not _db.is_fresh_install(), "휴지통에 있어도 쓰던 사람이다"
+_db.set_setting_int("window_width", 400)
+assert not _db.is_fresh_install(), "설정이 남아 있으면 쓰던 사람이다"
+
 print("whatsnew OK")

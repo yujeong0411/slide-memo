@@ -5189,7 +5189,9 @@ def main() -> int:
         _delete_memo_images(removed.content)
     _cleanup_old_recordings(days=30)
     # 활성 메모가 하나도 없으면 빈 메모 1개를 자동 생성 (첫 실행 / 모두 삭제 직후 모두 포함)
-    is_upgrade = bool(db.list_all())  # 메모가 이미 있으면 신규 설치가 아니다
+    # 메모 개수만 보면 "다 지운 사용자"가 신규 설치로 오인돼 업데이트 안내를
+    # 못 받는다 → 이 DB를 방금 만든 경우만 신규 설치로 본다.
+    is_upgrade = not db.is_fresh_install()
     if not is_upgrade:
         db.create()
 

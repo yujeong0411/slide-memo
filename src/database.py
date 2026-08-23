@@ -422,6 +422,19 @@ class MemoDatabase:
         ).fetchall()
         return [Memo.from_row(r) for r in rows]
 
+    def is_fresh_install(self) -> bool:
+        """이 DB를 이번에 처음 만들었는가. 메모 개수로만 판단하면, 메모를 전부
+        지운 사용자가 다음 실행에서 '신규 설치'로 오인돼 업데이트 안내를 못 받는다.
+        (설정 행은 앱을 한 번이라도 쓰면 남는다)"""
+        for table, where in (
+            ("memos", ""),
+            ("settings", ""),
+        ):
+            row = self.conn.execute(f"SELECT COUNT(*) FROM {table} {where}").fetchone()
+            if int(row[0]) > 0:
+                return False
+        return True
+
     def count_trashed(self) -> int:
         row = self.conn.execute(
             "SELECT COUNT(*) FROM memos WHERE deleted_at IS NOT NULL"
