@@ -5080,6 +5080,32 @@ def _whats_new_since(seen: str) -> list[tuple[str, list[str]]]:
     return [(v, lines) for v, lines in WHATS_NEW if _ver_tuple(v) > seen_t]
 
 
+def _show_welcome(window: "SlideMemoWindow", db: MemoDatabase) -> None:
+    """신규 설치 첫 실행 안내. 튜토리얼을 예고 없이 시작하지 않고 먼저 물어본다.
+    (업그레이드 사용자는 이 팝업 대신 '새로운 기능'을 본다)"""
+    box = QMessageBox(window)
+    box.setWindowTitle("Slide Memo 시작하기")
+    box.setIcon(QMessageBox.Icon.Information)
+    box.setText("화면 가장자리에 붙어 있는 메모장입니다.")
+    box.setInformativeText(
+        "· 탭을 클릭하면 메모가 펼쳐지고, <b>Esc</b>로 접힙니다.<br>"
+        "· 나머지 사용법을 <b>말풍선으로 짧게</b> 안내해드릴까요?"
+        " (바 4단계 · 메모 4단계, 언제든 건너뛸 수 있어요)<br>"
+        "· 나중에 보시려면 <b>설정 → 사용법 가이드 다시 보기</b>."
+    )
+    start_btn = box.addButton("가이드 보기", QMessageBox.ButtonRole.AcceptRole)
+    box.addButton("나중에", QMessageBox.ButtonRole.RejectRole)
+    box.setDefaultButton(start_btn)
+    box.setWindowFlags(box.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+    box.exec()
+    window._force_topmost()
+    if box.clickedButton() is start_btn:
+        window.start_guide("bar")
+    else:  # 거절했는데 계속 들이밀지 않는다 (설정에서 언제든 다시 볼 수 있음)
+        db.set_setting_int(GUIDE_BAR_KEY, 1)
+        db.set_setting_int(GUIDE_BODY_KEY, 1)
+
+
 def _show_whats_new(window: "SlideMemoWindow", db: MemoDatabase, is_upgrade: bool) -> None:
     """업데이트 후 첫 실행에 '새로운 기능'을 한 번 띄운다.
     마지막으로 안내한 버전을 DB에 남겨, 그 사이에 건너뛴 릴리즈 내용까지 함께
@@ -5214,7 +5240,7 @@ def main() -> int:
             db.set_setting_int(GUIDE_BAR_KEY, 1)
             db.set_setting_int(GUIDE_BODY_KEY, 1)
         else:
-            QTimer.singleShot(700, lambda: window.start_guide("bar"))
+            QTimer.singleShot(700, lambda: _show_welcome(window, db))
 
     _checker = UpdateChecker()
     _checker.update_available.connect(

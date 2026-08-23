@@ -45,6 +45,39 @@ win.expand()
 win._maybe_start_body_guide()
 assert not win.guide_running(), "이미 본 가이드가 다시 떴다"
 
+# ----- 신규 설치: 먼저 물어보고 시작 -----
+# 예고 없이 튜토리얼이 시작되면 첫 인상이 나쁘다 → 팝업으로 묻는다.
+from PyQt6.QtWidgets import QMessageBox
+
+
+def _answer(label):
+    """모달 대신 지정한 버튼을 눌러준다."""
+    def fake_exec(self):
+        for b in self.buttons():
+            if b.text().replace("&", "") == label:
+                b.click()
+                return 0
+        raise AssertionError(f"버튼 없음: {label}")
+    QMessageBox.exec = fake_exec
+
+
+fresh_db = MemoDatabase(Path(tempfile.mkdtemp()) / "new.db")
+fresh_win = m.SlideMemoWindow(fresh_db)
+_answer("가이드 보기")
+m._show_welcome(fresh_win, fresh_db)
+assert fresh_win.guide_running(), "가이드 보기를 눌렀는데 시작되지 않았다"
+assert fresh_db.get_setting_int(m.GUIDE_BAR_KEY, 0) == 0, "아직 끝나지도 않았는데 완료 처리됐다"
+fresh_win._finish_guide()
+
+later_db = MemoDatabase(Path(tempfile.mkdtemp()) / "later.db")
+later_win = m.SlideMemoWindow(later_db)
+_answer("나중에")
+m._show_welcome(later_win, later_db)
+assert not later_win.guide_running(), "나중에를 눌렀는데 가이드가 시작됐다"
+assert later_db.get_setting_int(m.GUIDE_BAR_KEY, 0) == 1, "거절했는데 다음 실행에 또 뜬다"
+assert later_db.get_setting_int(m.GUIDE_BODY_KEY, 0) == 1
+fresh_win.close(); later_win.close()
+
 # ----- 설정에서 다시 보기 -----
 win.restart_guide()
 assert db.get_setting_int(m.GUIDE_BAR_KEY, 0) == 0
