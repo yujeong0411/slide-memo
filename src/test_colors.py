@@ -26,6 +26,31 @@ d3 = m._gradient_def("grad:#000000,#ffffff,#ff0000")
 assert len(d3["stops"]) == 3 and d3["stops"][0][0] == 0.0 and d3["stops"][-1][0] == 1.0
 
 
+# ----- 단색 / 그라데이션 선택 (색 개수로 결정) -----
+# 색이 1개면 단색 hex, 2개 이상이면 grad: 접두사. 색 점·본문 모두 이 값 하나로 갈린다.
+import os
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+from PyQt6.QtWidgets import QApplication  # noqa: E402
+
+_app = QApplication.instance() or QApplication([])
+
+dlg = m.MemoColorDialog(["#123456"])
+assert dlg.value() == "#123456", dlg.value()
+assert not m.is_gradient(dlg.value())
+assert normalize_color(dlg.value()) == "#123456"     # DB 정규화 통과
+assert m.theme_for(dlg.value())["bg"] == "#123456"   # 본문 배경이 그 색 그대로
+
+dlg2 = m.MemoColorDialog(["#123456", "#abcdef"])
+assert dlg2.value() == "grad:#123456,#abcdef", dlg2.value()
+assert m.is_gradient(dlg2.value())
+
+# 색이 1개만 남을 때까지 지울 수 있어야 단색을 만들 수 있다 (예전엔 2개가 하한이었다)
+dlg2._remove(0)
+assert dlg2.values() == ["#abcdef"] and dlg2.value() == "#abcdef"
+dlg2._remove(0)
+assert dlg2.values() == ["#abcdef"], "마지막 한 색까지 지워지면 색이 없어진다"
+
 # ----- 사용자 색 슬롯 -----
 # 저장 문자열 ↔ 목록 왕복. DB 값도 신뢰 경계라 깨진 값은 걸러져야 한다.
 assert m.parse_color_slots("") == []                       # 아무것도 추가 안 함 → 점 2개

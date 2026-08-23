@@ -1104,19 +1104,22 @@ def _version_label(v: MemoVersion) -> str:
     return f"{stamp}  {title[:12]}"
 
 
-class GradientDialog(QDialog):
-    """커스텀 그라데이션: 색을 2개 이상 직접 지정 (개수 제한 없음)."""
+class MemoColorDialog(QDialog):
+    """메모 색 지정: 색이 1개면 단색, 2개 이상이면 그라데이션 (개수 제한 없음)."""
 
     def __init__(self, colors: list[str] | None = None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("그라데이션 색 지정")
+        self.setWindowTitle("메모 색 지정")
         self.setMinimumWidth(300)
-        self._colors = list(colors) if colors and len(colors) >= 2 else ["#FFD27A", "#FF8FB1"]
+        self._colors = list(colors) if colors else ["#FFD27A", "#FF8FB1"]
 
         layout = QVBoxLayout(self)
         self._preview = QFrame()
         self._preview.setFixedHeight(40)
         layout.addWidget(self._preview)
+        self._hint = QLabel()
+        self._hint.setStyleSheet("color: gray; font-size: 9pt;")
+        layout.addWidget(self._hint)
 
         self._rows_container = QWidget()
         self._rows_v = QVBoxLayout(self._rows_container)
@@ -1154,13 +1157,19 @@ class GradientDialog(QDialog):
             h.addWidget(sw, 1)
             rm = QPushButton("✕")
             rm.setFixedWidth(28)
-            rm.setEnabled(len(self._colors) > 2)  # 최소 2색 유지
+            rm.setEnabled(len(self._colors) > 1)  # 최소 1색 (= 단색)
             rm.clicked.connect(lambda _x, idx=i: self._remove(idx))
             h.addWidget(rm)
             self._rows_v.addWidget(row)
+        solid = len(self._colors) == 1
+        bg = self._colors[0] if solid else gradient_qss("grad:" + ",".join(self._colors))
         self._preview.setStyleSheet(
-            f"background: {gradient_qss('grad:' + ','.join(self._colors))};"
-            " border:1px solid #888; border-radius:4px;"
+            f"background: {bg}; border:1px solid #888; border-radius:4px;"
+        )
+        self._hint.setText(
+            "색이 1개면 단색입니다. 2개 이상 고르면 그라데이션이 됩니다."
+            if solid else
+            "색을 ✕로 지우고 1개만 남기면 단색이 됩니다."
         )
 
     def _pick(self, idx: int) -> None:
@@ -1177,12 +1186,19 @@ class GradientDialog(QDialog):
         self._rebuild()
 
     def _remove(self, idx: int) -> None:
-        if len(self._colors) > 2:
+        if len(self._colors) > 1:
             del self._colors[idx]
             self._rebuild()
 
     def values(self) -> list[str]:
         return self._colors
+
+    def value(self) -> str:
+        """저장 형식. 단색은 hex 그대로, 여러 색은 grad: 접두사."""
+        return (
+            self._colors[0] if len(self._colors) == 1
+            else "grad:" + ",".join(self._colors)
+        )
 
 
 class FlowLayout(QLayout):
@@ -4613,10 +4629,10 @@ class SlideMemoWindow(QWidget):
         """+ 버튼: 팔레트에 슬롯을 추가하고 현재 메모에 바로 적용."""
         if len(self._color_slots) >= MAX_USER_SLOTS:
             return
-        dlg = GradientDialog(None, self)
+        dlg = MemoColorDialog(None, self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        value = "grad:" + ",".join(dlg.values())
+        value = dlg.value()
         self._color_slots.append(value)
         self._save_color_slots()
         self._rebuild_color_dots()
@@ -4626,11 +4642,14 @@ class SlideMemoWindow(QWidget):
         """사용자 슬롯의 색을 바꾼다. DB 설정에 영구 저장."""
         slot_idx = self.color_dots.index(dot) - len(COLOR_FIXED)
         cur = dot.color_name
-        prefill = [c for _s, c in _gradient_def(cur)["stops"]] if is_gradient(cur) else None
-        dlg = GradientDialog(prefill, self)
+        if is_gradient(cur):
+            prefill = [c for _s, c in _gradient_def(cur)["stops"]]
+        else:  # 단색 슬롯이면 그 색 하나로 시작
+            prefill = [resolve_color(cur)]
+        dlg = MemoColorDialog(prefill, self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        value = "grad:" + ",".join(dlg.values())
+        value = dlg.value()
         self._color_slots[slot_idx] = value
         self._save_color_slots()
         dot.set_color(value)
