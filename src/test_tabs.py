@@ -271,4 +271,32 @@ _g = _win.geometry()
 _win.setGeometry(_g.x(), _g.y(), _g.width(), _g.height() - 80)
 assert _win._collapsed_mask_region().boundingRect().height() == _g.height() - 80
 
+# ----- 넓은 컬럼에서 제목 두 줄 -----
+# 회전 텍스트라 "줄 수"는 탭의 가로축 잉크 폭으로 드러난다. 좁으면 한 줄(자름),
+# 넓으면 두 줄이어야 한다 — 조건이 뒤집히면 이 폭이 그대로 같아진다.
+# 번들 폰트를 등록해야 글자 폭·줄간격이 실제 앱과 같다 (없으면 두부 글리프).
+from PyQt6.QtGui import QFontDatabase
+
+for _f in m._resource_path("assets/fonts").glob("*.otf"):
+    QFontDatabase.addApplicationFont(str(_f))
+Tab.app_font_family = "Pretendard"
+
+
+def ink_width(w):
+    tab = Tab(Memo(id=1, title="아주아주긴메모제목입니다", content="", color="mint",
+                   created_at="", updated_at=""))
+    tab.resize(w, 110)
+    pm = QPixmap(tab.size())
+    pm.fill(QColor(0, 0, 0, 0))
+    tab.render(pm, QPoint(), QRegion(), QWidget.RenderFlag.DrawChildren)
+    img = pm.toImage()
+    cols = [x for x in range(w)
+            if any(img.pixelColor(x, y).lightness() < 120
+                   for y in range(20, img.height() - 20))]
+    return (max(cols) - min(cols) + 1) if cols else 0
+
+
+_narrow, _wide = ink_width(m.TAB_WIDTH), ink_width(m.TAB_WIDTH_MAX)
+assert _narrow > 0 and _wide > _narrow * 1.5, (_narrow, _wide)
+
 print("tabs OK")

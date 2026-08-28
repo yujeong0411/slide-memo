@@ -289,7 +289,6 @@ STYLE = """
     background-color: #ffffff;
     color: #5c5c66;
     border: none;
-    font-size: 14pt;
     font-weight: bold;
 }
 #newTabBtn:hover {
@@ -735,11 +734,18 @@ class MemoTabButton(QPushButton):
         fm = painter.fontMetrics()
         avail_h = self.height() - pin_h
         max_w = avail_h - 10
-        elided = fm.elidedText(self.memo_title, Qt.TextElideMode.ElideRight, max_w)
         rect = QRect(
             -avail_h // 2, -self.width() // 2, avail_h, self.width()
         )
-        painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), elided)
+        flags = int(Qt.AlignmentFlag.AlignCenter)
+        # 컬럼이 넓어 회전 후 두 줄이 여유 있게 들어가면, 자르는 대신 두 줄로 접는다.
+        # 한글 제목은 공백이 거의 없어 WordWrap으론 안 쪼개진다 → WrapAnywhere.
+        if (self.width() >= 2 * fm.lineSpacing() + 12
+                and fm.horizontalAdvance(self.memo_title) > max_w):
+            flags |= int(Qt.TextFlag.TextWrapAnywhere)
+            max_w = max_w * 2 - fm.horizontalAdvance("…")
+        elided = fm.elidedText(self.memo_title, Qt.TextElideMode.ElideRight, max_w)
+        painter.drawText(rect, flags, elided)
         painter.end()
 
     @staticmethod
@@ -2441,10 +2447,11 @@ class SlideMemoWindow(QWidget):
         size = max(12, min(int(self.tab_width * 0.55), 32))
         for btn in (self.trash_btn, self.col_empty_btn, self.col_back_btn):
             btn.setIconSize(QSize(size, size))
-        # 텍스트 글리프 버튼("＋", "»")의 크기도 함께 줄임
+        # 텍스트 글리프 버튼("＋", "»")도 아이콘 한 변에 픽셀 크기를 맞춘다.
+        # (QSS에 font-size를 두면 setFont를 덮어써서 이 둘만 안 커진다)
         for b in (self.new_tab_btn, self.hide_btn):
             font = b.font()
-            font.setPointSize(max(9, int(size * 0.85)))
+            font.setPixelSize(size)
             b.setFont(font)
 
     def _load_display_mode(self) -> None:
