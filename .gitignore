@@ -17,6 +17,9 @@ venv/
 *.db
 .memo_slide/
 
+# 단계별 UI 캡처 (커밋하지 않음)
+docs/ui-audit-after/
+
 # IDE
 .idea/
 .vscode/
