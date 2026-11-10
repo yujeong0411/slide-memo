@@ -67,5 +67,11 @@ for side, beside_left in (("right", True), ("left", False)):
     tips.hide_tip()
 m.MemoTabButton.side = "right"
 
+# 배지: 아이콘 아래 2/3를 가리지 않는다
+db.soft_delete(short_memo.id)
+win._update_trash_btn()
+badge, btn = win._trash_badge, win.trash_btn
+icon_top = btn.geometry().center().y() - m.BAR_ICON // 2
+assert badge.geometry().bottom() + 1 <= icon_top + m.BAR_ICON // 3
 print("tooltip OK", flush=True)
 os._exit(0)

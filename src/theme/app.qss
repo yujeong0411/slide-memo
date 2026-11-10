@@ -47,6 +47,18 @@ QPushButton#barBtn {
 QPushButton#barBtn:hover { background: $overlay_hover; }
 QPushButton#barBtn:pressed { background: $overlay_press; }
 QPushButton#barBtn:focus { border-color: $focus; }
+QLabel#trashBadge {
+    background: $bg_muted;
+    color: $fg_secondary;
+    font-size: ${label_px}px;
+    font-weight: 500;
+    border: 2px solid $bg_canvas;
+    min-height: 16px;
+    max-height: 16px;
+    min-width: 8px;
+    border-radius: 10px;
+    padding: 0 4px;
+}
 
 /* ----- 떠 있는 카드: 배너, 녹음 줄, AI 진행 ----- */
 QFrame#floatCard {

@@ -22,6 +22,7 @@ win.show()
 
 # 휴지통 아이콘은 비어 있어도 있다
 assert win.trash_btn.isVisibleTo(win) and win.trash_btn.toolTip() == "휴지통 (비어 있음)"
+assert not win._trash_badge.isVisibleTo(win.bar_group), "비었으면 배지가 없다"
 # 설정 아이콘은 아예 없어졌다 — 우클릭/트레이 메뉴로 이동
 assert not hasattr(win, "settings_btn"), "설정 버튼이 아직 컬럼에 남아 있다"
 
@@ -33,6 +34,7 @@ win._delete_current_memo()  # 확인창 없이 바로 휴지통
 assert db.count_trashed() == 1, db.count_trashed()
 assert win.trash_btn.isVisibleTo(win), "지웠는데 휴지통 아이콘이 안 나타났다"
 assert win.trash_btn.toolTip() == "휴지통 (메모 1개)", win.trash_btn.toolTip()
+assert win._trash_badge.text() == "1" and win._trash_badge.isVisibleTo(win.bar_group)
 assert not win._toast_lbl.isHidden(), "되돌리기 토스트가 안 떴다"
 
 assert win._toast_lbl.timer.isActive(), "토스트는 4초 뒤에 사라져야 한다"
