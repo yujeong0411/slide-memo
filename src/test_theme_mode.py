@@ -10,10 +10,12 @@ from PyQt6.QtWidgets import QApplication
 import main as m
 import memo_document as MD
 import settings_dialog as SD
+import database
 from database import MemoDatabase
 from theme import apply as A
 from theme import tokens as T
 
+database.APP_DIR = Path(tempfile.mkdtemp())  # 아이콘 캐시가 실제 데이터 폴더에 생기지 않게 한다
 app = QApplication([])
 SD.load_api_key = lambda _provider: None
 A.apply_theme(app, "light")
