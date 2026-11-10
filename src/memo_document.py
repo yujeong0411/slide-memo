@@ -21,7 +21,7 @@ from PyQt6.QtGui import (
 )
 
 from theme import tokens as T
-from theme.memo_tokens import contrast
+from theme.memo_tokens import contrast, legible_color
 
 # 값이 "" 이면 저장할 때 색을 지우고, hex면 그 색으로 되돌린다
 ORIGINAL_FG = QTextFormat.Property.UserProperty + 1
@@ -66,8 +66,17 @@ def better_ink(background: str) -> str:
     return max((T.INK_DARK, T.WHITE), key=lambda ink: contrast(ink, background))
 
 
+def _reference_face(mode: str) -> str:
+    """보정 기준 면. 밝은 화면은 종이 톤 중 가장 어두운 회색이라 어느 메모에서나 기준을 넘는다."""
+    return T.DARK_MEMO_FACE if mode == "dark" else T.MEMO_PRESETS["gray"][1]
+
+
 def display_text_color(light: str, mode: str) -> str:
-    return _TEXT_PAIRS.get(light.upper(), light) if mode == "dark" else light
+    """저장 값 → 화면에 칠할 색. 목록 색은 짝으로, 목록 밖의 색은 읽히게 보정한다."""
+    key = light.upper()
+    if key in _TEXT_PAIRS:
+        return _TEXT_PAIRS[key] if mode == "dark" else light
+    return legible_color(key, _reference_face(mode), _ink(mode))
 
 
 def display_highlight(light: str, mode: str) -> str:
@@ -148,10 +157,12 @@ def _decorated(fmt: QTextCharFormat, mode: str) -> QTextCharFormat | None:
     if fmt.isAnchor() and foreground == link_color(mode).upper():
         result.setProperty(ORIGINAL_FG, "")  # 앱이 칠한 새 링크 색 (14번)
         changed = True
-    elif mode == "dark" and foreground in _TEXT_PAIRS:
-        result.setForeground(QColor(_TEXT_PAIRS[foreground]))
-        result.setProperty(ORIGINAL_FG, foreground)
-        changed = True
+    elif foreground is not None and not fmt.isAnchor() and background is None:
+        shown = display_text_color(foreground, mode)  # 예전 글자색도 여기서 보정한다 (21번)
+        if shown.upper() != foreground:
+            result.setForeground(QColor(shown))
+            result.setProperty(ORIGINAL_FG, foreground)
+            changed = True
 
     if background in _HIGHLIGHT_PAIRS:
         if mode == "dark":

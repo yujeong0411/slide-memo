@@ -59,11 +59,14 @@ assert _probe.minimumWidth() == 0
 assert _probe.toolTip() == "t"
 
 # 세워 쌓기: 다 안 들어가면 끝을 말줄임, 툴팁엔 전체 제목 (9장 2)
-assert Tab.stacked_chars("주간", 4) == ["주", "간"]
-assert Tab.stacked_chars("가나다라", 4) == list("가나다라")
-assert Tab.stacked_chars("가나다라마바", 4) == ["가", "나", "다", "…"]
+_room = H - 2 * Tab.PADDING_Y
+assert Tab.stacked_cells("주간", _room) == ["주", "간"]
+assert Tab.stacked_cells("가나다라마", _room) == list("가나다라마"), "높이 112에 5자"
+assert Tab.stacked_cells("가나다라마바", _room) == ["가", "나", "다", "라", Tab.ELLIPSIS]
+# 띄어쓰기는 반 칸, 말줄임 앞의 띄어쓰기는 지운다
+assert Tab.stacked_cells("주간 회의 준비", _room) == ["주", "간", " ", "회", Tab.ELLIPSIS]
 assert Tab(memo("가나다라마바")).toolTip() == "가나다라마바"
-assert Tab(memo("  ")).memo_title == "(제목 없음)"
+assert Tab(memo("  ")).memo_title == "제목 없음" and Tab(memo("  ")).is_untitled
 
 # 깨진 색이 DB에 있어도 탭은 그려져야 앱이 켜진다
 render(Tab(memo(color="sunrise")))

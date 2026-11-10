@@ -13,6 +13,7 @@ import database as D
 import memo_document as MD
 from theme import apply as A
 from theme import tokens as T
+from theme.memo_tokens import legible_color, to_oklch
 
 app = QApplication.instance() or QApplication([])
 for font in A.resource_path("assets/fonts").glob("*.otf"):
@@ -21,6 +22,12 @@ for font in A.resource_path("assets/fonts").glob("*.otf"):
 RED_LIGHT, RED_DARK = "#B01219", "#F28B8B"
 YELLOW_LIGHT, YELLOW_DARK = "#FFDD95", "#6B5200"
 OLD_BG = "#FEF08A"
+
+
+def same_hue(want: float, got: float) -> float:
+    """hue가 몇 도 안에서 같으면 got을 돌려준다 (hex로 반올림되며 조금 흔들린다)."""
+    gap = abs(want - got) % 360
+    return got if min(gap, 360 - gap) < 8 else want
 
 
 def load(html: str, mode: str) -> QTextDocument:
@@ -51,7 +58,9 @@ f = formats(dark)
 assert f["red"].foreground().color().name().upper() == RED_DARK
 assert f["mark"].background().color().name().upper() == YELLOW_DARK
 assert f["old"].foreground().color().name().upper() == MD.better_ink(OLD_BG)
-assert f["custom"].foreground().color().name().upper() == "#123456", "목록에 없는 글자색은 그대로"
+_shown = f["custom"].foreground().color().name().upper()
+assert _shown != "#123456" and MD.contrast(_shown, T.DARK_MEMO_FACE) >= 4.5, "예전 글자색은 읽히게 보정한다"
+assert to_oklch(_shown)[2] == same_hue(to_oklch("#123456")[2], to_oklch(_shown)[2]), "색상은 그대로"
 assert f["new"].foreground().color().name().upper() == T.MEMO_LINK_ON_DARK
 assert f["oldlink"].foreground().color().name().upper() == "#89B4FA", "저장된 링크 색은 그대로"
 
@@ -72,6 +81,22 @@ assert f["red"].foreground().color().name().upper() == RED_LIGHT
 assert f["mark"].background().color().name().upper() == YELLOW_LIGHT
 assert f["new"].foreground().color().name().upper() == T.MEMO_LINK_ON_LIGHT
 assert MD.saved_html(light) == MD.saved_html(load(MD.saved_html(light), "light")), "저장을 반복해도 안 바뀐다"
+
+# ----- 예전 글자색 보정 (9장 21) -----
+OLD = "<p><span style='color:#1f2937'>dark</span> <span style='color:#ffffff'>white</span> <span style='color:#ef4444'>red</span></p>"
+assert legible_color("#808080", "#FFFFFF", T.INK_DARK) == T.INK_DARK, "회색은 먹색으로"
+for mode, ink in (("light", T.INK_DARK), ("dark", T.WHITE)):
+    doc = load(OLD, mode)
+    f = formats(doc)
+    assert f["white"].foreground().color().name().upper() == ink, (mode, "채도 없는 색은 ink")
+    saved = MD.saved_html(doc).lower()
+    for original in ("#1f2937", "#ffffff", "#ef4444"):
+        assert original in saved, (mode, original, "저장은 원래 값")
+    faces = [T.DARK_MEMO_FACE] if mode == "dark" else [p[1] for p in T.MEMO_PRESETS.values()]
+    for word in ("dark", "red"):
+        color = f[word].foreground().color().name().upper()
+        for face in faces:
+            assert MD.contrast(color, face) >= 4.5, (mode, word, color, face)
 
 # ----- 어두운 화면에서 칠한 글자색도 밝은 값으로 저장 -----
 A._mode = "dark"

@@ -305,8 +305,19 @@ class Toast(QFrame):
         layout.addWidget(self.action)
         self._drop = QPropertyAnimation(self, b"pos", self)
         self._drop.setDuration(T.MOTION_FAST_MS)
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.setInterval(T.TOAST_MS)
+        self.timer.timeout.connect(self.hide)
 
-    def show_message(self, text: str, action_text: str = "") -> None:
+    def enterEvent(self, _event) -> None:  # noqa: N802
+        self.timer.stop()  # 되돌리기를 누르기 전에 사라지지 않게 한다
+
+    def leaveEvent(self, _event) -> None:  # noqa: N802
+        if self.isVisible():
+            self.timer.start()
+
+    def show_message(self, text: str, action_text: str, top: int) -> None:
         self.message.setText(text)
         self.action.setText(action_text)
         self.action.setVisible(bool(action_text))
@@ -319,9 +330,10 @@ class Toast(QFrame):
         self.raise_()
         self.show()
         self._drop.stop()
-        self._drop.setStartValue(QPoint(x, 4))
-        self._drop.setEndValue(QPoint(x, 12))
+        self._drop.setStartValue(QPoint(x, top - 8))
+        self._drop.setEndValue(QPoint(x, top))
         self._drop.start()
+        self.timer.start()
 
     def finish_animation(self) -> None:
         self._drop.setCurrentTime(self._drop.duration())

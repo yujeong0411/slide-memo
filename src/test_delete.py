@@ -35,6 +35,11 @@ assert win.trash_btn.isVisibleTo(win), "지웠는데 휴지통 아이콘이 안 
 assert win._trash_badge.text() == "1", win._trash_badge.text()
 assert not win._toast_lbl.isHidden(), "되돌리기 토스트가 안 떴다"
 
+assert win._toast_lbl.timer.isActive(), "토스트는 4초 뒤에 사라져야 한다"
+win._toast_lbl.enterEvent(None)
+assert not win._toast_lbl.timer.isActive(), "마우스를 올리면 타이머가 멈춰야 한다"
+win._toast_lbl.leaveEvent(None)
+assert win._toast_lbl.timer.isActive(), "마우스가 나가면 다시 센다"
 win._toast_lbl.clicked.emit()  # 토스트 클릭 = 되돌리기
 assert db.count_trashed() == 0, "토스트 클릭이 복구를 안 했다"
 assert win.current_memo is not None and win.current_memo.id == victim

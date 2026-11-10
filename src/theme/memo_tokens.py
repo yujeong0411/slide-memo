@@ -108,6 +108,20 @@ def face_and_band(color: str, mode: str) -> tuple[str, str]:
     return (T.DARK_MEMO_FACE, dark_band) if mode == "dark" else (face, band)
 
 
+def legible_color(color: str, background: str, ink: str) -> str:
+    """목록에 없는 예전 글자색의 표시 색 (9장 21). 채도가 거의 없으면 먹색, 색이 있으면
+    색상은 두고 밝기만 옮겨 배경과 4.5:1을 맞춘다."""
+    lightness, chroma, hue = to_oklch(color)
+    if chroma < T.GRAY_CHROMA_MAX:
+        return ink
+    step = _LIGHTNESS_STEP if contrast(T.WHITE, background) > contrast(T.INK_DARK, background) else -_LIGHTNESS_STEP
+    result = color.upper()
+    while contrast(result, background) < TEXT_MIN_CONTRAST and 0.0 <= lightness <= 1.0:
+        lightness += step
+        result = from_oklch(max(0.0, min(1.0, lightness)), chroma, hue)
+    return result
+
+
 def nearest_preset(color: str) -> str:
     """실제 색의 색상(hue)이 가장 가까운 종이 톤 프리셋. 채도가 거의 없으면 회색 (9장 18)."""
     _, chroma, hue = to_oklch(color)

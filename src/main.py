@@ -197,6 +197,25 @@ def _inner_rounded_path(rect: QRectF, radius: float, side: str) -> QPainterPath:
     return path
 
 
+def _inner_edge_path(rect: QRectF, radius: float, side: str) -> QPainterPath:
+    """닫힌 탭의 선: 안쪽 변과 둥근 모서리, 아래쪽 선. 위쪽은 윗 탭의 아래쪽 선이 맡는다."""
+    path = QPainterPath()
+    left, right, top, bottom = rect.left(), rect.right(), rect.top(), rect.bottom()
+    if side == "right":
+        path.moveTo(left + radius, top)
+        path.quadTo(left, top, left, top + radius)
+        path.lineTo(left, bottom - radius)
+        path.quadTo(left, bottom, left + radius, bottom)
+        path.lineTo(right, bottom)
+    else:
+        path.moveTo(right - radius, top)
+        path.quadTo(right, top, right, top + radius)
+        path.lineTo(right, bottom - radius)
+        path.quadTo(right, bottom, right - radius, bottom)
+        path.lineTo(left, bottom)
+    return path
+
+
 class MemoTabButton(QPushButton):
     """세로 탭. 모니터 쪽 4px은 띠 색, 글자는 세워 쌓는다 (4.1, 9장 2)."""
 
@@ -204,29 +223,44 @@ class MemoTabButton(QPushButton):
     button_height = MEMO_TAB_HEIGHT  # 클래스 변수: 설정에서 조절 시 갱신
 
     BAND_WIDTH = 4
-    PADDING_Y = 12
-    LINE_HEIGHT = T.TYPE["label"][1]
+    PADDING_Y = 8
+    LINE_HEIGHT = 18
+    SPACE_HEIGHT = 9  # 띄어쓰기는 반 칸
     PIN_ICON_SIZE = 12
-    PIN_TEXT_GAP = 6
+    PIN_TOP = 2
+    ELLIPSIS = "…"
 
     @staticmethod
     def _pin_pixmap(fg: str, size: int) -> QPixmap:
         return tinted_pixmap("menu_keep.svg", fg, size)
 
-    @staticmethod
-    def stacked_chars(title: str, max_lines: int) -> list[str]:
-        """세로로 쌓을 글자. 다 안 들어가면 마지막 칸을 말줄임표로 바꾼다."""
-        chars = list(title)
-        if len(chars) <= max_lines:
-            return chars
-        return chars[:max(0, max_lines - 1)] + ["…"]
+    @classmethod
+    def _cell_height(cls, char: str) -> int:
+        return cls.SPACE_HEIGHT if char.isspace() else cls.LINE_HEIGHT
+
+    @classmethod
+    def stacked_cells(cls, title: str, room: int) -> list[str]:
+        """세로로 쌓을 글자 칸. 다 안 들어가면 마지막 칸을 말줄임으로 바꾼다."""
+        if sum(cls._cell_height(c) for c in title) <= room:
+            return list(title)
+        cells: list[str] = []
+        used = 0
+        for char in title:
+            used += cls._cell_height(char)
+            if used > room - cls.LINE_HEIGHT:
+                break
+            cells.append(char)
+        while cells and cells[-1].isspace():
+            cells.pop()
+        return cells + [cls.ELLIPSIS]
 
     def __init__(self, memo: Memo, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.memo_id = memo.id
         self.color_name = memo.color
         self._tokens = memo_tokens(normalize_color(memo.color), theme_apply.current_mode())
-        self.memo_title = memo.title.strip() or "(제목 없음)"
+        self.memo_title = memo.title.strip() or "제목 없음"
+        self.is_untitled = not memo.title.strip()
         self.is_pinned = memo.is_pinned
         self._selected = False
         self.setFixedHeight(MemoTabButton.button_height)
@@ -248,13 +282,12 @@ class MemoTabButton(QPushButton):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         area = QRectF(self.rect())
-        outline = _inner_rounded_path(area.adjusted(0.5, 0.5, -0.5, -0.5), T.RADIUS["tab_inner"], side)
-        shape = QPainterPath(area.topLeft()) if self._selected else QPainterPath(outline)
+        radius = T.RADIUS["tab_inner"]
+        shape = _inner_rounded_path(area, radius, side)
+        shape.closeSubpath()
         if self._selected:  # 열린 탭은 창과 이어진다: 둥근 모서리도 안쪽 선도 없다
             shape = QPainterPath()
             shape.addRect(area)
-        else:
-            shape.closeSubpath()
 
         painter.save()
         painter.setClipPath(shape)
@@ -264,32 +297,42 @@ class MemoTabButton(QPushButton):
         painter.fillRect(QRectF(band_x, 0, self.BAND_WIDTH, area.height()), QColor(t["memo_band"]))
         painter.restore()
 
+        # 탭은 붙어 있고 사이는 아래쪽 선 하나로 나눈다. 위쪽 선을 그으면 2px이 된다.
         painter.setPen(QPen(QColor(t["memo_edge"]), 1))
         painter.setBrush(Qt.BrushStyle.NoBrush)
+        stroke = area.adjusted(0.5, 0.5, -0.5, -0.5)
         if self._selected:
-            painter.drawLine(area.topLeft(), area.topRight())
-            painter.drawLine(area.bottomLeft(), area.bottomRight())
+            painter.drawLine(stroke.bottomLeft(), stroke.bottomRight())
         else:
-            painter.drawPath(outline)
+            painter.drawPath(_inner_edge_path(stroke, radius, side))
 
         content_left = 0 if side == "right" else self.BAND_WIDTH
         center_x = content_left + (self.width() - self.BAND_WIDTH) / 2
         top = self.PADDING_Y
-        if self.is_pinned:
+        if self.is_pinned:  # 글자 칸을 쓰지 않고 위 여백에 넣는다
             size = self.PIN_ICON_SIZE
             pin = MemoTabButton._pin_pixmap(t["memo_fg_secondary"], size)
-            painter.drawPixmap(int(center_x - size / 2), top, pin)
-            top += size + self.PIN_TEXT_GAP
+            painter.drawPixmap(int(center_x - size / 2), self.PIN_TOP, pin)
+            top = self.PIN_TOP + size
 
-        font = theme_apply.base_font("label")
+        font = theme_apply.base_font("body_strong")
         if self._selected:
             font.setWeight(QFont.Weight.Bold)
         painter.setFont(font)
-        painter.setPen(QColor(t["memo_fg"]))
-        lines = max(1, (self.height() - top - self.PADDING_Y) // self.LINE_HEIGHT)
-        for index, char in enumerate(MemoTabButton.stacked_chars(self.memo_title, lines)):
-            cell = QRectF(center_x - 12, top + index * self.LINE_HEIGHT, 24, self.LINE_HEIGHT)
-            painter.drawText(cell, Qt.AlignmentFlag.AlignCenter, char)
+        ink = QColor(theme_apply.current()["fg_secondary"] if self.is_untitled else t["memo_fg"])
+        painter.setPen(ink)
+        y = top
+        for char in MemoTabButton.stacked_cells(self.memo_title, self.height() - top - self.PADDING_Y):
+            if char == self.ELLIPSIS:  # 세로로 쌓을 때는 세로 점 세 개
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(ink)
+                middle = y + self.LINE_HEIGHT / 2
+                for dot in (-4, 0, 4):
+                    painter.drawEllipse(QPointF(center_x, middle + dot), 1.2, 1.2)
+            else:
+                cell = QRectF(center_x - 12, y, 24, self.LINE_HEIGHT)
+                painter.drawText(cell, Qt.AlignmentFlag.AlignCenter, char)
+            y += self._cell_height(char)
         painter.end()
 
 
@@ -2081,9 +2124,7 @@ class SlideMemoWindow(QWidget):
         self._toast_action = None  # 되돌리기를 누르면 실행할 동작
         self._toast_lbl.clicked.connect(self._on_toast_clicked)
         self._toast_lbl.hide()
-        self._toast_timer = QTimer(self)
-        self._toast_timer.setSingleShot(True)
-        self._toast_timer.timeout.connect(self._toast_lbl.hide)
+        self._toast_timer = self._toast_lbl.timer
 
         # ---- 우측 탭 컬럼 (항상 보임) ----
         self.tab_column = QWidget(self.container)
@@ -2806,8 +2847,9 @@ class SlideMemoWindow(QWidget):
 
     def _show_toast(self, msg: str, on_click=None, action: str = "되돌리기") -> None:
         self._toast_action = on_click
-        self._toast_lbl.show_message(msg, action if on_click else "")
-        self._toast_timer.start(T.TOAST_MS)
+        # 검색 칸과 정렬을 덮지 않게 서식바 바로 아래에 띄운다
+        below_toolbar = self.format_toolbar.mapTo(self.body, QPoint(0, self.format_toolbar.height())).y()
+        self._toast_lbl.show_message(msg, action if on_click else "", below_toolbar + 8)
 
     def _setup_autosave(self) -> None:
         self.autosave_timer = QTimer(self)
