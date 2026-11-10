@@ -48,8 +48,10 @@ QDialog QLabel[role="badge"] {
     color: $accent_strong;
     font-size: ${label_px}px;
     font-weight: 500;
+    min-height: 20px;
+    max-height: 20px;
     border-radius: 10px;
-    padding: 1px 8px;
+    padding: 0 8px;
 }
 QDialog QFrame[role="line"] { background: $line; border: none; }
 
@@ -120,6 +122,7 @@ QDialog QLineEdit, QDialog QSpinBox, QDialog QComboBox {
     selection-background-color: $selection_bg;
     selection-color: $selection_fg;
 }
+QDialog QComboBox { combobox-popup: 0; }
 QDialog QLineEdit:focus, QDialog QSpinBox:focus, QDialog QComboBox:focus { border-color: $accent; }
 QDialog QLineEdit:disabled, QDialog QSpinBox:disabled, QDialog QComboBox:disabled {
     color: $fg_disabled;

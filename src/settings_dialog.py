@@ -40,7 +40,7 @@ from ai_provider import (
 from database import MemoDatabase
 from theme import apply as A
 from theme import tokens as T
-from theme.widgets import line, make_button, notify, role_label, themed_combo
+from theme.widgets import ThemedCombo, line, make_button, notify, role_label
 
 _KEY_HELP_URLS: dict[str, str] = {
     "anthropic": "https://console.anthropic.com/",
@@ -94,6 +94,7 @@ def _status(label: QLabel, text: str, error: bool = False) -> None:
     label.setProperty("state", "error" if error else "")
     A.repolish(label)
     label.setText(text)
+    label.setVisible(bool(text))  # 비어 있을 때 자리를 차지하면 묶음 간격이 벌어진다
 
 
 def _eye_button(edit: QLineEdit) -> QPushButton:
@@ -149,7 +150,7 @@ class SettingsDialog(QDialog):
         self._load_settings()
 
     def _combo(self) -> QComboBox:
-        return themed_combo(QComboBox())
+        return ThemedCombo()
 
     def _slider_row(self, low: int, high: int, page: int) -> tuple[QHBoxLayout, QSlider, QLabel]:
         slider = QSlider(Qt.Orientation.Horizontal)
@@ -301,6 +302,7 @@ class SettingsDialog(QDialog):
 
         self._test_result_lbl = role_label("", "hint")
         self._test_result_lbl.setWordWrap(True)
+        self._test_result_lbl.hide()
         outer.addWidget(self._test_result_lbl)
 
         outer.addSpacing(12)
@@ -333,6 +335,7 @@ class SettingsDialog(QDialog):
         wk_col.addLayout(whisper_row)
         self._whisper_test_lbl = role_label("", "hint")
         self._whisper_test_lbl.setWordWrap(True)
+        self._whisper_test_lbl.hide()
         wk_col.addWidget(self._whisper_test_lbl)
         whisper_key_help = role_label(
             '<a href="https://platform.openai.com/api-keys">OpenAI API 키 발급 페이지 →</a>', "hint"
@@ -358,6 +361,7 @@ class SettingsDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setWidget(w)
         return scroll
 
@@ -526,7 +530,7 @@ class SettingsDialog(QDialog):
         self._apply_provider_ui(provider, current_model)
         tokens = int(self.db.get_setting_str(AI_KEY_USAGE_TOKENS, "0") or "0")
         self._update_usage_lbl(tokens, provider)
-        self._test_result_lbl.clear()
+        _status(self._test_result_lbl, "")
 
     def _run_test(self) -> None:
         if self._test_worker and self._test_worker.isRunning():

@@ -862,6 +862,7 @@ class LinkDialog(AppDialog):
             _labeled_field(self, "보이는 글자", self.text_edit)
         _labeled_field(self, "주소", self.url_edit)
         self.add_actions("넣기")
+        (self.text_edit if show_text else self.url_edit).setFocus()
 
     def values(self) -> tuple[str, str]:
         return self.text_edit.text().strip(), self.url_edit.text().strip()
@@ -891,6 +892,7 @@ class TableDialog(AppDialog):
         self.header_check.setChecked(True)
         self.body.addWidget(self.header_check)
         self.add_actions("넣기")
+        self.rows_spin.setFocus()
 
     def values(self) -> tuple[int, int, bool]:
         return self.rows_spin.value(), self.cols_spin.value(), self.header_check.isChecked()
@@ -928,6 +930,7 @@ class VersionDialog(AppDialog):
         self.body.addLayout(row, 1)
 
         self._ok_btn = self.add_actions("이 버전으로 되돌리기", "닫기")
+        self.list.setFocus()
 
         self.list.currentRowChanged.connect(self._on_row_changed)
         if versions:

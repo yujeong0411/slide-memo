@@ -3,13 +3,14 @@ from __future__ import annotations
 
 import re
 
-from PyQt6.QtCore import QModelIndex, QRect, QRectF, QSize, Qt
-from PyQt6.QtGui import QAction, QFontMetrics, QKeySequence, QPainter, QPen
+from PyQt6.QtCore import QMargins, QModelIndex, QPoint, QRect, QRectF, QSize, Qt
+from PyQt6.QtGui import QAction, QColor, QFontMetrics, QKeySequence, QPainter, QPen
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
     QDialog,
     QFrame,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -26,6 +27,10 @@ from theme import tokens as T
 
 APP_NAME = "SlideMemo"
 _MENU_ICON = 16
+_SHADOW_Y, _SHADOW_BLUR, _SHADOW_ALPHA = T.SHADOW["md"]
+# 떠 있는 창은 그림자가 그려질 자리만큼 안쪽으로 들여 그린다
+_FLOAT_MARGINS = QMargins(_SHADOW_BLUR, _SHADOW_BLUR - _SHADOW_Y, _SHADOW_BLUR, _SHADOW_BLUR + _SHADOW_Y)
+_LIST_GAP = 4  # 콤보 칸과 펼친 목록 사이
 _MNEMONIC_RE = re.compile(r"\(&\w\)")
 # Qt 기본 편집 메뉴의 objectName → 아이콘
 _STANDARD_ICONS = {
@@ -40,6 +45,29 @@ _STANDARD_ICONS = {
 }
 
 
+def add_float_shadow(widget: QWidget) -> None:
+    """떠 있는 면에 shadow_md를 준다 (2.6)."""
+    effect = QGraphicsDropShadowEffect(widget)
+    effect.setBlurRadius(_SHADOW_BLUR)
+    effect.setOffset(0, _SHADOW_Y)
+    color = QColor(0, 0, 0)
+    color.setAlphaF(_SHADOW_ALPHA)
+    effect.setColor(color)
+    widget.setGraphicsEffect(effect)
+
+
+def _paint_soft_shadow(painter: QPainter, panel: QRectF, radius: int) -> None:
+    """QMenu 창에는 그래픽 효과를 걸 수 없어 shadow_md를 겹친 사각형으로 근사한다."""
+    color = QColor(0, 0, 0)
+    color.setAlphaF(_SHADOW_ALPHA / _SHADOW_BLUR)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+    shadow = panel.translated(0, _SHADOW_Y)
+    for spread in range(_SHADOW_BLUR, 0, -1):
+        grown = shadow.adjusted(-spread, -spread, spread, spread)
+        painter.drawRoundedRect(grown, radius + spread, radius + spread)
+
+
 class ThemedMenu(QMenu):
     """QSS로는 항목별 색(위험 항목, 단축키, 묶음 제목)을 줄 수 없어 직접 그린다 (4.3)."""
 
@@ -51,7 +79,13 @@ class ThemedMenu(QMenu):
             | Qt.WindowType.NoDropShadowWindowHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setMinimumWidth(200)
+        self.setContentsMargins(_FLOAT_MARGINS)
+        self.setMinimumWidth(200 + _FLOAT_MARGINS.left() + _FLOAT_MARGINS.right())
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        # 그림자 자리만큼 창을 옮겨, 면이 원래 뜰 자리에 오게 한다
+        self.move(self.pos() - QPoint(_FLOAT_MARGINS.left(), _FLOAT_MARGINS.top()))
+        super().showEvent(event)
 
     def add_item(
         self, text: str, icon: str = "", *, shortcut: str = "", danger: bool = False
@@ -86,9 +120,11 @@ class ThemedMenu(QMenu):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         radius = T.RADIUS["control"]
+        panel = QRectF(self.rect().marginsRemoved(_FLOAT_MARGINS))
+        _paint_soft_shadow(painter, panel, radius)
         painter.setPen(QPen(A.qcolor(t["line"]), 1))
         painter.setBrush(A.qcolor(t["bg_raised"]))
-        painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
+        painter.drawRoundedRect(panel.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
         for action in self.actions():
             if action.isVisible():
                 self._paint_action(painter, action, t, radius)
@@ -162,7 +198,13 @@ class _ComboDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect: QRect = option.rect
-        if option.state & (QStyle.StateFlag.State_MouseOver | QStyle.StateFlag.State_Selected):
+        # 펼칠 때 고른 항목이 '선택' 상태로 시작한다. 그 항목은 체크로만 표시한다 (1.2)
+        hovering = option.state & QStyle.StateFlag.State_MouseOver
+        moved_to = (
+            option.state & QStyle.StateFlag.State_Selected
+            and index.row() != self._combo.currentIndex()
+        )
+        if hovering or moved_to:
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(A.qcolor(t["overlay_hover"]))
             painter.drawRoundedRect(QRectF(rect), T.RADIUS["control"], T.RADIUS["control"])
@@ -180,16 +222,33 @@ class _ComboDelegate(QStyledItemDelegate):
         painter.restore()
 
 
-def themed_combo(combo: QComboBox) -> QComboBox:
-    combo.setItemDelegate(_ComboDelegate(combo))
-    popup = combo.view().window()
-    popup.setWindowFlags(
-        Qt.WindowType.Popup
-        | Qt.WindowType.FramelessWindowHint
-        | Qt.WindowType.NoDropShadowWindowHint
-    )
-    popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-    return combo
+class ThemedCombo(QComboBox):
+    """펼친 목록을 칸 바로 아래에, 메뉴 규격(반경 8, shadow_md)으로 띄운다 (4.3, 4.6)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setItemDelegate(_ComboDelegate(self))
+        popup = self.view().window()
+        popup.setWindowFlags(
+            Qt.WindowType.Popup
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.NoDropShadowWindowHint
+        )
+        popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        popup.layout().setContentsMargins(_FLOAT_MARGINS)
+        add_float_shadow(self.view())
+
+    def showPopup(self) -> None:  # noqa: N802
+        super().showPopup()
+        popup = self.view().window()
+        if isinstance(popup, QFrame):
+            popup.setFrameShape(QFrame.Shape.NoFrame)  # 둥근 모서리 밖에 사각 테두리가 남는다
+        below = self.mapToGlobal(QPoint(0, self.height() + _LIST_GAP))
+        width = self.width() + _FLOAT_MARGINS.left() + _FLOAT_MARGINS.right()
+        popup.setGeometry(
+            below.x() - _FLOAT_MARGINS.left(), below.y() - _FLOAT_MARGINS.top(),
+            width, popup.height() + _FLOAT_MARGINS.top() + _FLOAT_MARGINS.bottom(),
+        )
 
 
 def line() -> QFrame:
