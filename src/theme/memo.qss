@@ -1,0 +1,109 @@
+/* 메모 창 안쪽. 메모 색이 바뀔 때마다 다시 적용한다. 값은 memo_tokens.py에서 온다. */
+
+#bodyPanel {
+    background: $memo_face;
+    border: 1px solid $memo_edge;
+    $body_corners
+}
+QFrame#bodyDivider { background: $memo_divider; border: none; }
+
+QLineEdit#searchInput {
+    background: $memo_field;
+    color: $memo_fg;
+    border: 1px solid $memo_border;
+    border-radius: ${r_control}px;
+    min-height: ${md_inner}px;
+    max-height: ${md_inner}px;
+    padding: 0 8px 0 4px;
+    placeholder-text-color: $memo_hint;
+    selection-background-color: $selection_bg;
+    selection-color: $selection_fg;
+}
+QLineEdit#searchInput:focus { border-color: $memo_fg; }
+
+QLineEdit#titleInput {
+    background: transparent;
+    color: $memo_fg;
+    border: 1px solid transparent;
+    padding: 0;
+    font-size: ${title_px}px;
+    font-weight: 700;
+    placeholder-text-color: $memo_hint;
+    selection-background-color: $selection_bg;
+    selection-color: $selection_fg;
+}
+
+QTextEdit#editor {
+    background: transparent;
+    color: $memo_fg;
+    border: 1px solid $memo_frame;
+    border-radius: ${r_control}px;
+    padding: 12px;
+    placeholder-text-color: $memo_hint;
+    selection-background-color: $selection_bg;
+    selection-color: $selection_fg;
+}
+QTextEdit#editor:focus { border-color: $memo_border; }
+QTextEdit#editor > QWidget#qt_scrollarea_viewport { background: transparent; }
+
+#editor QScrollBar:vertical { background: transparent; width: 6px; margin: 0; }
+#editor QScrollBar::handle:vertical { background: $memo_scroll; border-radius: 3px; min-height: 30px; }
+#editor QScrollBar:horizontal { background: transparent; height: 6px; margin: 0; }
+#editor QScrollBar::handle:horizontal { background: $memo_scroll; border-radius: 3px; min-width: 30px; }
+#editor QScrollBar::add-line, #editor QScrollBar::sub-line { width: 0; height: 0; }
+#editor QScrollBar::add-page, #editor QScrollBar::sub-page { background: transparent; }
+
+QPushButton#iconBtn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: ${r_control}px;
+    padding: 0;
+}
+QPushButton#iconBtn:hover { background: $memo_hover; }
+QPushButton#iconBtn:pressed { background: $memo_selected; }
+QPushButton#iconBtn:focus { border-color: $memo_border; }
+
+QToolButton#sortCombo {
+    background: $memo_field;
+    color: $memo_fg;
+    border: 1px solid $memo_border;
+    border-radius: ${r_control}px;
+    min-height: ${md_inner}px;
+    max-height: ${md_inner}px;
+    padding: 0 ${md_pad}px;
+    font-weight: 500;
+}
+QToolButton#sortCombo:hover { background: $memo_hover; }
+QToolButton#sortCombo::menu-indicator { width: 0; }
+
+QToolButton#colorBtn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: ${r_control}px;
+}
+QToolButton#colorBtn:hover { background: $memo_hover; }
+QToolButton#colorBtn:pressed { background: $memo_selected; }
+
+QToolButton#fmtBtn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: ${r_control}px;
+}
+QToolButton#fmtBtn:hover { background: $memo_hover; }
+QToolButton#fmtBtn:pressed { background: $memo_selected; }
+QToolButton#fmtBtn[on="true"] { background: $memo_selected; }
+QToolButton#fmtBtn::menu-indicator { width: 0; height: 0; }
+QFrame#fmtSep { background: $memo_divider; border: none; }
+
+QPushButton#aiFeatureBtn {
+    background: $memo_field;
+    color: $memo_fg;
+    border: 1px solid $memo_border;
+    border-radius: ${r_control}px;
+    min-height: ${sm_inner}px;
+    max-height: ${sm_inner}px;
+    padding: 0 ${sm_pad}px;
+    font-weight: 500;
+}
+QPushButton#aiFeatureBtn:hover { background: $memo_hover; }
+QPushButton#aiFeatureBtn:pressed { background: $memo_selected; }

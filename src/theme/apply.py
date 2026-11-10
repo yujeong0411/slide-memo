@@ -22,9 +22,10 @@ from PyQt6.QtWidgets import QApplication, QDialogButtonBox, QProxyStyle, QStyle,
 
 import database
 from theme import tokens as T
-from theme.memo_tokens import mix
+from theme.memo_tokens import memo_tokens, mix
 
 _mode = "light"
+_QSS_SOURCES: dict[str, str] = {}
 _RGBA_RE = re.compile(r"rgba\((\d+),(\d+),(\d+),([\d.]+)\)")
 _TINT_CACHE: dict[tuple[str, str, int, float], QPixmap] = {}
 _QSS_ICONS = {"chevron_down": "fg_secondary", "chevron_up": "fg_secondary", "check": "on_accent"}
@@ -43,6 +44,16 @@ def asset_path(name: str) -> Path:
 
 def current() -> dict[str, str]:
     return T.MODES[_mode]
+
+
+def current_mode() -> str:
+    return _mode
+
+
+def _qss_source(name: str) -> str:
+    if name not in _QSS_SOURCES:
+        _QSS_SOURCES[name] = (Path(__file__).parent / name).read_text(encoding="utf-8")
+    return _QSS_SOURCES[name]
 
 
 def system_mode() -> str:
@@ -211,5 +222,33 @@ def apply_theme(app: QApplication, mode: str) -> None:
         app.installEventFilter(app._window_polisher)
     app.setFont(base_font("body"))
     app.setPalette(_palette(t))
-    source = (Path(__file__).parent / "app.qss").read_text(encoding="utf-8")
-    app.setStyleSheet(Template(source).substitute(_qss_values(mode, t)))
+    app.setStyleSheet(Template(_qss_source("app.qss")).substitute(_qss_values(mode, t)))
+
+
+def _body_corners(side: str) -> str:
+    """모니터 쪽(바와 맞닿는 면)은 각지게, 안쪽만 둥글게. 맞닿는 면에는 테두리가 없다 (4.1)."""
+    r = T.RADIUS["surface"]
+    near, far = ("right", "left") if side == "right" else ("left", "right")
+    return (
+        f"border-top-{far}-radius: {r}px; border-bottom-{far}-radius: {r}px;"
+        f" border-top-{near}-radius: 0; border-bottom-{near}-radius: 0; border-{near}: none;"
+    )
+
+
+def apply_memo(body: QWidget, color: str, side: str) -> dict[str, str]:
+    """메모 창 안쪽에 memo.qss를 적용하고 계산한 토큰을 돌려준다."""
+    tokens = memo_tokens(color, _mode)
+    values: dict[str, object] = dict(tokens)
+    values.update(
+        body_corners=_body_corners(side),
+        selection_bg=T.SELECTION_BG,
+        selection_fg=T.SELECTION_FG,
+        title_px=T.TYPE["title"][0],
+        r_control=T.RADIUS["control"],
+        md_inner=T.CONTROL["md"][0] - 2,
+        md_pad=T.CONTROL["md"][1] - 1,
+        sm_inner=T.CONTROL["sm"][0] - 2,
+        sm_pad=T.CONTROL["sm"][1] - 1,
+    )
+    body.setStyleSheet(Template(_qss_source("memo.qss")).substitute(values))
+    return tokens

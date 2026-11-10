@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from theme import tokens as T
+from theme.memo_tokens import nearest_preset
 
 APP_DIR = Path.home() / ".memo_slide"
 DB_PATH = APP_DIR / "memos.db"
@@ -19,30 +21,49 @@ IMAGES_DIR = APP_DIR / "images"
 VERSION_INTERVAL_MIN = 5
 VERSION_KEEP = 20
 
-COLOR_SEQUENCE = [
-    "sunrise", "blossom",
-    "ivory", "blush", "peach", "cream", "olive", "lavender", "mint",
-]
-VALID_COLORS = set(COLOR_SEQUENCE)
-DEFAULT_COLOR = "sunrise"
+DEFAULT_COLOR = T.DEFAULT_MEMO_COLOR
+USER_SLOTS_KEY = "user_slots"
+PAPER_NOTICE_KEY = "paper_notice_pending"  # 색을 옮긴 뒤 안내를 한 번 띄운다
+_LEGACY_SLOT_KEYS = ("user_slot_1", "user_slot_2", "user_slot_3")
+_SCHEMA_VERSION = 3
 
 # 사용자 지정 색상: #RGB 또는 #RRGGBB hex 코드
 _HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
 
+def _full_hex(color: str) -> str | None:
+    """#RGB·#RRGGBB → 대문자 #RRGGBB. 형식이 틀리면 None."""
+    c = color.strip()
+    if not _HEX_COLOR_RE.match(c):
+        return None
+    digits = c[1:]
+    if len(digits) == 3:
+        digits = "".join(ch * 2 for ch in digits)
+    return "#" + digits.upper()
+
+
 def normalize_color(color: str | None) -> str:
-    """프리셋 이름이거나 유효한 hex 코드면 그대로, 그 외에는 기본색으로."""
-    if color in VALID_COLORS:
+    """종이 톤 프리셋 이름이거나 유효한 hex면 그대로, 그 외에는 기본색으로."""
+    if color in T.MEMO_PRESETS:
         return color
     if isinstance(color, str):
-        c = color.strip()
-        if _HEX_COLOR_RE.match(c):
-            return c
-        if c.startswith("grad:"):  # 커스텀 그라데이션 (색 1개 이상, 쉼표 구분)
-            parts = c[5:].split(",")
-            if parts and all(_HEX_COLOR_RE.match(p) for p in parts):
-                return c
+        full = _full_hex(color)
+        if full is not None:
+            return full
     return DEFAULT_COLOR
+
+
+def paper_color(old: str) -> str:
+    """예전 메모 색 → 새 메모 색 (3.0.2, 9장 18). 직접 만든 단색은 그대로 둔다."""
+    if old in T.MEMO_PRESETS:
+        return old
+    if old in T.LEGACY_MEMO_COLORS:
+        return nearest_preset(T.LEGACY_MEMO_COLORS[old])
+    if old.startswith("grad:"):
+        first = _full_hex(old[5:].split(",")[0])
+        return nearest_preset(first) if first else DEFAULT_COLOR
+    return _full_hex(old) or DEFAULT_COLOR
+
 
 # 정렬 모드별 ORDER BY 절 (is_pinned DESC가 항상 앞에 붙음)
 SORT_CLAUSES = {
@@ -129,6 +150,7 @@ class MemoDatabase:
                 deleted_at TEXT DEFAULT NULL,
                 font_family TEXT NOT NULL DEFAULT '',
                 font_size INTEGER NOT NULL DEFAULT 0,
+                color_before_v2 TEXT DEFAULT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -196,8 +218,60 @@ class MemoDatabase:
         if added:
             self.conn.commit()
             print(f"[migrate] memos 테이블에 컬럼 추가: {', '.join(added)}")
-        self.conn.execute("PRAGMA user_version = 2")
+        self._migrate_paper_colors()
+        self.conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         self.conn.commit()
+
+    def _migrate_paper_colors(self) -> None:
+        """메모 색을 종이 톤으로 한 번 옮긴다. 이전 값은 color_before_v2에 남긴다."""
+        version = self.conn.execute("PRAGMA user_version").fetchone()[0]
+        if version >= _SCHEMA_VERSION:
+            return
+        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(memos)").fetchall()}
+        rows = self.conn.execute("SELECT id, color FROM memos").fetchall()
+        changes = [
+            (paper_color(row["color"]), row["color"], row["id"])
+            for row in rows
+            if paper_color(row["color"]) != row["color"]
+        ]
+        slots = self._paper_color_slots()
+        if changes or "color_before_v2" not in cols or slots is not None:
+            self._backup_db()
+        with self.conn:
+            if "color_before_v2" not in cols:
+                self.conn.execute("ALTER TABLE memos ADD COLUMN color_before_v2 TEXT DEFAULT NULL")
+            self.conn.executemany(
+                "UPDATE memos SET color = ?, color_before_v2 = ? WHERE id = ?", changes
+            )
+            if slots is not None:
+                self.conn.execute(
+                    "INSERT INTO settings (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (USER_SLOTS_KEY, slots),
+                )
+            if changes:
+                self.conn.execute(
+                    "INSERT INTO settings (key, value) VALUES (?, '1') "
+                    "ON CONFLICT(key) DO UPDATE SET value = '1'",
+                    (PAPER_NOTICE_KEY,),
+                )
+
+    def _paper_color_slots(self) -> str | None:
+        """직접 만든 색 슬롯 중 단색만 남긴다. 그라데이션·예전 프리셋 자리는 없앤다 (9장 18).
+        새 순서는 최근 것부터라 뒤집는다. 저장된 슬롯이 없으면 None."""
+        keys = (USER_SLOTS_KEY, *_LEGACY_SLOT_KEYS)
+        found = [
+            row["value"]
+            for key in keys
+            for row in self.conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
+        ]
+        if not found:
+            return None
+        raw = found[0] if self.conn.execute(
+            "SELECT 1 FROM settings WHERE key = ?", (USER_SLOTS_KEY,)
+        ).fetchone() else "|".join(found)
+        solid = [full for part in raw.split("|") if (full := _full_hex(part)) is not None]
+        return "|".join(list(reversed(solid))[:T.MAX_CUSTOM_COLORS])
 
     # ----- settings -----
     def get_setting_int(self, key: str, default: int) -> int:

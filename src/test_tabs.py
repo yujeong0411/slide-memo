@@ -101,7 +101,7 @@ _outline = m._hex_to_rgba(_tab._sel_color, Tab.OUTLINE_ALPHA)
 assert f"border: 1px solid {_outline}" in _qss, _qss
 assert "border: none" not in _qss, _qss  # 어느 면도 빠지면 안 된다
 # 색이 다른 탭은 선 색도 달라야 한다 (무채색으로 굳으면 여기서 걸린다)
-_other = Tab(Memo(id=2, title="t", content="", color="blossom", created_at="", updated_at=""))
+_other = Tab(Memo(id=2, title="t", content="", color="pink", created_at="", updated_at=""))
 _other.update_style(selected=False)
 assert _other._sel_color != _tab._sel_color
 assert m._hex_to_rgba(_other._sel_color, Tab.OUTLINE_ALPHA) in _other.styleSheet()
@@ -138,26 +138,7 @@ for _tag, _edge, _inner in (
 # ----- 본문과 인덱스 컬럼의 이음매 -----
 # 펼치면 컬럼 뒤를 본문 배경으로 채운다. 둘이 좌우로 붙으므로 그라데이션이 세로가
 # 아니면(예: 대각선) 폭이 다른 만큼 진행도가 어긋나 경계가 드러난다.
-import re
 
-VERTICAL = ("0", "0", "0", "1")
-
-
-def coords(qss):
-    return re.search(r"x1:(\S+), y1:(\S+), x2:(\S+), y2:(\S+),", qss).groups()
-
-
-body_bg = m.theme_for("sunrise")["bg"]
-assert coords(body_bg) == VERTICAL, coords(body_bg)
-# 탭도 같은 좌표·같은 stop이어야 한 덩어리로 이어진다
-tab_bg = m.gradient_qss("sunrise", coords=(0, 0, 0, 1))
-assert coords(tab_bg) == VERTICAL
-assert body_bg.split(",", 4)[4] == tab_bg.split(",", 4)[4]
-
-# 맞닿는 면의 1px 테두리가 남으면 그게 경계선으로 읽힌다
-for _side, _edge in (("right", "border-right: none;"), ("left", "border-left: none;")):
-    panel = m.body_stylesheet(m.theme_for("sunrise"), _side).split("#bodyPanel {")[1]
-    assert _edge in panel.split("}")[0], (_side, panel[:200])
 
 
 # ----- 고정 핀 아이콘 -----

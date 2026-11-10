@@ -77,6 +77,7 @@ SELECTION_FG = "#FFFFFF"
 FONT_FAMILY = "Pretendard"
 LETTER_SPACING_PERCENT = 99  # 자간 -0.01em 근사
 MEMO_BODY_DEFAULT_PT = 12  # 96dpi에서 16px (9장 13)
+MEMO_LINE_HEIGHT_PERCENT = 125  # Pretendard 기본 줄 간격 대비. 16px 글자에서 약 24px
 
 # 이름 → (크기 px, 줄높이 px, 굵기)
 TYPE: dict[str, tuple[int, int, int]] = {
@@ -125,6 +126,21 @@ CUSTOM_FACE_CHROMA_MAX = 0.022
 BAND_MIN_CONTRAST = 3.0
 MAX_CUSTOM_COLORS = 6
 DEFAULT_MEMO_COLOR = "yellow"
+CUSTOM_COLOR_START = "#E07A5F"  # "메모 색 만들기"를 처음 열 때 값
+GRAY_CHROMA_MAX = 0.01  # 이보다 채도가 낮은 색만 회색으로 옮긴다 (9장 18)
+
+# 예전 프리셋의 실제 색. 그라데이션은 첫 번째 색 (9장 18)
+LEGACY_MEMO_COLORS: dict[str, str] = {
+    "sunrise": "#C6EBD0",
+    "blossom": "#F8C7D9",
+    "ivory": "#FFF7C4",
+    "blush": "#FCE0E6",
+    "mint": "#D6EFE9",
+    "peach": "#FFF2EB",
+    "cream": "#A4CCD9",
+    "olive": "#F1F3E0",
+    "lavender": "#F4EEFF",
+}
 
 # 키 → (이름, 밝은 면, 밝은 띠, 어두운 띠)
 MEMO_PRESETS: dict[str, tuple[str, str, str, str]] = {

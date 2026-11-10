@@ -270,6 +270,41 @@ def make_button(text: str, variant: str = "secondary") -> QPushButton:
     return button
 
 
+class PopupPanel(QFrame):
+    """떠 있는 자체 팝업: 투명 창 안에 그림자 있는 카드를 둔다 (4.4)."""
+
+    def __init__(self, owner: QWidget | None = None) -> None:
+        super().__init__(
+            None,
+            Qt.WindowType.Popup
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.NoDropShadowWindowHint,
+        )
+        self._owner = owner
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(_FLOAT_MARGINS)
+        self.card = QFrame()
+        self.card.setObjectName("popupCard")
+        add_float_shadow(self.card)
+        outer.addWidget(self.card)
+        self.body = QVBoxLayout(self.card)
+
+    def show_below(self, anchor: QWidget) -> None:
+        """누른 단추 바로 아래에 띄운다. 화면 밖으로 나가면 안쪽으로 민다."""
+        self.adjustSize()
+        spot = anchor.mapToGlobal(QPoint(0, anchor.height() + _LIST_GAP))
+        area = anchor.screen().availableGeometry()
+        x = spot.x() - _FLOAT_MARGINS.left()
+        self.move(max(area.left(), min(x, area.right() - self.width())), spot.y() - _FLOAT_MARGINS.top())
+        self.show()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        super().hideEvent(event)
+        if self._owner is not None:
+            self._owner.raise_()
+
+
 class AppDialog(QDialog):
     """확인·입력 대화창. OS 제목 표시줄에는 앱 이름만, 창 안 머리에 문장을 쓴다 (9장 11)."""
 

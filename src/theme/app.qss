@@ -26,6 +26,18 @@ QMenu::item:selected { background: $overlay_hover; }
 QMenu::item:disabled { color: $fg_disabled; }
 QMenu::separator { height: 9px; }
 
+/* ----- 자체 팝업 ----- */
+QFrame#popupCard {
+    background: $bg_raised;
+    border: 1px solid $line;
+    border-radius: ${r_control}px;
+}
+QFrame#popupCard QLabel[role="group"] {
+    font-size: ${label_px}px;
+    font-weight: 500;
+    color: $fg_secondary;
+}
+
 /* ----- 대화창 ----- */
 QDialog, QMessageBox { background: $bg_canvas; color: $fg; }
 

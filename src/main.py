@@ -24,8 +24,8 @@ from PyQt6.QtCore import (
     pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QBrush,
     QColor,
+    QCursor,
     QDesktopServices,
     QFont,
     QFontDatabase,
@@ -86,15 +86,20 @@ from database import (
     APP_DIR,
     DEFAULT_COLOR,
     IMAGES_DIR,
+    PAPER_NOTICE_KEY,
+    USER_SLOTS_KEY,
     Memo,
     MemoDatabase,
     MemoVersion,
     normalize_color,
 )
+import memo_document
+from memo_color import MemoColorButton, MemoColorDialog, MemoColorPopup
 from theme import apply as theme_apply
 from theme import tokens as T
 from theme.apply import resource_path as _resource_path
 from theme.apply import tinted_pixmap
+from theme.memo_tokens import face_and_band, pick_ink
 from theme.widgets import AppDialog, ThemedMenu, add_box_button, confirm, message_box, notify, role_label
 
 
@@ -126,151 +131,21 @@ HIDE_HOTKEY_LABEL = "Ctrl+Shift+Z"  # 잠깐 숨기기/복귀 전역 단축키 (
 
 WEEKDAYS_KO = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
 
-# 8-2 글자색/배경색 팔레트
-TEXT_COLOR_PALETTE = [
-    "#ef4444",  # 빨강
-    "#f97316",  # 주황
-    "#eab308",  # 노랑
-    "#22c55e",  # 초록
-    "#3b82f6",  # 파랑
-    "#a855f7",  # 보라
-    "#ec4899",  # 분홍
-    "#1f2937",  # 검정 (기본 글자색에 가까운 다크)
-]
-BG_COLOR_PALETTE = [
-    "#fef08a",  # 노랑
-    "#fed7aa",  # 주황
-    "#d9f99d",  # 초록
-    "#bfdbfe",  # 파랑
-    "#fbcfe8",  # 분홍
-    "#e9d5ff",  # 보라
-    "#e5e7eb",  # 회색
-    None,       # 기본/투명 (배경 해제)
-]
-
-# 레거시 솔리드 색(예전 메모 호환용). ivory/blush/mint는 그라데이션으로 승격됨.
-COLORS = {
-    "peach":    "#FFF2EB",
-    "cream":    "#A4CCD9",
-    "olive":    "#F1F3E0",
-    "lavender": "#F4EEFF",
-}
-
-# 그라데이션 프리셋: (x1,y1,x2,y2) + [(stop, hex), ...]
-# - sunrise: 로고와 매칭되는 135도 대각선 4색
-# - blossom: 180도 위→아래 핑크→크림 2색
-GRADIENTS = {
-    "sunrise": {
-        "coords": (0, 0, 1, 1),
-        "stops": [
-            (0.0,  "#C6EBD0"),
-            (0.35, "#B3D6FB"),
-            (0.65, "#DDE4F7"),
-            (1.0,  "#FEDB9E"),
-        ],
-        "representative": "#B3D6FB",  # 탭 색 매핑용 대표색
-    },
-    "blossom": {
-        "coords": (0, 0, 0, 1),
-        "stops": [
-            (0.0, "#F8C7D9"),
-            (1.0, "#FFE3B3"),
-        ],
-        "representative": "#F8C7D9",
-    },
-    "ivory": {
-        "coords": (0, 0, 1, 1),
-        "stops": [(0.0, "#FFF7C4"), (1.0, "#FFE07A")],
-        "representative": "#FFEF9F",
-    },
-    "blush": {
-        "coords": (0, 0, 1, 1),
-        "stops": [(0.0, "#FCE0E6"), (1.0, "#F3B8C2")],
-        "representative": "#F5CBCB",
-    },
-    "mint": {
-        "coords": (0, 0, 1, 1),
-        "stops": [(0.0, "#D6EFE9"), (1.0, "#A6D5CC")],
-        "representative": "#BADFDB",
-    },
-}
-# 팔레트: 아이덴티티 색 2개는 고정. 그 뒤는 사용자가 +로 직접 추가하는 슬롯(0~4개)이라
-# 아무것도 추가하지 않으면 점은 2개만 보인다.
-COLOR_FIXED = ["sunrise", "blossom"]
-USER_SLOTS_KEY = "user_slots"
-MAX_USER_SLOTS = 4
-# v1.0.9의 고정 슬롯 3칸. 사용자가 실제로 편집한 값만 행이 있으므로 그대로 이어받는다.
-_LEGACY_SLOT_KEYS = ["user_slot_1", "user_slot_2", "user_slot_3"]
-_SLOTS_UNSET = "\x00"  # 설정 행이 아예 없음 (빈 슬롯 목록 ""과 구분)
+MAX_USER_SLOTS = T.MAX_CUSTOM_COLORS
 
 
 def parse_color_slots(raw: str) -> list[str]:
-    """저장된 슬롯 문자열 → 색 목록. DB 값도 신뢰 경계라 정규화를 통과 못하면 버린다
-    (ColorDot이 그대로 QSS에 넣으므로 깨진 값은 크래시/주입이 된다)."""
+    """저장된 슬롯 문자열 → 직접 만든 색 목록. DB 값도 신뢰 경계라 정규화를 통과 못하면 버린다."""
     slots = [p.strip() for p in raw.split("|")]
-    return [p for p in slots if p and normalize_color(p) == p][:MAX_USER_SLOTS]
-
-
-def is_gradient(name: str | None) -> bool:
-    return isinstance(name, str) and (name in GRADIENTS or name.startswith("grad:"))
-
-
-def _darken_hex(hex_color: str, factor: float = 0.4) -> str:
-    """hex 색의 lightness만 줄여 더 진한 같은 계열 색을 반환.
-    factor=0.4면 원래 lightness의 40%로 (60% 어두워짐)."""
-    import colorsys
-    h = hex_color.lstrip("#")
-    if len(h) == 3:
-        h = "".join(c * 2 for c in h)
-    try:
-        r, g, b = (int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
-    except ValueError:
-        return "#4a4a52"
-    hh, l, s = colorsys.rgb_to_hls(r, g, b)
-    nr, ng, nb = colorsys.hls_to_rgb(hh, l * factor, s)
-    return f"#{int(nr * 255):02x}{int(ng * 255):02x}{int(nb * 255):02x}"
+    return [p for p in slots if p.startswith("#") and normalize_color(p) == p][:MAX_USER_SLOTS]
 
 
 def _hex_to_rgba(hex_color: str, alpha: float) -> str:
     """#RRGGBB → 'rgba(r, g, b, alpha)' (QSS 친화 표현)."""
     h = hex_color.lstrip("#")
-    if len(h) == 3:
-        h = "".join(c * 2 for c in h)
-    try:
-        r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
-    except ValueError:
-        r, g, b = 255, 255, 255
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
     return f"rgba({r}, {g}, {b}, {alpha})"
 
-
-def _gradient_def(name: str) -> dict:
-    """이름 프리셋이면 GRADIENTS[name]. 커스텀 'grad:#a[,#b,...]'는 색 목록으로 균등 stop.
-    색이 1개뿐이면 그 색에서 살짝 어두운 색을 자동 추가해 2-stop."""
-    if name in GRADIENTS:
-        return GRADIENTS[name]
-    cols = name[5:].split(",")  # "grad:#a,#b" → ["#a", "#b"]
-    if len(cols) == 1:
-        cols = [cols[0], _darken_hex(cols[0], 0.72)]
-    n = len(cols)
-    stops = [(i / (n - 1), c) for i, c in enumerate(cols)]
-    return {"coords": (0, 0, 1, 1), "stops": stops, "representative": cols[0]}
-
-
-def gradient_qss(
-    name: str,
-    *,
-    coords: tuple[float, float, float, float] | None = None,
-    alpha: float = 1.0,
-) -> str:
-    """qlineargradient(...) QSS 문자열. coords로 좌표 오버라이드 가능 (탭 등 짧은 영역).
-    alpha < 1.0이면 stop의 색상에 알파 채널 적용."""
-    g = _gradient_def(name)
-    x1, y1, x2, y2 = coords if coords is not None else g["coords"]
-    if alpha < 1.0:
-        stops = ", ".join(f"stop:{s} {_hex_to_rgba(c, alpha)}" for s, c in g["stops"])
-    else:
-        stops = ", ".join(f"stop:{s} {c}" for s, c in g["stops"])
-    return f"qlineargradient(x1:{x1}, y1:{y1}, x2:{x2}, y2:{y2}, {stops})"
 
 # 정렬 옵션: (db sort 키, 드롭다운 표시 라벨)
 SORT_OPTIONS = [
@@ -337,226 +212,6 @@ STYLE = """
 }
 """
 
-_HEX_COLOR_RE = re.compile(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})")
-
-
-def resolve_color(value: str | None) -> str:
-    """색 이름(프리셋) 또는 hex 코드를 실제 hex 문자열로 변환.
-    그라데이션 키면 그 그라데이션의 대표색을 반환 (탭 등 hex가 필요한 곳용)."""
-    if value in COLORS:
-        return COLORS[value]
-    if is_gradient(value):
-        return _gradient_def(value)["representative"]
-    if isinstance(value, str) and _HEX_COLOR_RE.fullmatch(value.strip()):
-        return value.strip()
-    if DEFAULT_COLOR in COLORS:
-        return COLORS[DEFAULT_COLOR]
-    return GRADIENTS[DEFAULT_COLOR]["representative"]
-
-
-def _text_color_for(hex_color: str) -> str:
-    """배경 hex의 밝기에 따라 어두운/밝은 글자색을 고른다."""
-    h = hex_color.lstrip("#")
-    if len(h) == 3:
-        h = "".join(c * 2 for c in h)
-    try:
-        r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
-    except ValueError:
-        return "#1e1e2e"
-    luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-    return "#1e1e2e" if luminance > 0.55 else "#f5f5f5"
-
-
-def theme_for(color: str | None) -> dict[str, str]:
-    """어떤 색이든 항상 같은 키 집합을 돌려준다. 갈래마다 dict를 따로 만들면 한 갈래에
-    키가 빠져도 그 색을 쓰는 사람이 나올 때까지 아무도 모르고, 그 색은 DB에 남으므로
-    켤 때마다 KeyError가 나서 앱이 아예 안 켜진다 (v1.1.1 '어두운 커스텀 그라데이션')."""
-    grad = is_gradient(color)
-    # 대표색 밝기로 글자색 결정 → 커스텀 어두운 색/그라데이션도 가독성 유지
-    base = resolve_color(color)
-    light = _text_color_for(base) == "#1e1e2e"
-    if light:
-        input_bg = "rgba(255, 255, 255, 0.35)" if grad else "rgba(0, 0, 0, 0.05)"
-    else:
-        input_bg = "rgba(255, 255, 255, 0.10)"
-    return {
-        # 그라데이션은 세로 방향 — 탭(MemoTabButton)과 인덱스 컬럼 채움도 세로라, 셋이
-        # 같은 y 범위를 공유해 좌우로 붙어도 색이 이어진다. 대각선이면 폭이 다른
-        # 위젯끼리 진행도가 어긋나 경계가 드러난다.
-        "bg": gradient_qss(color, coords=(0, 0, 0, 1)) if grad else base,
-        # 그라데이션은 bodyPanel 한 장에 비쳐 보이도록 에디터를 투명 처리
-        "editor_bg": "transparent" if grad else base,
-        "text": "#1e1e2e" if light else "#f5f5f5",
-        "text_sub": "rgba(30, 30, 46, 0.55)" if light else "rgba(245, 245, 245, 0.6)",
-        "border": "rgba(0, 0, 0, 0.15)" if light else "rgba(255, 255, 255, 0.22)",
-        "focus": "#1e1e2e" if light else "#f5f5f5",
-        "input_bg": input_bg,
-        # 밝은 배경이면 메모 자기 색의 진한 톤 (탭 선택 띠와 같은 방식).
-        # 어두운 배경에선 진하게 하면 오히려 묻힌다 → 밝은 쪽으로.
-        "scroll": _darken_hex(base, 0.35) if light else "rgba(245, 245, 245, 0.55)",
-        "scroll_hover": (
-            _darken_hex(base, 0.22) if light else "rgba(245, 245, 245, 0.85)"
-        ),
-    }
-
-
-def body_stylesheet(t: dict[str, str], side: str = "right") -> str:
-    # side와 만나는 면(side=right면 body 우측, side=left면 body 좌측)은 라운드 0 +
-    # 테두리 제거 → 인덱스 컬럼과 한 덩어리처럼 이어져 보이게. 테두리를 남기면
-    # 컬럼 뒤를 같은 색으로 채워도 그 1px이 경계선으로 읽힌다.
-    if side == "right":
-        body_radius = (
-            "border-top-left-radius: 8px;"
-            "border-bottom-left-radius: 8px;"
-            "border-top-right-radius: 0;"
-            "border-bottom-right-radius: 0;"
-            "border-right: none;"
-        )
-    else:
-        body_radius = (
-            "border-top-right-radius: 8px;"
-            "border-bottom-right-radius: 8px;"
-            "border-top-left-radius: 0;"
-            "border-bottom-left-radius: 0;"
-            "border-left: none;"
-        )
-    return f"""
-    #bodyPanel {{
-        background: {t["bg"]};
-        border: 1px solid {t["border"]};
-        {body_radius}
-    }}
-    /* 본문 스크롤바 — 전역 STYLE의 흰색 4px는 밝은 메모색 위에서 보이지 않는다.
-       #editor로 스코프를 좁혀야(ID 선택자) 전역 규칙을 이긴다. */
-    #editor QScrollBar:vertical {{
-        background: transparent;
-        width: 10px;
-        margin: 2px;
-    }}
-    #editor QScrollBar::handle:vertical {{
-        background: {t["scroll"]};
-        border-radius: 3px;
-        min-height: 30px;
-    }}
-    #editor QScrollBar::handle:vertical:hover {{
-        background: {t["scroll_hover"]};
-    }}
-    #editor QScrollBar:horizontal {{
-        background: transparent;
-        height: 10px;
-        margin: 2px;
-    }}
-    #editor QScrollBar::handle:horizontal {{
-        background: {t["scroll"]};
-        border-radius: 3px;
-        min-width: 30px;
-    }}
-    #editor QScrollBar::handle:horizontal:hover {{
-        background: {t["scroll_hover"]};
-    }}
-    #editor QScrollBar::add-line, #editor QScrollBar::sub-line {{
-        width: 0; height: 0;
-    }}
-    #editor QScrollBar::add-page, #editor QScrollBar::sub-page {{
-        background: transparent;
-    }}
-    QLineEdit#searchInput {{
-        background-color: {t["input_bg"]};
-        color: {t["text"]};
-        border: 1px solid {t["border"]};
-        border-radius: 4px;
-        padding: 4px 8px;
-        selection-background-color: {t["focus"]};
-    }}
-    QLineEdit#searchInput:focus {{
-        border: 1px solid {t["focus"]};
-    }}
-    QLineEdit#titleInput {{
-        background-color: transparent;
-        color: {t["text"]};
-        border: none;
-        border-bottom: 1px solid {t["border"]};
-        font-weight: bold;
-        padding: 4px;
-    }}
-    QLineEdit#titleInput:focus {{
-        border-bottom: 1px solid {t["focus"]};
-    }}
-    QTextEdit#editor {{
-        background-color: {t["editor_bg"]};
-        color: {t["text"]};
-        border: 1px solid {t["border"]};
-        border-radius: 4px;
-        padding: 6px;
-        selection-background-color: {t["focus"]};
-    }}
-    QTextEdit#editor > QWidget#qt_scrollarea_viewport {{
-        background-color: {t["editor_bg"]};
-    }}
-    QTextEdit#editor:focus {{
-        border: 1px solid {t["focus"]};
-    }}
-    QPushButton#iconBtn {{
-        background-color: transparent;
-        color: {t["text"]};
-        border: none;
-        padding: 4px 8px;
-        font-size: 12pt;
-    }}
-    QPushButton#iconBtn:hover {{
-        background-color: rgba(0,0,0,0.10);
-        border-radius: 4px;
-    }}
-    QToolButton#sortCombo {{
-        background-color: {t["input_bg"]};
-        color: {t["text"]};
-        border: 1px solid {t["border"]};
-        border-radius: 4px;
-        padding: 3px 6px;
-        font-size: 9pt;
-    }}
-    QToolButton#sortCombo:hover {{
-        border: 1px solid {t["focus"]};
-    }}
-    QToolButton#sortCombo::menu-indicator {{
-        width: 0;
-    }}
-    QPushButton#fmtBtn, QToolButton#fmtBtn {{
-        background-color: transparent;
-        color: {t["text"]};
-        border: 1px solid transparent;
-        border-radius: 3px;
-        font-size: 10pt;
-    }}
-    QPushButton#fmtBtn:hover, QToolButton#fmtBtn:hover {{
-        background-color: rgba(0,0,0,0.10);
-        border: 1px solid {t["border"]};
-    }}
-    QPushButton#fmtBtn:pressed, QToolButton#fmtBtn:pressed {{
-        background-color: rgba(0,0,0,0.18);
-    }}
-    QToolButton#fmtBtn::menu-indicator {{
-        width: 0;
-        height: 0;
-    }}
-    QPushButton#aiFeatureBtn {{
-        background-color: rgba(0,0,0,0.06);
-        color: {t["text"]};
-        border: 1px solid {t["border"]};
-        border-radius: 4px;
-        font-size: 8pt;
-        padding: 2px 7px;
-    }}
-    QPushButton#aiFeatureBtn:hover {{
-        background-color: rgba(0,0,0,0.13);
-        border: 1px solid {t["focus"]};
-    }}
-    QPushButton#aiFeatureBtn:pressed {{
-        background-color: rgba(0,0,0,0.20);
-    }}
-    """
-
-
 COLUMN_RADIUS = 8  # 탭 컬럼 바깥면 라운드 (본문 라운드와 같은 값)
 
 def _outer_radius_qss(side: str, *, top: bool, bottom: bool) -> str:
@@ -612,20 +267,10 @@ class MemoTabButton(QPushButton):
         super().__init__(parent)
         self.memo_id = memo.id
         self.color_name = memo.color
-        if is_gradient(memo.color):
-            # 탭은 세로로 길쭉 → 위→아래 짧은 그라데이션으로 표현
-            rep = _gradient_def(memo.color)["representative"]
-            self._bg = gradient_qss(
-                memo.color, coords=(0, 0, 0, 1), alpha=MemoTabButton.BG_ALPHA
-            )
-            self._fg = _text_color_for(rep)
-            # 선택 인디케이터 색: 그라데이션의 대표색을 어둡게 (같은 hue 계열)
-            self._sel_color = _darken_hex(rep, 0.35)
-        else:
-            hex_color = resolve_color(memo.color)
-            self._bg = _hex_to_rgba(hex_color, MemoTabButton.BG_ALPHA)
-            self._fg = _text_color_for(hex_color)
-            self._sel_color = _darken_hex(hex_color, 0.35)
+        face, band = face_and_band(normalize_color(memo.color), theme_apply.current_mode())
+        self._bg = face
+        self._fg = pick_ink(face)
+        self._sel_color = band
         self.memo_title = memo.title.strip() or "(제목 없음)"
         self.is_pinned = memo.is_pinned
         # 메모별 폰트 (없으면 글로벌 default = 클래스 변수)
@@ -722,46 +367,6 @@ class MemoTabButton(QPushButton):
                 f"}}"
             )
         self.update()
-
-
-class ColorDot(QPushButton):
-    """색상 선택용 작은 원형 버튼. editable이면 우클릭으로 편집/삭제 메뉴 요청."""
-
-    edit_requested = pyqtSignal()
-
-    def __init__(self, color_name: str, editable: bool = False, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.color_name = color_name
-        self.editable = editable
-        self._selected = False
-        self.setFixedSize(16, 16)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip(color_name + ("  (우클릭: 편집·삭제)" if editable else ""))
-        if editable:
-            self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            self.customContextMenuRequested.connect(lambda _p: self.edit_requested.emit())
-        self.set_selected(False)
-
-    def set_color(self, color_name: str) -> None:
-        self.color_name = color_name
-        if self.editable:
-            self.setToolTip(color_name + "  (우클릭: 편집·삭제)")
-        self.set_selected(self._selected)
-
-    def set_selected(self, selected: bool) -> None:
-        self._selected = selected
-        border_color = "#1e1e2e" if selected else "rgba(0,0,0,0.25)"
-        border_w = 2 if selected else 1
-        if is_gradient(self.color_name):
-            bg = gradient_qss(self.color_name)
-        else:
-            # COLORS[...] 직접 인덱싱은 저장된 슬롯이 솔리드 hex일 때 KeyError였다
-            bg = resolve_color(self.color_name)
-        self.setStyleSheet(
-            f"background: {bg};"
-            f" border: {border_w}px solid {border_color};"
-            f" border-radius: 8px;"
-        )
 
 
 class RichPasteTextEdit(QTextEdit):
@@ -1024,103 +629,6 @@ def _version_label(v: MemoVersion) -> str:
     return f"{stamp}  {title[:12]}"
 
 
-class MemoColorDialog(QDialog):
-    """메모 색 지정: 색이 1개면 단색, 2개 이상이면 그라데이션 (개수 제한 없음)."""
-
-    def __init__(self, colors: list[str] | None = None, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("메모 색 지정")
-        self.setMinimumWidth(300)
-        self._colors = list(colors) if colors else ["#FFD27A", "#FF8FB1"]
-
-        layout = QVBoxLayout(self)
-        self._preview = QFrame()
-        self._preview.setFixedHeight(40)
-        layout.addWidget(self._preview)
-        self._hint = QLabel()
-        self._hint.setStyleSheet("color: gray; font-size: 9pt;")
-        layout.addWidget(self._hint)
-
-        self._rows_container = QWidget()
-        self._rows_v = QVBoxLayout(self._rows_container)
-        self._rows_v.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self._rows_container)
-
-        add_btn = QPushButton("+ 색 추가")
-        add_btn.clicked.connect(self._add_color)
-        layout.addWidget(add_btn)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-        self._rebuild()
-
-    def _rebuild(self) -> None:
-        while self._rows_v.count():
-            w = self._rows_v.takeAt(0).widget()
-            if w is not None:
-                w.deleteLater()
-        for i, c in enumerate(self._colors):
-            row = QWidget()
-            h = QHBoxLayout(row)
-            h.setContentsMargins(0, 0, 0, 0)
-            sw = QPushButton(c)
-            sw.setCursor(Qt.CursorShape.PointingHandCursor)
-            sw.setStyleSheet(
-                f"background:{c}; color:{_text_color_for(c)};"
-                " border:1px solid #888; border-radius:4px; padding:5px;"
-            )
-            sw.clicked.connect(lambda _x, idx=i: self._pick(idx))
-            h.addWidget(sw, 1)
-            rm = QPushButton("✕")
-            rm.setFixedWidth(28)
-            rm.setEnabled(len(self._colors) > 1)  # 최소 1색 (= 단색)
-            rm.clicked.connect(lambda _x, idx=i: self._remove(idx))
-            h.addWidget(rm)
-            self._rows_v.addWidget(row)
-        solid = len(self._colors) == 1
-        bg = self._colors[0] if solid else gradient_qss("grad:" + ",".join(self._colors))
-        self._preview.setStyleSheet(
-            f"background: {bg}; border:1px solid #888; border-radius:4px;"
-        )
-        self._hint.setText(
-            "색이 1개면 단색입니다. 2개 이상 고르면 그라데이션이 됩니다."
-            if solid else
-            "색을 ✕로 지우고 1개만 남기면 단색이 됩니다."
-        )
-
-    def _pick(self, idx: int) -> None:
-        chosen = QColorDialog.getColor(
-            QColor(self._colors[idx]), self, "색 선택",
-            QColorDialog.ColorDialogOption.DontUseNativeDialog,
-        )
-        if chosen.isValid():
-            self._colors[idx] = chosen.name()
-            self._rebuild()
-
-    def _add_color(self) -> None:
-        self._colors.append(self._colors[-1])
-        self._rebuild()
-
-    def _remove(self, idx: int) -> None:
-        if len(self._colors) > 1:
-            del self._colors[idx]
-            self._rebuild()
-
-    def values(self) -> list[str]:
-        return self._colors
-
-    def value(self) -> str:
-        """저장 형식. 단색은 hex 그대로, 여러 색은 grad: 접두사."""
-        return (
-            self._colors[0] if len(self._colors) == 1
-            else "grad:" + ",".join(self._colors)
-        )
-
-
 class FlowLayout(QLayout):
     """가로로 채우다 폭이 부족하면 다음 줄로 wrap. Qt 공식 FlowLayout 기반.
     추가 보정:
@@ -1246,8 +754,16 @@ class FlowLayout(QLayout):
         x = effective.x()
         y = effective.y()
         line_height = 0
-        for item in self._items:
+        for index, item in enumerate(self._items):
             wid = item.widget()
+            if wid is not None and wid.property("flow_sep"):
+                # 다음 묶음이 이 줄에 안 들어가면 구분선을 그리지 않고 넘어간다
+                following = self._effective_size(self._items[index + 1]).width()
+                needed = self._effective_size(item).width() + self.horizontalSpacing() + following
+                if x == effective.x() or x + needed > effective.right():
+                    if not test_only:
+                        item.setGeometry(QRect(x, y, 0, 0))
+                    continue
             space_x = self.horizontalSpacing()
             if space_x == -1 and wid is not None:
                 space_x = wid.style().layoutSpacing(
@@ -1291,41 +807,65 @@ class FormatToolbar(QWidget):
     def __init__(self, editor: QTextEdit, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.editor = editor
-        layout = FlowLayout(self, margin=0, h_spacing=2, v_spacing=2)
+        layout = FlowLayout(self, margin=0, h_spacing=4, v_spacing=2)
         sp = self.sizePolicy()
         sp.setHeightForWidth(True)
         self.setSizePolicy(sp)
         # 첫 표시 시 한 줄 높이를 보장해 wrap된 큰 값이 부모로 전파되지 않게 한다.
-        self.setMinimumHeight(24)
+        self.setMinimumHeight(T.CONTROL["sm"][0])
+        self.memo_icons: list[tuple[QToolButton, str]] = []  # 메모 색이 바뀌면 다시 칠한다
+        self._group_layout: QHBoxLayout | None = None
 
-        self._add_icon_btn("fmt_bold.svg", "굵게 (Ctrl+B)", self.toggle_bold)
-        self._add_icon_btn("fmt_italic.svg", "기울임 (Ctrl+I)", self.toggle_italic)
-        self._add_icon_btn("fmt_underline.svg", "밑줄 (Ctrl+U)", self.toggle_underline)
-        self._add_icon_btn("fmt_strike.svg", "취소선", self.toggle_strike)
+        # 좁은 폭에서는 묶음째 다음 줄로 넘어간다 (4.2)
+        self._begin_group()
+        self._state_buttons = {
+            "bold": self._add_icon_btn("fmt_bold.svg", "굵게 (Ctrl+B)", self.toggle_bold),
+            "italic": self._add_icon_btn("fmt_italic.svg", "기울임 (Ctrl+I)", self.toggle_italic),
+            "underline": self._add_icon_btn("fmt_underline.svg", "밑줄 (Ctrl+U)", self.toggle_underline),
+            "strike": self._add_icon_btn("fmt_strike.svg", "취소선", self.toggle_strike),
+        }
+        self._begin_group()
         self._add_font_btn()
         self._add_color_menu_btn("fmt_text_color.svg", "글자색", kind="text")
         self._add_color_menu_btn("fmt_bg_color.svg", "배경색", kind="bg")
-        self._add_sep()
-        self._add_icon_btn("fmt_bullet.svg", "불릿 목록", self.bullet_list)
-        self._add_icon_btn("fmt_numbered.svg", "번호 목록", self.numbered_list)
-        self._add_icon_btn(
-            "fmt_align_left.svg", "왼쪽 정렬", lambda: self.set_alignment("left")
-        )
-        self._add_icon_btn(
-            "fmt_align_center.svg", "가운데 정렬", lambda: self.set_alignment("center")
-        )
-        self._add_icon_btn(
-            "fmt_align_right.svg", "오른쪽 정렬", lambda: self.set_alignment("right")
-        )
-        self._add_sep()
-        self._add_icon_btn("link_icon.svg", "링크 삽입 (Ctrl+K)", self.insert_link)
-        self._add_icon_btn("fmt_table.svg", "표 삽입", self.insert_table)
+        self._begin_group()
+        self._state_buttons["bullet"] = self._add_icon_btn("fmt_bullet.svg", "글머리 목록", self.bullet_list)
+        self._state_buttons["numbered"] = self._add_icon_btn("fmt_numbered.svg", "번호 목록", self.numbered_list)
+        self._begin_group()
+        self._add_icon_btn("fmt_align_left.svg", "왼쪽 정렬", lambda: self.set_alignment("left"))
+        self._add_icon_btn("fmt_align_center.svg", "가운데 정렬", lambda: self.set_alignment("center"))
+        self._add_icon_btn("fmt_align_right.svg", "오른쪽 정렬", lambda: self.set_alignment("right"))
+        self._begin_group()
+        self._add_icon_btn("link_icon.svg", "링크 넣기 (Ctrl+K)", self.insert_link)
+        self._add_icon_btn("fmt_table.svg", "표 넣기", self.insert_table)
+        self._begin_group()
         self._add_datetime_btn()
         # 음성 녹음 (Phase 9-2) — 부모 윈도우의 toggle_recording 호출
         self.mic_btn = self._add_icon_btn(
             "fmt_mic.svg", "음성 녹음 (시작/종료)", self._on_mic_clicked
         )
+        editor.currentCharFormatChanged.connect(lambda _fmt: self.sync_states())
+        editor.cursorPositionChanged.connect(self.sync_states)
         # FlowLayout은 좌측 정렬 + 자동 wrap이라 stretch가 필요 없다.
+
+    def sync_states(self) -> None:
+        """켜진 서식 단추를 표시한다 (4.2)."""
+        editor = self.editor
+        current_list = editor.textCursor().currentList()
+        list_style = current_list.format().style() if current_list is not None else None
+        states = {
+            "bold": editor.fontWeight() > int(QFont.Weight.Normal),
+            "italic": editor.fontItalic(),
+            "underline": editor.fontUnderline(),
+            "strike": editor.currentCharFormat().fontStrikeOut(),
+            "bullet": list_style == QTextListFormat.Style.ListDisc,
+            "numbered": list_style == QTextListFormat.Style.ListDecimal,
+        }
+        for key, on in states.items():
+            button = self._state_buttons[key]
+            if bool(button.property("on")) != on:
+                button.setProperty("on", on)
+                theme_apply.repolish(button)
 
     def _on_mic_clicked(self) -> None:
         win = self.editor.window()
@@ -1338,33 +878,6 @@ class FormatToolbar(QWidget):
 
     def heightForWidth(self, width: int) -> int:  # noqa: N802
         return self.layout().heightForWidth(width)
-
-    def _add_btn(
-        self,
-        label: str,
-        tip: str,
-        slot,
-        *,
-        bold: bool = False,
-        italic: bool = False,
-        underline: bool = False,
-        strike: bool = False,
-    ) -> QPushButton:
-        b = QPushButton(label, self)
-        b.setObjectName("fmtBtn")
-        b.setToolTip(tip)
-        b.setFixedSize(28, 24)
-        b.setCursor(Qt.CursorShape.PointingHandCursor)
-        b.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # 클릭해도 에디터 포커스 유지
-        f = b.font()
-        f.setBold(bold)
-        f.setItalic(italic)
-        f.setUnderline(underline)
-        f.setStrikeOut(strike)
-        b.setFont(f)
-        b.clicked.connect(slot)
-        self.layout().addWidget(b)
-        return b
 
     # ----- 서식 토글 (선택 영역 있으면 그 영역, 없으면 이후 입력에 적용) -----
     def toggle_bold(self) -> None:
@@ -1453,14 +966,15 @@ class FormatToolbar(QWidget):
         if hasattr(win, "_show_toast"):
             win._show_toast("색을 적용할 텍스트를 먼저 선택하세요.")
 
-    def apply_text_color(self, color_hex: str) -> None:
+    def apply_text_color(self, color_hex: str | None) -> None:
+        """color_hex는 저장되는 밝은 화면 값. None이면 기본 글자색."""
         cursor = self.editor.textCursor()
         if not cursor.hasSelection():
             self._toast_no_selection()
             return
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor(color_hex))
-        cursor.mergeCharFormat(fmt)
+        cursor.mergeCharFormat(
+            memo_document.text_color_format(color_hex, theme_apply.current_mode())
+        )
         self.editor.setFocus()
 
     def apply_bg_color(self, color_hex: str | None) -> None:
@@ -1468,13 +982,10 @@ class FormatToolbar(QWidget):
         if not cursor.hasSelection():
             self._toast_no_selection()
             return
-        fmt = QTextCharFormat()
-        if color_hex is None:
-            # 배경 해제 → transparent brush
-            fmt.setBackground(QBrush(Qt.GlobalColor.transparent))
-        else:
-            fmt.setBackground(QColor(color_hex))
-        cursor.mergeCharFormat(fmt)
+        cursor.mergeCharFormat(
+            memo_document.clear_highlight_format() if color_hex is None
+            else memo_document.highlight_format(color_hex, theme_apply.current_mode())
+        )
         self.editor.setFocus()
 
     def pick_custom_text_color(self) -> None:
@@ -1497,14 +1008,14 @@ class FormatToolbar(QWidget):
         """Aa▾ 드롭다운 — 글꼴(family) + 크기(size) 팝업."""
         btn = QToolButton(self)
         btn.setObjectName("fmtBtn")
-        btn.setText("Aa")
+        self._icon(btn, "fmt_font.svg")
         btn.setToolTip("글꼴 / 크기")
-        btn.setFixedSize(32, 24)
+        btn.setFixedSize(T.CONTROL["sm"][0], T.CONTROL["sm"][0])
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._font_popup = self._build_font_popup()
         btn.clicked.connect(lambda: self._toggle_popup(btn, self._font_popup))
-        self.layout().addWidget(btn)
+        self._group_layout.addWidget(btn)
         return btn
 
     _FONT_COMBO_STYLE = (
@@ -1607,20 +1118,18 @@ class FormatToolbar(QWidget):
         btn = QToolButton(self)
         btn.setObjectName("fmtBtn")
         btn.setToolTip(tip)
-        btn.setFixedSize(28, 24)
+        btn.setFixedSize(T.CONTROL["sm"][0], T.CONTROL["sm"][0])
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        icon_path = _asset(svg_name)
-        if icon_path.exists():
-            btn.setIcon(QIcon(str(icon_path)))
-            btn.setIconSize(QSize(16, 16))
+        self._icon(btn, svg_name)
         popup = self._build_color_popup(kind)
         btn.clicked.connect(lambda: self._toggle_popup(btn, popup))
-        self.layout().addWidget(btn)
+        self._group_layout.addWidget(btn)
         return btn
 
     def _build_color_popup(self, kind: str) -> QFrame:
-        palette = TEXT_COLOR_PALETTE if kind == "text" else BG_COLOR_PALETTE
+        pairs = T.TEXT_COLORS if kind == "text" else T.HIGHLIGHTS
+        palette = [None] + [light for _name, light, _dark in pairs]
         popup = QFrame(None, Qt.WindowType.Popup)
         popup.setObjectName("colorPopup")
         popup.setStyleSheet(
@@ -1656,7 +1165,7 @@ class FormatToolbar(QWidget):
                     " border: 1px solid rgba(0,0,0,0.2); font-size: 9pt; }"
                     "QPushButton:hover { border: 2px solid #cdd6f4; }"
                 )
-                sw.setToolTip("배경 해제")
+                sw.setToolTip("없음")
             else:
                 sw.setStyleSheet(
                     f"QPushButton {{ background: {color};"
@@ -1687,8 +1196,7 @@ class FormatToolbar(QWidget):
 
     def _on_swatch_clicked(self, color_hex: str | None, kind: str, popup: QFrame) -> None:
         if kind == "text":
-            if color_hex is not None:
-                self.apply_text_color(color_hex)
+            self.apply_text_color(color_hex)
         else:
             self.apply_bg_color(color_hex)
         popup.hide()
@@ -1715,43 +1223,46 @@ class FormatToolbar(QWidget):
         return popup
 
     # ----- 구분선 / 드롭다운 헬퍼 -----
-    def _add_sep(self) -> None:
-        sep = QFrame(self)
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setFixedWidth(1)
-        sep.setFixedHeight(18)
-        sep.setStyleSheet("color: rgba(0,0,0,0.15);")
-        self.layout().addWidget(sep)
+    def _begin_group(self) -> None:
+        if self._group_layout is not None:
+            sep = QFrame(self)
+            sep.setObjectName("fmtSep")
+            sep.setProperty("flow_sep", True)
+            sep.setFixedSize(1, 16)
+            self.layout().addWidget(sep)
+        group = QWidget(self)
+        self._group_layout = QHBoxLayout(group)
+        self._group_layout.setContentsMargins(0, 0, 0, 0)
+        self._group_layout.setSpacing(2)
+        self.layout().addWidget(group)
+
+    def _icon(self, btn: QToolButton, asset: str) -> None:
+        btn.setIconSize(QSize(16, 16))
+        self.memo_icons.append((btn, asset))
 
     def _add_icon_btn(self, svg_name: str, tip: str, slot) -> QToolButton:
         btn = QToolButton(self)
         btn.setObjectName("fmtBtn")
         btn.setToolTip(tip)
-        btn.setFixedSize(28, 24)
+        btn.setFixedSize(T.CONTROL["sm"][0], T.CONTROL["sm"][0])
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        icon_path = _asset(svg_name)
-        if icon_path.exists():
-            btn.setIcon(QIcon(str(icon_path)))
-            btn.setIconSize(QSize(16, 16))
+        self._icon(btn, svg_name)
         btn.clicked.connect(slot)
-        self.layout().addWidget(btn)
+        self._group_layout.addWidget(btn)
         return btn
 
     def _add_datetime_btn(self) -> None:
         btn = QToolButton(self)
         btn.setObjectName("fmtBtn")
         btn.setToolTip("날짜/시간 삽입")
-        btn.setFixedSize(28, 24)
+        btn.setFixedSize(T.CONTROL["sm"][0], T.CONTROL["sm"][0])
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        icon_path = _asset("calendar_icon.svg")
-        if icon_path.exists():
-            btn.setIcon(QIcon(str(icon_path)))
-            btn.setIconSize(QSize(16, 16))
+        self._icon(btn, "calendar_icon.svg")
         popup = self._build_datetime_popup()
         btn.clicked.connect(lambda: self._toggle_popup(btn, popup))
-        self.layout().addWidget(btn)
+        self._group_layout.addWidget(btn)
 
     def _build_datetime_popup(self) -> QFrame:
         popup = QFrame(None, Qt.WindowType.Popup)
@@ -1799,11 +1310,7 @@ class FormatToolbar(QWidget):
         if url and not url.startswith(("http://", "https://", "ftp://", "mailto:")):
             url = "https://" + url
 
-        fmt = QTextCharFormat()
-        fmt.setAnchor(True)
-        fmt.setAnchorHref(url)
-        fmt.setForeground(QColor("#89b4fa"))
-        fmt.setFontUnderline(True)
+        fmt = memo_document.link_format(url, theme_apply.current_mode())
 
         cursor = self.editor.textCursor()
         if selected:
@@ -1815,7 +1322,6 @@ class FormatToolbar(QWidget):
         reset = QTextCharFormat()
         reset.setAnchor(False)
         reset.setAnchorHref("")
-        reset.setForeground(self.editor.palette().windowText().color())
         reset.setFontUnderline(False)
         self.editor.setCurrentCharFormat(reset)
         self.editor.setFocus()
@@ -1841,13 +1347,14 @@ class FormatToolbar(QWidget):
 
         if has_header:
             header_fmt = QTextCharFormat()
-            header_fmt.setFontWeight(QFont.Weight.Bold)
+            header_fmt.setFontWeight(QFont.Weight.Medium)
             for col in range(cols):
                 cell = table.cellAt(0, col)
                 cell_cursor = cell.firstCursorPosition()
                 cell_cursor.mergeCharFormat(header_fmt)
                 cell_cursor.insertText(f"헤더{col + 1}")
 
+        memo_document.decorate_table(table, theme_apply.current_mode())
         # 첫 셀로 커서 이동
         first_cell = table.cellAt(0, 0).firstCursorPosition()
         self.editor.setTextCursor(first_cell)
@@ -2283,15 +1790,9 @@ class SlideMemoWindow(QWidget):
         self._load_display_mode()  # Tool 플래그 결정에 필요
         self._setup_window()
         self._setup_fonts()
-        # 센티널로 "행 없음"과 "빈 값"을 구분한다. 빈 문자열로 판단하면 슬롯을 전부
-        # 지웠을 때 마이그레이션이 다시 돌아 구버전 슬롯이 되살아난다.
-        raw = self.db.get_setting_str(USER_SLOTS_KEY, _SLOTS_UNSET)
-        if raw == _SLOTS_UNSET:  # 구버전 마이그레이션: 편집해둔 슬롯만 행이 있다
-            raw = "|".join(self.db.get_setting_str(k, "") for k in _LEGACY_SLOT_KEYS)
-        self._color_slots = parse_color_slots(raw)
+        self._color_slots = parse_color_slots(self.db.get_setting_str(USER_SLOTS_KEY, ""))
+        self._memo_icon_color = T.LIGHT["fg_secondary"]
         self._build_ui()
-        # 색 점은 _build_ui 이후에 — setVisible이 아직 부모 없는 위젯을 별도 창으로 띄운다
-        self._rebuild_color_dots()
         self._setup_animation()
         self._setup_shortcuts()
         self._setup_autosave()
@@ -2462,13 +1963,9 @@ class SlideMemoWindow(QWidget):
     def _setup_fonts(self) -> None:
         families = set(QFontDatabase.families())
         saved_family = self.db.get_setting_str("app_font_family", "")
-        saved_size = self.db.get_setting_int("app_font_size", 11)
-        if saved_family and saved_family in families:
-            self.editor_font = QFont(saved_family, saved_size)
-        elif "D2Coding" in families:
-            self.editor_font = QFont("D2Coding", saved_size)
-        else:
-            self.editor_font = QFont("Consolas", saved_size)
+        saved_size = self.db.get_setting_int("app_font_size", T.MEMO_BODY_DEFAULT_PT)
+        family = saved_family if saved_family and saved_family in families else T.FONT_FAMILY
+        self.editor_font = QFont(family, saved_size)
         # 메모 탭의 회전 텍스트도 같은 family 사용 (크기는 paintEvent에서 작게 고정)
         MemoTabButton.app_font_family = self.editor_font.family()
 
@@ -2505,16 +2002,12 @@ class SlideMemoWindow(QWidget):
         memo_font = QFont(family, size)
         self.editor.document().setDefaultFont(memo_font)
         self.editor.setFont(memo_font)
-        # 제목 — bold + size는 항상 13pt 고정 (본문만 크기 따라가게)
-        title_font = QFont(family, 13)
-        title_font.setBold(True)
-        self.title_input.setFont(title_font)
         # 메모 객체 + DB 저장 + 탭 갱신
         self.current_memo.font_family = family
         self.current_memo.font_size = size
         self.current_memo = self.db.update(
             self.current_memo.id,
-            content=self.editor.toHtml(),
+            content=memo_document.saved_html(self.editor.document()),
             font_family=family,
             font_size=size,
         )
@@ -2540,8 +2033,8 @@ class SlideMemoWindow(QWidget):
         self.body.setObjectName("bodyPanel")
         self.body.setMinimumWidth(0)  # 폭 0까지 줄어들 수 있어야 슬라이드 가능
         body_layout = QVBoxLayout(self.body)
-        body_layout.setContentsMargins(8, 8, 8, 8)
-        body_layout.setSpacing(6)
+        body_layout.setContentsMargins(12, 12, 12, 12)
+        body_layout.setSpacing(8)
         root.addWidget(self.body, stretch=1)
 
         # 클립보드 자동 캡쳐 알림 배너 (검색창 위, 평소엔 숨김)
@@ -2598,10 +2091,13 @@ class SlideMemoWindow(QWidget):
 
         # 상단: 검색바 (일반 모드) / 돌아가기 버튼 (휴지통 모드)
         top = QHBoxLayout()
-        top.setSpacing(4)
+        top.setSpacing(8)
         self.search_input = QLineEdit()
         self.search_input.setObjectName("searchInput")
-        self.search_input.setPlaceholderText("🔍 제목·본문 검색...")
+        self.search_input.setPlaceholderText("제목·본문 검색")
+        self._search_icon = self.search_input.addAction(
+            QIcon(), QLineEdit.ActionPosition.LeadingPosition
+        )
         self.search_input.textChanged.connect(self._on_search_changed)
         top.addWidget(self.search_input, stretch=1)
 
@@ -2618,23 +2114,20 @@ class SlideMemoWindow(QWidget):
         top.addWidget(self.sort_combo)
 
         # 정렬 옆: 고정 토글 + 내보내기
-        self._keep_icon = QIcon(str(_asset("keep_icon.svg")))
-        self._keep_off_icon = QIcon(str(_asset("keep_off_icon.svg")))
         self.pin_btn = QPushButton()
         self.pin_btn.setObjectName("iconBtn")
         self.pin_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.pin_btn.setFixedSize(28, 24)
-        self.pin_btn.setIconSize(QSize(17, 17))
+        self.pin_btn.setFixedSize(T.CONTROL["md"][0], T.CONTROL["md"][0])
+        self.pin_btn.setIconSize(QSize(16, 16))
         self.pin_btn.clicked.connect(self._toggle_pin_current)
         top.addWidget(self.pin_btn)
 
         self.export_btn = QPushButton()
         self.export_btn.setObjectName("iconBtn")
-        self.export_btn.setToolTip("메모 내보내기 (Ctrl+E)")
+        self.export_btn.setToolTip("내보내기 (Ctrl+E)")
         self.export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.export_btn.setFixedSize(28, 24)
-        self.export_btn.setIcon(QIcon(str(_asset("export_icon.svg"))))
-        self.export_btn.setIconSize(QSize(17, 17))
+        self.export_btn.setFixedSize(T.CONTROL["md"][0], T.CONTROL["md"][0])
+        self.export_btn.setIconSize(QSize(16, 16))
         self.export_btn.clicked.connect(self._export_current_memo)
         top.addWidget(self.export_btn)
 
@@ -2644,46 +2137,36 @@ class SlideMemoWindow(QWidget):
         editor_panel = QWidget()
         ep = QVBoxLayout(editor_panel)
         ep.setContentsMargins(0, 0, 0, 0)
-        ep.setSpacing(4)
+        ep.setSpacing(8)
 
         # 제목 줄: 제목 입력 + 색상 dot들 + 사용자 정의(+) 가로 배치
         self.title_input = QLineEdit()
         self.title_input.setObjectName("titleInput")
         self.title_input.setPlaceholderText("제목")
         self.title_input.textChanged.connect(self._on_text_changed)
-        # 제목 폰트: 글로벌 family + bold, size는 13pt 고정 (본문 크기와 무관)
-        title_font = QFont(self.editor_font.family(), 13)
-        title_font.setBold(True)
-        self.title_input.setFont(title_font)
-
         title_row = QHBoxLayout()
         title_row.setContentsMargins(0, 0, 0, 0)
-        title_row.setSpacing(4)
+        title_row.setSpacing(8)
         title_row.addWidget(self.title_input, stretch=1)
-        self.title_row = title_row
-        self.color_dots: list[ColorDot] = []
-        # 색 추가 버튼 (+): 팔레트에 새 슬롯을 만든다. 슬롯이 꽉 차면 숨는다.
-        self.add_color_btn = QPushButton("+")
-        self.add_color_btn.setFixedSize(16, 16)
-        self.add_color_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.add_color_btn.setToolTip("색 추가...")
-        self.add_color_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.add_color_btn.setStyleSheet(
-            "background-color: rgba(0,0,0,0.05); color: #1e1e2e;"
-            " border: 1px dashed rgba(0,0,0,0.4); border-radius: 8px;"
-            " font-weight: bold;"
-        )
-        self.add_color_btn.clicked.connect(self._add_color_slot)
-        title_row.addWidget(self.add_color_btn)
+        # 색 단추 하나 + 팝업 (4.2, 4.4)
+        self.color_btn = MemoColorButton()
+        self.color_btn.clicked.connect(self._open_color_popup)
+        title_row.addWidget(self.color_btn)
         ep.addLayout(title_row)
+
+        divider = QFrame()
+        divider.setObjectName("bodyDivider")
+        divider.setFixedHeight(1)
+        ep.addWidget(divider)
 
         # 에디터 (서식바가 참조하므로 먼저 생성)
         self.editor = RichPasteTextEdit()
         self.editor.setObjectName("editor")
         self.editor.setFont(self.editor_font)
         self.editor.setAcceptRichText(True)  # 이미지 붙여넣기 + 서식 지원
-        self.editor.setPlaceholderText("여기에 메모를 적어볼까요? ✨")
+        self.editor.setPlaceholderText("여기에 메모를 적어 보세요")
         self.editor.textChanged.connect(self._on_text_changed)
+        self.editor.textChanged.connect(self._refresh_search_marks)
         self.editor.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.editor.customContextMenuRequested.connect(self._show_editor_context_menu)
         # 메모마다 문서를 따로 두고 갈아끼운다 (undo 스택이 문서에 붙어 있으므로).
@@ -2700,14 +2183,15 @@ class SlideMemoWindow(QWidget):
         # AI 기능 바 (에디터 하단, AI 활성 시만 표시)
         self._ai_bar = QWidget()
         ai_bar_layout = QHBoxLayout(self._ai_bar)
-        ai_bar_layout.setContentsMargins(0, 2, 0, 2)
-        ai_bar_layout.setSpacing(4)
+        ai_bar_layout.setContentsMargins(0, 0, 0, 0)
+        ai_bar_layout.setSpacing(8)
+        self._ai_spark = QLabel()
+        ai_bar_layout.addWidget(self._ai_spark)
         from ai_features import AI_FEATURES
         for _key, _info in AI_FEATURES.items():
-            _btn = QPushButton(_info["label"])
+            _btn = QPushButton(_info["button"])
             _btn.setObjectName("aiFeatureBtn")
             _btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            _btn.setToolTip(f"{_info['label']}")
             _btn.clicked.connect(lambda _checked, k=_key: self._run_ai_feature(k))
             ai_bar_layout.addWidget(_btn)
         ai_bar_layout.addStretch(1)
@@ -2761,6 +2245,8 @@ class SlideMemoWindow(QWidget):
         # 스크롤 가능한 탭 목록
         self.tab_scroll = QScrollArea(self.tab_column)
         self.tab_scroll.setObjectName("tabScroll")
+        # 스크롤바는 이름을 붙이기 전에 스타일이 정해져서 #tabScroll 규칙을 놓친다
+        theme_apply.repolish(self.tab_scroll.verticalScrollBar())
         self.tab_scroll.setWidgetResizable(True)
         self.tab_scroll.setFrameShape(QFrame.Shape.NoFrame)
         self.tab_scroll.setVerticalScrollBarPolicy(
@@ -3081,7 +2567,7 @@ class SlideMemoWindow(QWidget):
             menu.addSeparator()
             ai_menu = menu.add_submenu("AI로 다듬기", "menu_ai.svg")
             for key, info in AI_FEATURES.items():
-                act = ai_menu.add_item(info["label"])
+                act = ai_menu.add_item(info["button"])
                 act.triggered.connect(lambda _checked, k=key: self._run_ai_feature(k))
 
             if self._ai_pending is not None:
@@ -3403,8 +2889,8 @@ class SlideMemoWindow(QWidget):
              lambda: self.title_input),
             ("굵게(Ctrl+B)·기울임·색·목록·표 같은 서식을 쓸 수 있어요.",
              lambda: self.format_toolbar),
-            ("색 점을 누르면 메모 색이 바뀌고, + 로 나만의 색을 추가합니다.",
-             lambda: self.add_color_btn),
+            ("제목 옆 색 단추를 누르면 메모 색을 바꾸거나 나만의 색을 만들 수 있어요.",
+             lambda: self.color_btn),
             ("위쪽 줄에서 검색(Ctrl+F)과 정렬, 📌 고정, 내보내기를 씁니다.",
              lambda: self.search_input),
         ]
@@ -4070,7 +3556,6 @@ class SlideMemoWindow(QWidget):
         self.title_input.blockSignals(False)
         self.editor.blockSignals(False)
         self._apply_memo_theme(memo.color)
-        self._update_color_buttons(memo.color)
         # 미리보기 중인 탭만 강조
         for i in range(self.tabs_layout.count()):
             w = self.tabs_layout.itemAt(i).widget()
@@ -4181,26 +3666,29 @@ class SlideMemoWindow(QWidget):
         doc = self._doc_cache.pop(memo.id, None)  # pop 후 재삽입 = LRU 갱신
         if doc is None:
             doc = QTextDocument(self)
-            if memo.content and Qt.mightBeRichText(memo.content):
-                doc.setHtml(memo.content)
-            else:
-                doc.setPlainText(memo.content)
-            doc.clearUndoRedoStacks()  # 최초 내용 주입은 취소 대상이 아니다
+            self._fill_document(doc, memo.content)
         self._doc_cache[memo.id] = doc
         # 방금 넣은 항목이 맨 뒤이므로 앞에서 버리면 현재 문서는 절대 안 걸린다
         while len(self._doc_cache) > UNDO_CACHE_SIZE:
             self._doc_cache.pop(next(iter(self._doc_cache))).deleteLater()
         return doc
 
+    @staticmethod
+    def _fill_document(doc: QTextDocument, content: str) -> None:
+        """내용을 넣고 화면 모드에 맞춰 칠한다. 이 과정은 취소 대상이 아니다."""
+        memo_document.prepare_document(doc)
+        if content and Qt.mightBeRichText(content):
+            doc.setHtml(content)
+        else:
+            doc.setPlainText(content)
+        memo_document.decorate(doc, theme_apply.current_mode())
+        doc.clearUndoRedoStacks()
+
     def _show_scratch(self, content: str) -> None:
         """메모가 아닌 내용을 임시 문서에 띄운다. 캐시된 메모 문서를
         건드리지 않기 위한 것 — 직접 setHtml하면 그 메모의 undo 스택이 날아간다."""
         self.editor.setDocument(self._scratch_doc)
-        if content and Qt.mightBeRichText(content):
-            self._scratch_doc.setHtml(content)
-        else:
-            self._scratch_doc.setPlainText(content)
-        self._scratch_doc.clearUndoRedoStacks()
+        self._fill_document(self._scratch_doc, content)
 
     def _forget_doc(self, memo_id: int) -> None:
         """캐시된 문서를 버린다. 에디터 밖에서 내용이 바뀐 경우(버전 복원) 필수 —
@@ -4219,12 +3707,8 @@ class SlideMemoWindow(QWidget):
         self.title_input.setText(memo.title)
         # 메모별 폰트 적용 (없으면 글로벌 default)
         family = memo.font_family or self.editor_font.family()
-        size = memo.font_size or self.editor_font.pointSize() or 11
+        size = memo.font_size or self.editor_font.pointSize() or T.MEMO_BODY_DEFAULT_PT
         editor_font = QFont(family, size)
-        # 제목은 본문 크기와 무관하게 13pt 고정 (family만 일치)
-        title_font = QFont(family, 13)
-        title_font.setBold(True)
-        self.title_input.setFont(title_font)
         # 메모 전용 문서로 교체 (내용도 문서가 들고 온다)
         doc = self._document_for(memo)
         # 문서마다 기본 폰트를 직접 박아준다. editor.setFont()는 위젯 폰트만 바꿀 뿐
@@ -4236,9 +3720,9 @@ class SlideMemoWindow(QWidget):
         self.title_input.blockSignals(False)
         self.editor.blockSignals(False)
         # round-trip된 HTML로 동기화 → 불필요한 자동저장 방지
-        self.current_memo.content = self.editor.toHtml()
-        self._update_color_buttons(memo.color)
+        self.current_memo.content = memo_document.saved_html(self.editor.document())
         self._apply_memo_theme(memo.color)
+        self._refresh_search_marks()
         # 메모 탭의 회전 텍스트도 그 메모의 family를 따라가도록 클래스 변수 갱신
         MemoTabButton.app_font_family = family
         self._update_pin_btn()
@@ -4251,27 +3735,37 @@ class SlideMemoWindow(QWidget):
         self._show_scratch("")  # editor.clear()는 붙어 있는 메모 문서를 지워버린다
         self.title_input.blockSignals(False)
         self.editor.blockSignals(False)
-        self._update_color_buttons(DEFAULT_COLOR)
         self._apply_memo_theme(DEFAULT_COLOR)
         self._update_pin_btn()
 
     def _apply_memo_theme(self, color_name: str | None) -> None:
-        """선택된 메모 색을 본문(메모장) 배경/입력 요소에 반영."""
-        # 이 함수는 시작 시 _load_memo 경로에서 무조건 실행된다. 여기서 예외가 나면
-        # 그 색이 DB에 남아 있는 한 앱이 영영 안 켜지고, 사용자는 데이터를 지우는 것
-        # 말고 방법이 없어진다(v1.1.1 실제 사고). 색 하나 잘못 그리는 편이 낫다.
-        try:
-            sheet = body_stylesheet(theme_for(color_name), self.side)
-        except Exception as e:
-            print(f"[theme] {color_name!r} 적용 실패, 기본색으로 대체: {e}")
-            sheet = body_stylesheet(theme_for(DEFAULT_COLOR), self.side)
-        self.body.setStyleSheet(sheet)
-        # 색상 점 버튼은 항상 자기 색깔 유지하므로 별도 처리 없음.
+        """선택된 메모 색을 메모 창에 반영한다. 저장값은 신뢰 경계라 정규화를 거친다."""
+        tokens = theme_apply.apply_memo(self.body, normalize_color(color_name), self.side)
+        self._memo_icon_color = tokens["memo_fg_secondary"]
+        for button, asset in self.format_toolbar.memo_icons + [(self.export_btn, "export_icon.svg")]:
+            button.setIcon(QIcon(tinted_pixmap(asset, self._memo_icon_color, 16)))
+        self._search_icon.setIcon(QIcon(tinted_pixmap("search_icon.svg", self._memo_icon_color, 16)))
+        self._ai_spark.setPixmap(tinted_pixmap("menu_ai.svg", self._memo_icon_color, 16))
+        self.color_btn.set_appearance(tokens["memo_band"], self._memo_icon_color)
+        self._update_pin_btn()
 
-    def _update_color_buttons(self, current_color: str) -> None:
-        # 팔레트에 없는 색(슬롯 삭제 후 등)이면 아무 점도 선택 표시되지 않는다.
-        for dot in self.color_dots:
-            dot.set_selected(dot.color_name == current_color)
+    def _refresh_search_marks(self) -> None:
+        """본문의 검색어를 강조한다. ExtraSelection이라 저장되지 않는다 (9장 17)."""
+        term = self.search_input.text().strip()
+        marks: list[QTextEdit.ExtraSelection] = []
+        if term:
+            doc = self.editor.document()
+            cursor = doc.find(term)
+            while not cursor.isNull() and len(marks) < 500:
+                mark = QTextEdit.ExtraSelection()
+                mark.cursor = cursor
+                fmt = QTextCharFormat()
+                fmt.setBackground(QColor(theme_apply.current()["highlight"]))
+                fmt.setForeground(QColor(T.HIGHLIGHT_FG))
+                mark.format = fmt
+                marks.append(mark)
+                cursor = doc.find(term, cursor)
+        self.editor.setExtraSelections(marks)
 
     # ----- new / delete -----
     def create_new_memo(self) -> None:
@@ -4375,8 +3869,9 @@ class SlideMemoWindow(QWidget):
         if not hasattr(self, "pin_btn"):
             return
         pinned = bool(self.current_memo and self.current_memo.is_pinned)
-        self.pin_btn.setIcon(self._keep_off_icon if pinned else self._keep_icon)
-        self.pin_btn.setToolTip("고정 해제" if pinned else "메모 고정")
+        asset = "keep_off_icon.svg" if pinned else "keep_icon.svg"
+        self.pin_btn.setIcon(QIcon(tinted_pixmap(asset, self._memo_icon_color, 16)))
+        self.pin_btn.setToolTip("고정 풀기" if pinned else "메모 고정")
         self.pin_btn.setEnabled(self.current_memo is not None)
 
     # ----- 내보내기 -----
@@ -4462,95 +3957,78 @@ class SlideMemoWindow(QWidget):
         if self.current_memo is None:
             return
         self.current_memo = self.db.update(self.current_memo.id, color=color)
-        actual = self.current_memo.color  # DB가 정규화한 최종 색
-        self._update_color_buttons(actual)
-        self._apply_memo_theme(actual)
+        self._apply_memo_theme(self.current_memo.color)  # DB가 정규화한 최종 색
         self._refresh_memo_tabs()
 
-    def _rebuild_color_dots(self) -> None:
-        """색 점을 다시 그린다: 고정 2개 + 사용자 슬롯(0~MAX_USER_SLOTS). 슬롯을 추가·
-        삭제하면 개수가 바뀌므로 매번 새로 만든다."""
-        for dot in self.color_dots:
-            self.title_row.removeWidget(dot)
-            dot.deleteLater()
-        self.color_dots = []
-        for i, name in enumerate(COLOR_FIXED + self._color_slots):
-            editable = i >= len(COLOR_FIXED)
-            dot = ColorDot(name, editable=editable)
-            dot.clicked.connect(lambda _c, d=dot: self._on_color_changed(d.color_name))
-            if editable:
-                dot.edit_requested.connect(lambda d=dot: self._show_slot_menu(d))
-            # + 버튼은 항상 맨 끝이므로 그 앞에 끼워 넣는다
-            self.title_row.insertWidget(self.title_row.count() - 1, dot)
-            self.color_dots.append(dot)
-        self.add_color_btn.setVisible(len(self._color_slots) < MAX_USER_SLOTS)
-        self._update_color_buttons(
-            self.current_memo.color if self.current_memo else DEFAULT_COLOR
-        )
+    def _make_color_popup(self) -> MemoColorPopup:
+        current = self.current_memo.color if self.current_memo else DEFAULT_COLOR
+        popup = MemoColorPopup(current, self._color_slots, self)
+
+        def pick(color: str) -> None:
+            self._on_color_changed(color)
+            popup.set_current(color)
+
+        def add() -> None:
+            popup.close()
+            self._add_color_slot()
+
+        popup.picked.connect(pick)
+        popup.add_requested.connect(add)
+        popup.menu_requested.connect(lambda color: self._show_slot_menu(color, popup))
+        return popup
+
+    def _open_color_popup(self) -> None:
+        self._color_popup = self._make_color_popup()
+        self._color_popup.show_below(self.color_btn)
 
     def _save_color_slots(self) -> None:
         self.db.set_setting_str(USER_SLOTS_KEY, "|".join(self._color_slots))
 
-    def _show_slot_menu(self, dot: ColorDot) -> None:
+    def _show_slot_menu(self, color: str, popup: MemoColorPopup | None = None) -> None:
         menu = ThemedMenu()
         edit_act = menu.add_item("색 바꾸기")
         del_act = menu.add_item("지우기", "menu_delete.svg", danger=True)
-        chosen = menu.exec(dot.mapToGlobal(dot.rect().bottomLeft()))
+        chosen = menu.exec(QCursor.pos())
+        if chosen is None:
+            return
+        if popup is not None:
+            popup.close()
         self.raise_()
         if chosen == edit_act:
-            self._edit_color_slot(dot)
+            self._edit_color_slot(color)
         elif chosen == del_act:
-            self._delete_color_slot(dot)
+            self._delete_color_slot(color)
 
     def _add_color_slot(self) -> None:
-        """+ 버튼: 팔레트에 슬롯을 추가하고 현재 메모에 바로 적용."""
-        if len(self._color_slots) >= MAX_USER_SLOTS:
-            return
+        """새 색을 "직접 만든 색" 맨 앞에 넣고 현재 메모에 바로 적용. 최근 6개까지 남는다."""
         dlg = MemoColorDialog(None, self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         value = dlg.value()
-        self._color_slots.append(value)
+        self._color_slots = ([value] + [c for c in self._color_slots if c != value])[:MAX_USER_SLOTS]
         self._save_color_slots()
-        self._rebuild_color_dots()
         self._on_color_changed(value)
 
-    def _edit_color_slot(self, dot: ColorDot) -> None:
-        """사용자 슬롯의 색을 바꾼다. DB 설정에 영구 저장."""
-        slot_idx = self.color_dots.index(dot) - len(COLOR_FIXED)
-        cur = dot.color_name
-        if is_gradient(cur):
-            prefill = [c for _s, c in _gradient_def(cur)["stops"]]
-        else:  # 단색 슬롯이면 그 색 하나로 시작
-            prefill = [resolve_color(cur)]
-        dlg = MemoColorDialog(prefill, self)
+    def _edit_color_slot(self, color: str) -> None:
+        dlg = MemoColorDialog(color, self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         value = dlg.value()
-        self._color_slots[slot_idx] = value
+        self._color_slots = [value if c == color else c for c in self._color_slots]
         self._save_color_slots()
-        dot.set_color(value)
-        # 현재 메모가 방금 편집한 슬롯 색을 쓰고 있었다면 새 색으로 즉시 갱신
-        if self.current_memo is not None and self.current_memo.color == cur:
+        if self.current_memo is not None and self.current_memo.color == color:
             self._on_color_changed(value)
-        else:
-            self._update_color_buttons(
-                self.current_memo.color if self.current_memo else DEFAULT_COLOR
-            )
 
-    def _delete_color_slot(self, dot: ColorDot) -> None:
-        """슬롯을 팔레트에서 뺀다. 그 색을 쓰던 메모의 색은 그대로 남는다
-        (메모 color 컬럼에 값이 통째로 저장돼 있어 팔레트와 무관)."""
-        del self._color_slots[self.color_dots.index(dot) - len(COLOR_FIXED)]
+    def _delete_color_slot(self, color: str) -> None:
+        self._color_slots = [c for c in self._color_slots if c != color]
         self._save_color_slots()
-        self._rebuild_color_dots()
 
     def save_now(self) -> None:
         if self.current_memo is None:
             return
         self.autosave_timer.stop()
         title = self.title_input.text()
-        content = self.editor.toHtml()  # 이미지 포함 위해 HTML로 저장
+        content = memo_document.saved_html(self.editor.document())  # 이미지 포함 위해 HTML로 저장
         if title == self.current_memo.title and content == self.current_memo.content:
             return
         try:
@@ -4672,6 +4150,7 @@ class SlideMemoWindow(QWidget):
     # ----- search -----
     def _on_search_changed(self, _text: str) -> None:
         self._refresh_memo_tabs()
+        self._refresh_search_marks()
 
     def focus_search(self) -> None:
         if self.trash_mode:
@@ -4996,22 +4475,15 @@ def _show_whats_new(window: "SlideMemoWindow", db: MemoDatabase, is_upgrade: boo
         window.restart_guide()  # 1단계부터, 2단계는 다음 펼침 때 이어진다
 
 
-PALETTE_NOTICE_KEY = "seen_palette_notice_1_1_1"
-
-
 def _show_palette_notice(window: "SlideMemoWindow", db: MemoDatabase, is_upgrade: bool) -> None:
-    """색 팔레트 개편 안내를 업그레이드 사용자에게 딱 한 번 띄운다.
-    신규 설치는 바뀐 게 없으니 제외. 플래그를 먼저 저장해 다시 뜨는 일이 없게 한다."""
-    if not is_upgrade or db.get_setting_str(PALETTE_NOTICE_KEY, "") == "1":
+    """메모 색을 옮긴 사용자에게 처음 켤 때 한 번 알린다 (3.0.2)."""
+    if not db.get_setting_int(PAPER_NOTICE_KEY, 0):
         return
-    db.set_setting_str(PALETTE_NOTICE_KEY, "1")
+    db.set_setting_int(PAPER_NOTICE_KEY, 0)  # 먼저 저장 — 다시 뜨지 않게
     box = message_box(
         window,
-        "메모 색을 직접 고르고 관리할 수 있게 바뀌었습니다.",
-        "· 기본 색은 2개만 남고, <b>+ 버튼</b>으로 원하는 색을 최대 4개까지 추가합니다.<br>"
-        "· 추가한 색 위에서 <b>우클릭</b>하면 편집·삭제할 수 있어요.<br>"
-        "· 직접 편집해두셨던 색은 그대로 옮겨왔습니다.<br>"
-        "· <b>기존 메모의 색은 그대로</b>입니다.",
+        "메모 색이 차분한 종이 톤으로 바뀌었어요.",
+        "색은 제목 옆 색 단추에서 언제든 바꿀 수 있어요.",
     )
     add_box_button(box, "확인", QMessageBox.ButtonRole.AcceptRole, "primary")
     box.setWindowFlags(box.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)

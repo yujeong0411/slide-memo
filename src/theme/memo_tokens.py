@@ -108,6 +108,19 @@ def face_and_band(color: str, mode: str) -> tuple[str, str]:
     return (T.DARK_MEMO_FACE, dark_band) if mode == "dark" else (face, band)
 
 
+def nearest_preset(color: str) -> str:
+    """실제 색의 색상(hue)이 가장 가까운 종이 톤 프리셋. 채도가 거의 없으면 회색 (9장 18)."""
+    _, chroma, hue = to_oklch(color)
+    if chroma < T.GRAY_CHROMA_MAX:
+        return "gray"
+
+    def distance(key: str) -> float:
+        gap = abs(to_oklch(T.MEMO_PRESETS[key][2])[2] - hue) % 360
+        return min(gap, 360 - gap)
+
+    return min((key for key in T.MEMO_PRESETS if key != "gray"), key=distance)
+
+
 # ----- 3.1~3.2 계산 토큰 -----
 def pick_ink(face: str) -> str:
     return max((T.INK_DARK, T.WHITE), key=lambda ink: contrast(ink, face))
