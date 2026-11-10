@@ -230,7 +230,7 @@ class MemoTabButton(QPushButton):
     TEXT_PADDING = 8  # 글자 줄의 앞뒤 여백
     SIDE_PADDING = 8  # 줄 수 계산에서 빼는 안쪽 여백
     LINE_HEIGHT = T.TYPE["label"][1]
-    RIBBON_WIDTH, RIBBON_LENGTH, RIBBON_NOTCH = 10, 14, 4
+    RIBBON_WIDTH, RIBBON_LENGTH, RIBBON_NOTCH, RIBBON_GAP = 10, 14, 4, 4  # 띠와 같은 색이라 띄운다
 
     @classmethod
     def line_count(cls, width: int) -> int:
@@ -296,9 +296,10 @@ class MemoTabButton(QPushButton):
         return text, "left" if MemoTabButton.side == "right" else "right"
 
     def ribbon_points(self) -> list[QPointF]:
-        """고정 표시: 읽기 시작 쪽(위) 끝, 띠 바로 안쪽에 매달린 책갈피. 끝은 가운데가 파인 V."""
+        """고정 표시: 읽기 시작 쪽(위) 끝, 띠에서 띄워 매달린 책갈피. 끝은 가운데가 파인 V."""
         w, h, notch = self.RIBBON_WIDTH, self.RIBBON_LENGTH, self.RIBBON_NOTCH
-        left = self.width() - self.BAND_WIDTH - w if MemoTabButton.side == "right" else self.BAND_WIDTH
+        inset = self.BAND_WIDTH + self.RIBBON_GAP
+        left = self.width() - inset - w if MemoTabButton.side == "right" else inset
         return [
             QPointF(left, 0), QPointF(left + w, 0), QPointF(left + w, h),
             QPointF(left + w / 2, h - notch), QPointF(left, h),

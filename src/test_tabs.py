@@ -81,10 +81,10 @@ assert Tab(memo("  ")).memo_title == "제목 없음" and Tab(memo("  ")).is_unti
 # 깨진 색이 DB에 있어도 탭은 그려져야 앱이 켜진다
 render(Tab(memo(color="sunrise")))
 
-# 고정 표시는 띠 바로 안쪽에 매달린 책갈피 리본이고, 글자 자리는 바꾸지 않는다
+# 고정 표시는 띠에서 4px 띄워 매달린 책갈피 리본이고, 글자 자리는 바꾸지 않는다
 _pinned = Tab(memo(pinned=True))
 _pinned.resize(40, 112)
-for _side, _left in (("right", 40 - 4 - 10), ("left", 4)):
+for _side, _left in (("right", 40 - 4 - 4 - 10), ("left", 4 + 4)):
     Tab.side = _side
     _p = [(q.x(), q.y()) for q in _pinned.ribbon_points()]
     assert _p == [(_left, 0), (_left + 10, 0), (_left + 10, 14), (_left + 5, 10), (_left, 14)], _p
