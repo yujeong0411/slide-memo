@@ -177,6 +177,11 @@ class SettingsDialog(QDialog):
 
         outer.addWidget(role_label("화면", "group"))
         screen_form = _form()
+        self._theme_combo = self._combo()
+        self._theme_combo.addItem("시스템 설정 따르기", "system")
+        self._theme_combo.addItem("밝게", "light")
+        self._theme_combo.addItem("어둡게", "dark")
+        _add_row(screen_form, "화면 모드", self._theme_combo)
         self._side_combo = self._combo()
         self._side_combo.addItem("오른쪽 가장자리", 0)
         self._side_combo.addItem("왼쪽 가장자리", 1)
@@ -404,6 +409,8 @@ class SettingsDialog(QDialog):
     # ── 설정 로드 ─────────────────────────────────────────────────
     def _load_settings(self) -> None:
         # 일반
+        theme_index = self._theme_combo.findData(self.db.get_setting_str(A.THEME_MODE_KEY, "system"))
+        self._theme_combo.setCurrentIndex(max(0, theme_index))
         side = self.db.get_setting_int("side", 0)
         self._side_combo.setCurrentIndex(1 if side == 1 else 0)
         mode = self.db.get_setting_str("display_mode", "tray")
@@ -597,6 +604,7 @@ class SettingsDialog(QDialog):
         self.db.set_setting_str(
             AI_KEY_SHOW_PREVIEW, "1" if self._preview_chk.isChecked() else "0"
         )
+        self.db.set_setting_str(A.THEME_MODE_KEY, self._theme_combo.currentData())
         self.db.set_setting_int("side", self._side_combo.currentData())
         self.db.set_setting_str(
             "display_mode", self._display_mode_combo.currentData() or "tray"

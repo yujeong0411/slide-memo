@@ -1768,6 +1768,17 @@ class SlideMemoWindow(QWidget):
         self.memo_tab_height = max(MEMO_TAB_HEIGHT_MIN, min(h, MEMO_TAB_HEIGHT_MAX))
         MemoTabButton.button_height = self.memo_tab_height
 
+    def _tint_chrome_icons(self) -> None:
+        """메모 색과 무관한 바·카드 아이콘. 화면 모드가 바뀌면 다시 칠한다."""
+        t = theme_apply.current()
+        for button, asset in self._bar_icons:
+            self._set_bar_icon(button, asset)
+        self._set_bar_icon(self.hide_btn, self.hide_icon_asset())
+        self._clip_icon.setPixmap(tinted_pixmap("clipboard.svg", t["fg_secondary"], 16))
+        self._clipboard_close_btn.setIcon(QIcon(tinted_pixmap("close.svg", t["fg_secondary"], 16)))
+        self._rec_stop_btn.setIcon(QIcon(tinted_pixmap("stop.svg", t["fg"], 16)))
+        self.drag_grip.update()
+
     def _set_bar_icon(self, button: QPushButton, asset: str) -> None:
         button.setIcon(QIcon(tinted_pixmap(asset, theme_apply.current()["fg_secondary"], BAR_ICON)))
 
@@ -1955,9 +1966,8 @@ class SlideMemoWindow(QWidget):
         banner_layout = QHBoxLayout(self._clipboard_banner)
         banner_layout.setContentsMargins(12, 8, 8, 8)
         banner_layout.setSpacing(8)
-        clip_icon = QLabel()
-        clip_icon.setPixmap(tinted_pixmap("clipboard.svg", theme_apply.current()["fg_secondary"], 16))
-        banner_layout.addWidget(clip_icon)
+        self._clip_icon = QLabel()
+        banner_layout.addWidget(self._clip_icon)
         self._clipboard_banner_label = ElideLabel()
         banner_layout.addWidget(self._clipboard_banner_label, stretch=1)
         self._clipboard_add_btn = QPushButton("새 메모로 붙여넣기")
@@ -1968,9 +1978,6 @@ class SlideMemoWindow(QWidget):
         self._clipboard_close_btn = QPushButton()
         self._clipboard_close_btn.setObjectName("cardClose")
         self._clipboard_close_btn.setFixedSize(T.CONTROL["sm"][0], T.CONTROL["sm"][0])
-        self._clipboard_close_btn.setIcon(
-            QIcon(tinted_pixmap("close.svg", theme_apply.current()["fg_secondary"], 16))
-        )
         self._clipboard_close_btn.setToolTip("닫기")
         self._clipboard_close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._clipboard_close_btn.clicked.connect(self._on_clipboard_ignore)
@@ -2086,11 +2093,10 @@ class SlideMemoWindow(QWidget):
         self._rec_time = QLabel()
         theme_apply.set_tabular(self._rec_time)
         rec_layout.addWidget(self._rec_time, 1)
-        stop_btn = make_button("중지하기", "secondary")
-        stop_btn.setIcon(QIcon(tinted_pixmap("stop.svg", theme_apply.current()["fg"], 16)))
-        stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        stop_btn.clicked.connect(self.toggle_recording)
-        rec_layout.addWidget(stop_btn)
+        self._rec_stop_btn = make_button("중지하기", "secondary")
+        self._rec_stop_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._rec_stop_btn.clicked.connect(self.toggle_recording)
+        rec_layout.addWidget(self._rec_stop_btn)
         self._rec_card.hide()
         ep.addWidget(self._rec_card)
         ep.addWidget(self.editor, stretch=1)
@@ -2147,12 +2153,11 @@ class SlideMemoWindow(QWidget):
         # 스크롤 가능한 탭 목록
         self.tab_scroll = QScrollArea(self.tab_column)
         self.tab_scroll.setObjectName("tabScroll")
-        # 스크롤바는 이름을 붙이기 전에 스타일이 정해져서 #tabScroll 규칙을 놓친다
-        theme_apply.repolish(self.tab_scroll.verticalScrollBar())
         self.tab_scroll.setWidgetResizable(True)
         self.tab_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        # 띠가 모니터 끝에 닿아야 하므로 스크롤바 자리를 두지 않는다. 휠 스크롤은 된다.
         self.tab_scroll.setVerticalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
         self.tab_scroll.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
@@ -2176,6 +2181,7 @@ class SlideMemoWindow(QWidget):
         col_layout.addSpacing(4)
 
         # 아래 묶음: 잠깐 숨기기(모두 접기 자리) + 휴지통 + 새 메모
+        self._bar_icons: list[tuple[QPushButton, str]] = []
         self.bar_group = QFrame(self.tab_column)
         self.bar_group.setObjectName("barGroup")
         group_layout = QVBoxLayout(self.bar_group)
@@ -2191,7 +2197,7 @@ class SlideMemoWindow(QWidget):
             button.setToolTip(tooltip)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             if asset:
-                self._set_bar_icon(button, asset)
+                self._bar_icons.append((button, asset))
             button.clicked.connect(slot)
             group_layout.addWidget(button)
             return button
@@ -2224,6 +2230,7 @@ class SlideMemoWindow(QWidget):
 
         # 좌/우 가장자리 레이아웃 적용
         self._apply_side_layout()
+        self._tint_chrome_icons()
 
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
@@ -2404,9 +2411,46 @@ class SlideMemoWindow(QWidget):
         self.apply_display_mode_settings()
         self._apply_window_opacity()
         self._refresh_ai_bar()
+        self.apply_screen_mode()
         self._force_topmost()
         if getattr(dlg, "restart_guide_requested", False):
             self.restart_guide()
+
+    # ----- 화면 모드 (6.2) -----
+    def apply_screen_mode(self) -> None:
+        """설정 값을 적용한다. 저장하기를 누른 뒤와 처음 켤 때 부른다."""
+        setting = self.db.get_setting_str(theme_apply.THEME_MODE_KEY, "system")
+        theme_apply.request_color_scheme(setting)
+        self._switch_mode(theme_apply.resolve_mode(setting))
+
+    def on_system_scheme_changed(self, _scheme=None) -> None:
+        if self.db.get_setting_str(theme_apply.THEME_MODE_KEY, "system") not in T.MODES:
+            self._switch_mode(theme_apply.system_mode())
+
+    def _switch_mode(self, mode: str) -> None:
+        if mode == theme_apply.current_mode():
+            return
+        self.save_now()
+        # 순서: 팔레트 → app.qss → 메모 창 memo.qss → 아이콘
+        theme_apply.apply_theme(QApplication.instance(), mode)
+        # 문서에는 표시용 색이 칠해져 있어 다시 만든다 (이때 Ctrl+Z 기록은 비워진다)
+        self.editor.blockSignals(True)
+        for memo_id in list(self._doc_cache):
+            self._forget_doc(memo_id)
+        self.editor.blockSignals(False)
+        self._tint_chrome_icons()
+        if self.trash_mode and self._trash_preview_id is not None:
+            memo = self.db.get(self._trash_preview_id)
+            self.editor.blockSignals(True)
+            self._show_scratch(memo.content)
+            self.editor.blockSignals(False)
+            self._apply_memo_theme(memo.color)
+        elif self.current_memo is not None:
+            self._load_memo(self.db.get(self.current_memo.id))
+        else:
+            self._clear_editor()
+        self._refresh_memo_tabs()
+        self._update_tabs_selected()
 
     def _refresh_ai_bar(self) -> None:
         enabled = self.db.get_setting_str("ai_enabled", "0") == "1"
@@ -4136,6 +4180,7 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
         window.apply_display_mode_settings()
         window._apply_window_opacity()
         window._refresh_ai_bar()
+        window.apply_screen_mode()
         window._force_topmost()
         if getattr(dlg, "restart_guide_requested", False):
             window.restart_guide()
@@ -4375,7 +4420,10 @@ def main() -> int:
     app.setApplicationName("Slide Memo")
     _install_translator(app)
     _register_fonts()
-    theme_apply.apply_theme(app, theme_apply.system_mode())
+    db = MemoDatabase()  # 시작 화면부터 화면 모드를 따르도록 먼저 연다
+    theme_setting = db.get_setting_str(theme_apply.THEME_MODE_KEY, "system")
+    theme_apply.request_color_scheme(theme_setting)
+    theme_apply.apply_theme(app, theme_apply.resolve_mode(theme_setting))
 
     # 로딩 splash — 마퀴 progress bar로 'import + 초기화 진행 중' 신호.
     # QApplication 이후에야 뜨므로 그 이전 부트로더/import 구간은 가리지 못함.
@@ -4397,7 +4445,6 @@ def main() -> int:
     if app_icon is not None:
         app.setWindowIcon(app_icon)
 
-    db = MemoDatabase()
     # 30일 지난 휴지통 항목 자동 영구삭제 (+ 첨부 이미지 정리)
     for removed in db.cleanup_old_trash(days=30):
         _delete_memo_images(removed.content)
@@ -4410,6 +4457,7 @@ def main() -> int:
         db.create()
 
     window = SlideMemoWindow(db)
+    QGuiApplication.styleHints().colorSchemeChanged.connect(window.on_system_scheme_changed)
     if app_icon is not None:
         window.setWindowIcon(app_icon)
     window.show()

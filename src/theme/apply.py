@@ -56,6 +56,20 @@ def _qss_source(name: str) -> str:
     return _QSS_SOURCES[name]
 
 
+THEME_MODE_KEY = "theme_mode"  # system / light / dark
+
+
+def resolve_mode(setting: str) -> str:
+    """저장된 화면 모드 → 실제 모드. 모르는 값이면 시스템을 따른다."""
+    return setting if setting in T.MODES else system_mode()
+
+
+def request_color_scheme(setting: str) -> None:
+    """Qt에도 알린다. Windows 제목 표시줄을 Qt가 이 값에 맞춰 칠한다."""
+    schemes = {"light": Qt.ColorScheme.Light, "dark": Qt.ColorScheme.Dark}
+    QGuiApplication.styleHints().setColorScheme(schemes.get(setting, Qt.ColorScheme.Unknown))
+
+
 def system_mode() -> str:
     dark = QGuiApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
     return "dark" if dark else "light"

@@ -28,10 +28,6 @@ QMenu::separator { height: 9px; }
 
 /* ----- 바 ----- */
 #mainContainer, #tabColumn, #tabScroll, #tabsContainer { background: transparent; border: none; }
-#tabScroll QScrollBar:vertical { background: transparent; width: 4px; margin: 0; }
-#tabScroll QScrollBar::handle:vertical { background: $scroll; border-radius: 2px; min-height: 16px; }
-#tabScroll QScrollBar::add-line:vertical, #tabScroll QScrollBar::sub-line:vertical { height: 0; }
-#tabScroll QScrollBar::add-page:vertical, #tabScroll QScrollBar::sub-page:vertical { background: transparent; }
 
 QFrame#barGroup { background: $bg_canvas; border: 1px solid $line; }
 QFrame#barGroup[side="right"] {
