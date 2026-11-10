@@ -208,6 +208,7 @@ def install_tooltips(app: QApplication) -> _ToolTipManager:
     if _tooltips is None:
         _tooltips = _ToolTipManager(app)
         app.installEventFilter(_tooltips)
+        app.aboutToQuit.connect(lambda: app.removeEventFilter(_tooltips))
     return _tooltips
 
 

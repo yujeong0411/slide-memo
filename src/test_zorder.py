@@ -32,4 +32,5 @@ tips.hide_tip()
 app.processEvents()  # 툴팁 숨김은 다음 이벤트 루프에서 반영된다
 assert not win._zorder_locked(), "툴팁이 사라졌으면 다시 topmost를 지켜야 한다"
 
-print("zorder OK")
+print("zorder OK", flush=True)
+os._exit(0)  # 인터프리터 종료 중의 Qt 정리 순서에 결과가 흔들리지 않게 한다

@@ -2222,7 +2222,7 @@ class SlideMemoWindow(QWidget):
 
         col_layout.addSpacing(4)
 
-        # 아래 묶음: 잠깐 숨기기(모두 접기 자리) + 휴지통 + 새 메모
+        # 아래 묶음: 새 메모 + 휴지통 + 잠깐 숨기기(모두 접기 자리)
         self.bar_group = QFrame(self.tab_column)
         self.bar_group.setObjectName("barGroup")
         group_layout = QVBoxLayout(self.bar_group)
@@ -2243,24 +2243,16 @@ class SlideMemoWindow(QWidget):
             group_layout.addWidget(button)
             return button
 
-        self.hide_btn = bar_button("", tip("잠깐 숨기기", HIDE_HOTKEY_LABEL), self.hide_bar)
+        # 새 메모는 자주 쓰니 탭 바로 아래, 숨기기는 잘못 누르지 않게 맨 끝
+        self.new_tab_btn = bar_button("plus.svg", tip("새 메모", "Ctrl+N"), self.create_new_memo)
         self.trash_btn = bar_button("trash-2.svg", "휴지통", self._toggle_trash_mode)
-        # 휴지통 갯수 배지 (trash_btn 우측 상단에 absolute)
-        # 단추 위로 조금 나가므로 묶음의 자식으로 둔다. 클릭은 아래로 통과시킨다
-        self._trash_badge = QLabel(self.bar_group)
-        self._trash_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        self.trash_btn.installEventFilter(self)
-        self._trash_badge.setObjectName("trashBadge")
-        self._trash_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        theme_apply.set_tabular(self._trash_badge)
-        self._trash_badge.hide()
         # 휴지통 모드 전용 (평소엔 숨김). 본문 상단이 아니라 컬럼에 두어
         # 본문은 일반 모드와 같은 검색/정렬 화면을 유지한다.
         self.col_empty_btn = bar_button("brush-cleaning.svg", "휴지통 비우기", self._empty_trash)
         self.col_empty_btn.hide()
         self.col_back_btn = bar_button("arrow-left.svg", "휴지통 닫기", self._exit_trash_mode)
         self.col_back_btn.hide()
-        self.new_tab_btn = bar_button("plus.svg", tip("새 메모", "Ctrl+N"), self.create_new_memo)
+        self.hide_btn = bar_button("", tip("잠깐 숨기기", HIDE_HOTKEY_LABEL), self.hide_bar)
 
         root.addWidget(self.tab_column)
 
@@ -2280,8 +2272,6 @@ class SlideMemoWindow(QWidget):
         super().resizeEvent(event)
         self._update_handles()
         self._fit_top_row()
-        if hasattr(self, "_trash_badge"):
-            self._update_trash_btn()
 
     def _tab_arrow(self, asset: str, tooltip: str, direction: int) -> QPushButton:
         button = QPushButton(self.tab_column)
@@ -2402,8 +2392,6 @@ class SlideMemoWindow(QWidget):
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
         t = event.type()
-        if obj is getattr(self, "trash_btn", None) and t in (QEvent.Type.Move, QEvent.Type.Resize):
-            self._place_trash_badge()
         # 팝업/모달/툴팁이 떠 있으면 z-order를 건드리지 않는다. raise_()가 창
         # 그룹을 재정렬하면서 방금 뜬 것을 덮어버려 "드롭다운이 내려왔다 바로
         # 사라지는" / "툴팁이 바 뒤로 숨는" 현상이 생긴다.
@@ -3068,7 +3056,6 @@ class SlideMemoWindow(QWidget):
         if not self.is_expanded:  # 접힘 = mask 폭이 곧 바 폭
             self.setMask(self._collapsed_mask_region())
         self._update_handles()
-        self._update_trash_btn()  # 배지 위치가 tab_width 기준
 
     def apply_tab_geometry_settings(self) -> None:
         """설정 다이얼로그 OK 후 호출. 인덱스 탭 폭/각 탭 높이를 DB에서 재로드해 반영.
@@ -3346,28 +3333,10 @@ class SlideMemoWindow(QWidget):
             self._pending_scroll = (target, tries - 1)
 
     def _update_trash_btn(self) -> None:
-        """휴지통은 내용이 있을 때만 컬럼에 나타난다 — 비었을 때 눌러봐야 빈 화면이라
-        상시 아이콘은 자리값을 못 한다. 지운 직후(=복구가 필요한 순간)엔 배지와 함께
-        스스로 나타난다. 휴지통 모드일 땐 나가는 길이 col_back_btn이므로 숨긴다."""
+        """휴지통 아이콘은 늘 있다. 휴지통 모드일 땐 나가는 길이 col_back_btn이므로 숨긴다."""
         n = self.db.count_trashed()
-        self.trash_btn.setToolTip(f"휴지통 ({n})" if n else "휴지통")
-        self.trash_btn.setVisible(n > 0 and not self.trash_mode)
-        if n > 0:
-            self._trash_badge.setText(str(n) if n < 100 else "99+")
-            self._trash_badge.adjustSize()
-            self._place_trash_badge()
-            self._trash_badge.show()
-            self._trash_badge.raise_()
-        else:
-            self._trash_badge.hide()
-
-    def _place_trash_badge(self) -> None:
-        """중심을 아이콘 오른쪽 위 꼭짓점 쪽에 두고, 아이콘 아래 2/3는 가리지 않는다."""
-        button, badge = self.trash_btn.geometry(), self._trash_badge
-        icon_right = button.center().x() + BAR_ICON // 2
-        icon_top = button.center().y() - BAR_ICON // 2
-        x = min(icon_right - badge.width() // 2, self.bar_group.width() - badge.width() - 1)
-        badge.move(x, icon_top + BAR_ICON // 3 - badge.height())
+        self.trash_btn.setToolTip(f"휴지통 (메모 {n}개)" if n else "휴지통 (비어 있음)")
+        self.trash_btn.setVisible(not self.trash_mode)
 
     # ----- 휴지통 모드 -----
     def _toggle_trash_mode(self) -> None:

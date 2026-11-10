@@ -99,10 +99,9 @@ for _i in range(3):
 _db.soft_delete(_db.list_all()[0].id)
 
 _win = m.SlideMemoWindow(_db)
-_badge = _win._trash_badge
-assert _badge.text() == "1", _badge.text()
-assert not _badge.isHidden(), "휴지통에 메모가 있는데 배지가 숨겨짐"
-assert 0 <= _badge.x() <= _win.tab_width - _badge.width(), (_badge.x(), _badge.width(), _win.tab_width)
+_bar = _win.bar_group.layout()
+assert _bar.indexOf(_win.new_tab_btn) < _bar.indexOf(_win.trash_btn) < _bar.indexOf(_win.hide_btn), "순서: 새 메모, 휴지통, 숨기기"
+assert not hasattr(_win, "_trash_badge")
 assert _win.trash_btn.height() == m.BAR_BUTTON_HEIGHT or not _win.trash_btn.isVisible()
 assert _win.drag_grip.height() == m.GRIP_HEIGHT
 

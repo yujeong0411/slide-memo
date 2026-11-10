@@ -20,8 +20,8 @@ for i in range(2):
 win = m.SlideMemoWindow(db)
 win.show()
 
-# 휴지통이 비어 있으면 아이콘 자체가 없다 (평소 하단은 숨기기 + ＋ 둘뿐)
-assert not win.trash_btn.isVisibleTo(win), "빈 휴지통인데 아이콘이 보인다"
+# 휴지통 아이콘은 비어 있어도 있다
+assert win.trash_btn.isVisibleTo(win) and win.trash_btn.toolTip() == "휴지통 (비어 있음)"
 # 설정 아이콘은 아예 없어졌다 — 우클릭/트레이 메뉴로 이동
 assert not hasattr(win, "settings_btn"), "설정 버튼이 아직 컬럼에 남아 있다"
 
@@ -32,7 +32,7 @@ victim = win.current_memo.id
 win._delete_current_memo()  # 확인창 없이 바로 휴지통
 assert db.count_trashed() == 1, db.count_trashed()
 assert win.trash_btn.isVisibleTo(win), "지웠는데 휴지통 아이콘이 안 나타났다"
-assert win._trash_badge.text() == "1", win._trash_badge.text()
+assert win.trash_btn.toolTip() == "휴지통 (메모 1개)", win.trash_btn.toolTip()
 assert not win._toast_lbl.isHidden(), "되돌리기 토스트가 안 떴다"
 
 assert win._toast_lbl.timer.isActive(), "토스트는 4초 뒤에 사라져야 한다"
@@ -43,7 +43,7 @@ assert win._toast_lbl.timer.isActive(), "마우스가 나가면 다시 센다"
 win._toast_lbl.clicked.emit()  # 토스트 클릭 = 되돌리기
 assert db.count_trashed() == 0, "토스트 클릭이 복구를 안 했다"
 assert win.current_memo is not None and win.current_memo.id == victim
-assert not win.trash_btn.isVisibleTo(win), "휴지통이 다시 비었는데 아이콘이 남았다"
+assert win.trash_btn.toolTip() == "휴지통 (비어 있음)"
 
 # 접힘 상태에선 토스트가 뜰 본문이 안 보인다 → 대신 휴지통 아이콘이 복구 경로
 win.collapse()
