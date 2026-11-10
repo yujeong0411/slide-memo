@@ -81,12 +81,19 @@ assert Tab(memo("  ")).memo_title == "제목 없음" and Tab(memo("  ")).is_unti
 # 깨진 색이 DB에 있어도 탭은 그려져야 앱이 켜진다
 render(Tab(memo(color="sunrise")))
 
-# 고정 핀은 글자 색으로 칠한다
-_light = Tab._pin_pixmap("#1B1D22", 16).toImage()
-_solid = [(x, y) for y in range(_light.height()) for x in range(_light.width())
-          if _light.pixelColor(x, y).alpha() > 200]
-assert _solid, "핀 아이콘이 렌더되지 않음 (SVG 경로/플러그인 확인)"
-assert all(_light.pixelColor(x, y).red() < 100 for x, y in _solid)
+# 고정 표시는 띠 바로 안쪽에 매달린 책갈피 리본이고, 글자 자리는 바꾸지 않는다
+_pinned = Tab(memo(pinned=True))
+_pinned.resize(40, 112)
+for _side, _left in (("right", 40 - 4 - 10), ("left", 4)):
+    Tab.side = _side
+    _p = [(q.x(), q.y()) for q in _pinned.ribbon_points()]
+    assert _p == [(_left, 0), (_left + 10, 0), (_left + 10, 14), (_left + 5, 10), (_left, 14)], _p
+Tab.side = "right"
+_plain = Tab(memo(pinned=False))
+_plain.resize(40, 112)
+assert _pinned._title_lines(_pinned._tab_font())[1] == _plain._title_lines(_plain._tab_font())[1], "고정해도 글자 자리는 같다"
+assert _pinned.tooltip_request()[0] == "t · 고정됨", "고정한 탭은 제목이 다 보여도 툴팁을 띄운다"
+assert _plain.tooltip_request() is None
 
 _on, _off = render(Tab(memo(pinned=True))), render(Tab(memo(pinned=False)))
 assert sum(_on.pixelColor(x, y) != _off.pixelColor(x, y) for y in range(H) for x in range(W)) > 5

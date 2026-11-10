@@ -230,12 +230,7 @@ class MemoTabButton(QPushButton):
     TEXT_PADDING = 8  # 글자 줄의 앞뒤 여백
     SIDE_PADDING = 8  # 줄 수 계산에서 빼는 안쪽 여백
     LINE_HEIGHT = T.TYPE["label"][1]
-    PIN_ICON_SIZE = 12
-    PIN_GAP = 4
-
-    @staticmethod
-    def _pin_pixmap(fg: str, size: int) -> QPixmap:
-        return tinted_pixmap("pin.svg", fg, size)
+    RIBBON_WIDTH, RIBBON_LENGTH, RIBBON_NOTCH = 10, 14, 4
 
     @classmethod
     def line_count(cls, width: int) -> int:
@@ -280,8 +275,7 @@ class MemoTabButton(QPushButton):
 
     def _title_lines(self, font: QFont) -> tuple[list[str], int]:
         """지금 크기에서 보이는 줄과 한 줄 길이."""
-        start = self.TEXT_PADDING + (self.PIN_ICON_SIZE + self.PIN_GAP if self.is_pinned else 0)
-        length = max(1, self.height() - start - self.TEXT_PADDING)
+        length = max(1, self.height() - 2 * self.TEXT_PADDING)
         lines = MemoTabButton.wrap_title(
             self.memo_title, QFontMetrics(font), length, MemoTabButton.line_count(self.width())
         )
@@ -296,9 +290,19 @@ class MemoTabButton(QPushButton):
     def tooltip_request(self) -> tuple[str, str] | None:
         """제목이 잘렸을 때만 창 안쪽에 전체 제목을 보여 준다."""
         shown = "".join("".join(self._title_lines(self._tab_font())[0]).split())
-        if shown == "".join(self.memo_title.split()):
+        if shown == "".join(self.memo_title.split()) and not self.is_pinned:
             return None
-        return self.memo_title, "left" if MemoTabButton.side == "right" else "right"
+        text = f"{self.memo_title} · 고정됨" if self.is_pinned else self.memo_title
+        return text, "left" if MemoTabButton.side == "right" else "right"
+
+    def ribbon_points(self) -> list[QPointF]:
+        """고정 표시: 읽기 시작 쪽(위) 끝, 띠 바로 안쪽에 매달린 책갈피. 끝은 가운데가 파인 V."""
+        w, h, notch = self.RIBBON_WIDTH, self.RIBBON_LENGTH, self.RIBBON_NOTCH
+        left = self.width() - self.BAND_WIDTH - w if MemoTabButton.side == "right" else self.BAND_WIDTH
+        return [
+            QPointF(left, 0), QPointF(left + w, 0), QPointF(left + w, h),
+            QPointF(left + w / 2, h - notch), QPointF(left, h),
+        ]
 
     def update_style(self, selected: bool) -> None:
         self._selected = selected
@@ -339,11 +343,10 @@ class MemoTabButton(QPushButton):
         center_x = content_left + (self.width() - self.BAND_WIDTH) / 2
         font = self._tab_font()
         start = self.TEXT_PADDING
-        if self.is_pinned:  # 읽는 방향의 시작 쪽
-            size = self.PIN_ICON_SIZE
-            pin = MemoTabButton._pin_pixmap(t["memo_fg_secondary"], size)
-            painter.drawPixmap(int(center_x - size / 2), start, pin)
-            start += size + self.PIN_GAP
+        if self.is_pinned:  # 글자 아래에 깔리도록 먼저 그린다
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(t["memo_band"]))
+            painter.drawPolygon(QPolygonF(self.ribbon_points()))
         lines, length = self._title_lines(font)
 
         # 시계방향 90도: 위에서 아래로 읽고, 첫 줄이 오른쪽이다 (양쪽 가장자리 모두 같다)
