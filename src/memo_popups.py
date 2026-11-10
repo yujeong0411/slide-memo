@@ -56,7 +56,7 @@ class SortPopup(PopupPanel):
         for position, (label, _first, _second) in enumerate(SORT_CRITERIA):
             row = QPushButton(label)
             row.setObjectName("popupItem")
-            row.setIconSize(A.tinted_pixmap("menu_check.svg", A.current()["fg"], 16).deviceIndependentSize().toSize())
+            row.setIconSize(A.tinted_pixmap("check.svg", A.current()["fg"], 16).deviceIndependentSize().toSize())
             row.clicked.connect(lambda _c=False, p=position: self._choose(p, 0))
             self.body.addWidget(row)
             self._rows.append(row)
@@ -84,7 +84,7 @@ class SortPopup(PopupPanel):
     def _refresh(self) -> None:
         blank = QPixmap(16, 16)
         blank.fill(Qt.GlobalColor.transparent)
-        check = A.tinted_pixmap("menu_check.svg", A.current()["fg"], 16)
+        check = A.tinted_pixmap("check.svg", A.current()["fg"], 16)
         for position, row in enumerate(self._rows):
             row.setIcon(QIcon(check if position == self._criterion else blank))
         labels = SORT_CRITERIA[self._criterion][1:]
@@ -188,7 +188,7 @@ class DatePopup(PopupPanel):
         A.set_tabular(self._title)
         header.addWidget(self._title)
         header.addStretch(1)
-        for asset, step, tip in (("chevron_left.svg", -1, "이전 달"), ("chevron_right.svg", 1, "다음 달")):
+        for asset, step, tip in (("chevron-left.svg", -1, "이전 달"), ("chevron-right.svg", 1, "다음 달")):
             nav = make_button("", "iconSm")
             nav.setIcon(QIcon(A.tinted_pixmap(asset, A.current()["fg_secondary"], 16)))
             nav.setToolTip(tip)

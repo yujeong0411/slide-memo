@@ -31,6 +31,8 @@ def _keep_data(entry):
     # Qt 자체 번역 파일(.qm). 이 앱은 QTranslator/tr()을 쓰지 않고 한국어를
     # 파이썬 문자열로 직접 넣는다. -6.4MB
     dest = entry[0].replace('\\', '/')
+    if dest.endswith('.map'):  # litellm 웹 화면에 딸린 sourcemap. 배포하지 않는다
+        return False
     return not dest.startswith('PyQt6/Qt6/translations/') or dest.endswith('/qtbase_ko.qm')
 
 

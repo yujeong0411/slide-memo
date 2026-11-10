@@ -34,14 +34,14 @@ _LIST_GAP = 4  # 콤보 칸과 펼친 목록 사이
 _MNEMONIC_RE = re.compile(r"\(&\w\)")
 # Qt 기본 편집 메뉴의 objectName → 아이콘
 _STANDARD_ICONS = {
-    "edit-undo": "menu_undo.svg",
-    "edit-redo": "menu_redo.svg",
-    "edit-cut": "menu_cut.svg",
-    "edit-copy": "menu_copy.svg",
-    "edit-paste": "menu_paste.svg",
-    "edit-delete": "menu_delete.svg",
-    "select-all": "menu_select_all.svg",
-    "link-copy": "menu_link.svg",
+    "edit-undo": "undo-2.svg",
+    "edit-redo": "redo-2.svg",
+    "edit-cut": "scissors.svg",
+    "edit-copy": "copy.svg",
+    "edit-paste": "clipboard-paste.svg",
+    "edit-delete": "trash-2.svg",
+    "select-all": "text-select.svg",
+    "link-copy": "link.svg",
 }
 
 
@@ -56,14 +56,15 @@ def add_float_shadow(widget: QWidget) -> None:
     widget.setGraphicsEffect(effect)
 
 
-def _paint_soft_shadow(painter: QPainter, panel: QRectF, radius: int) -> None:
+def _paint_soft_shadow(painter: QPainter, panel: QRectF, radius: int, level: str = "md") -> None:
     """QMenu 창에는 그래픽 효과를 걸 수 없어 shadow_md를 겹친 사각형으로 근사한다."""
+    offset, blur, alpha = T.SHADOW[level]
     color = QColor(0, 0, 0)
-    color.setAlphaF(_SHADOW_ALPHA / _SHADOW_BLUR)
+    color.setAlphaF(alpha / blur)
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(color)
-    shadow = panel.translated(0, _SHADOW_Y)
-    for spread in range(_SHADOW_BLUR, 0, -1):
+    shadow = panel.translated(0, offset)
+    for spread in range(blur, 0, -1):
         grown = shadow.adjusted(-spread, -spread, spread, spread)
         painter.drawRoundedRect(grown, radius + spread, radius + spread)
 
@@ -320,7 +321,7 @@ class ThemedMenu(QMenu):
         if action.menu() is not None:
             painter.drawPixmap(
                 rect.right() - 12 - _MENU_ICON + 1, icon_top,
-                A.tinted_pixmap("chevron_right.svg", t["fg_secondary"], _MENU_ICON),
+                A.tinted_pixmap("chevron-right.svg", t["fg_secondary"], _MENU_ICON),
             )
         elif shortcut:
             painter.setFont(A.tabular_font(A.base_font("caption")))
@@ -357,7 +358,7 @@ class _ComboDelegate(QStyledItemDelegate):
         if index.row() == self._combo.currentIndex():
             painter.drawPixmap(
                 rect.left() + 8, rect.center().y() - _MENU_ICON // 2 + 1,
-                A.tinted_pixmap("menu_check.svg", t["fg"], _MENU_ICON),
+                A.tinted_pixmap("check.svg", t["fg"], _MENU_ICON),
             )
         painter.setPen(A.qcolor(t["fg"]))
         painter.drawText(
@@ -509,7 +510,7 @@ def message_box(parent: QWidget | None, head: str, detail: str = "", *, warning:
     if head_label is not None:
         head_label.setWordWrap(True)  # 18px 제목이 길면 잘리지 않고 줄바꿈
     if warning:
-        box.setIconPixmap(A.tinted_pixmap("alert.svg", A.current()["danger"], 24))
+        box.setIconPixmap(A.tinted_pixmap("triangle-alert.svg", A.current()["danger"], 24))
     return box
 
 

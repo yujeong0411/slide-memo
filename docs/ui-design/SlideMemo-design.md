@@ -256,6 +256,12 @@ SlideMemo는 모니터 왼쪽 또는 오른쪽 끝에 붙는 메모장이다. �
 - 왼쪽에 붙을 때는 모든 것을 좌우로 뒤집는다. "모두 접기" 화살표 방향도 바꾼다.
 - 탭에 마우스를 올리면 `memo_hover`, 툴팁으로 메모 제목 전체를 보여 준다(긴 제목이 잘리기 때문).
 
+- 잠깐 숨기기("»")를 누르면 화면 가장자리에 32×32 로고 단추가 남는다.
+  - 바가 있던 높이, 붙어 있던 쪽 가장자리에 붙는다. 위아래로 끌면 옮겨지고 저장되며, 끄는 동안은 누름으로 처리하지 않는다.
+  - 바깥쪽은 직각, 안쪽 두 모서리는 반경 8이다. 면 `bg_canvas`, 테두리 1px `line`, `shadow_sm`. 가운데에 새 로고(slidememo-20)를 20px로 로고 색 그대로 넣는다.
+  - 마우스를 올리면 면에만 `overlay_hover`를 겹친다. 툴팁은 "메모장 펼치기 (Ctrl+Shift+Z)"다. 누르면 바가 돌아온다.
+  - 다른 앱이 그 모니터를 전체 화면으로 쓰면 숨긴다. 트레이와 Ctrl+Shift+Z는 그대로다. Tab 포커스는 받지 않는다.
+
 ### 4.2 메인 창 (메모 면)
 - 위 줄: 검색 칸(`md` 32, `memo_field`, `memo_border` 안쪽 1px 테두리, 돋보기 16), 정렬 콤보("수정일순" + 셰브런), 고정·내보내기 아이콘 단추(32).
   - 컬러 이모지 돋보기는 단색 선 아이콘으로 바꾼다.
@@ -388,6 +394,43 @@ SlideMemo는 모니터 왼쪽 또는 오른쪽 끝에 붙는 메모장이다. �
 - 색은 SVG에 넣지 않고 `tinted_pixmap`으로 토큰 색을 입힌다. 지금 `#1e1e2e` 고정은 `fg_secondary` 또는 `memo_fg_secondary`로 바꾼다.
 - 화면 모드가 바뀌면 다시 칠한다.
 - 이모지와 유니코드 글리프(▾, ⏳, 🔍)를 아이콘 대신 쓰지 않는다.
+
+- 아이콘 묶음은 Lucide(ISC, `assets/icons/LICENSE-lucide.txt`)다. 파일 이름은 Lucide 이름 그대로 `assets/`에 두고 획만 1.5로 바꾼다.
+
+| 기능 | Lucide 이름 |
+|---|---|
+| 손잡이 | `grip-vertical` |
+| 모두 접기 (붙은 쪽에 따라) | `chevrons-right` · `chevrons-left` |
+| 휴지통, 휴지통으로 옮기기, 휴지통 보기, 영구 삭제(danger 색) | `trash-2` |
+| 휴지통 비우기 | `brush-cleaning` |
+| 휴지통 닫기 | `arrow-left` |
+| 새 메모, 색 추가 | `plus` |
+| 탭 위아래 | `chevron-up` · `chevron-down` |
+| 검색 | `search` |
+| 좁은 창 정렬 | `arrow-down-wide-narrow` |
+| 고정, 고정 풀기 | `pin` · `pin-off` |
+| 내보내기 (위 줄, 탭 메뉴) | `file-output` |
+| 굵게, 기울임, 밑줄, 취소선 | `bold` · `italic` · `underline` · `strikethrough` |
+| 글꼴·크기 | `a-large-small` |
+| 글자색, 배경색 (아래에 마지막 색 3px 막대) | `baseline` · `highlighter` |
+| 목록 | `list` · `list-ordered` |
+| 정렬 | `text-align-start` · `text-align-center` · `text-align-end` |
+| 링크 | `link` |
+| 표 넣기 | `table` |
+| 날짜 넣기 | `calendar` |
+| 녹음, 녹음 중지 | `mic` · `square` |
+| AI 다듬기, AI 칩 줄 | `sparkles` |
+| 이전 버전 | `history` |
+| 되돌리기, 다시 실행 | `undo-2` · `redo-2` |
+| 잘라내기, 복사, 붙여넣기, 모두 선택 | `scissors` · `copy` · `clipboard-paste` · `text-select` |
+| 복원 | `archive-restore` |
+| 체크 | `check` |
+| 설정 | `settings` |
+| 설정 창 탭 (일반, AI, 정보) | `sliders-horizontal` · `sparkles` · `info` |
+| 반대쪽 가장자리로 옮기기 | `arrow-left-right` |
+| 키 보이기, 숨기기 | `eye` · `eye-off` |
+| 경고 | `triangle-alert` |
+| 팝업·콤보 화살표 | `chevron-left` · `chevron-right` · `chevron-down` |
 
 ## 5. 문구 규칙 (교보)
 - **해요체**를 기본으로 쓴다: "메모를 휴지통으로 옮겼어요", "새 버전이 나왔어요".

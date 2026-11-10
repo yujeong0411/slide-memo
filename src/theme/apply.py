@@ -26,7 +26,7 @@ _mode = "light"
 _QSS_SOURCES: dict[str, str] = {}
 _RGBA_RE = re.compile(r"rgba\((\d+),(\d+),(\d+),([\d.]+)\)")
 _TINT_CACHE: dict[tuple[str, str, int, float], QPixmap] = {}
-_QSS_ICONS = {"chevron_down": "fg_secondary", "chevron_up": "fg_secondary", "check": "on_accent"}
+_QSS_ICONS = {"chevron-down": "fg_secondary", "chevron-up": "fg_secondary", "check": "on_accent"}
 _CLASS_FONTS = {"QMenu": "body", "QMessageBox": "body"}
 
 
@@ -195,7 +195,7 @@ def _write_qss_icons(mode: str, t: dict[str, str]) -> dict[str, str]:
         svg = asset_path(f"{name}.svg").read_text(encoding="utf-8")
         target = folder / f"{name}.svg"
         target.write_text(svg.replace("currentColor", t[token]), encoding="utf-8")
-        paths[f"icon_{name}"] = target.as_posix()
+        paths[f"icon_{name.replace('-', '_')}"] = target.as_posix()
     return paths
 
 

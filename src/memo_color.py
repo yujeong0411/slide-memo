@@ -169,7 +169,7 @@ class MemoColorButton(QToolButton):
         painter.setBrush(QColor(self._band))
         painter.drawEllipse(QRectF(6, (self.height() - 14) / 2, 14, 14))
         painter.drawPixmap(
-            24, (self.height() - 16) // 2, A.tinted_pixmap("chevron_down.svg", self._chevron, 16)
+            24, (self.height() - 16) // 2, A.tinted_pixmap("chevron-down.svg", self._chevron, 16)
         )
         painter.end()
 

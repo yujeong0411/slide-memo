@@ -114,6 +114,7 @@ from memo_popups import (
     Toast,
     sort_description,
 )
+from edge_button import EdgeLogoButton, is_foreign_fullscreen
 from theme import apply as theme_apply
 from theme import tokens as T
 from theme.apply import resource_path as _resource_path
@@ -163,6 +164,7 @@ MIN_W = 280
 MIN_SEARCH_WIDTH = 120  # 이보다 좁아지면 정렬 콤보를 아이콘으로 바꾼다
 MIN_H = 200
 RESIZE_GRIP = 6  # 가장자리 드래그 핸들 두께(px)
+EDGE_BUTTON_Y_KEY = "edge_button_y"  # 숨겼을 때 남는 로고 단추의 위치
 HIDE_HOTKEY_LABEL = "Ctrl+Shift+Z"  # 잠깐 숨기기/복귀 전역 단축키 (표시용)
 
 WEEKDAYS_KO = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
@@ -233,7 +235,7 @@ class MemoTabButton(QPushButton):
 
     @staticmethod
     def _pin_pixmap(fg: str, size: int) -> QPixmap:
-        return tinted_pixmap("menu_keep.svg", fg, size)
+        return tinted_pixmap("pin.svg", fg, size)
 
     @classmethod
     def line_count(cls, width: int) -> int:
@@ -353,6 +355,33 @@ class MemoTabButton(QPushButton):
         for index, line in enumerate(lines):
             rect = QRectF(0, block_top + index * self.LINE_HEIGHT, length, self.LINE_HEIGHT)
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, line)
+        painter.end()
+
+
+class _InkToolButton(QToolButton):
+    """글자색·배경색 단추. 아이콘 아래에 마지막으로 쓴 색을 3px 막대로 보여 준다."""
+
+    ICON, BAR_HEIGHT = 16, 3
+
+    def __init__(self, kind: str, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.kind = kind
+        self.last_ink: str | None = None  # 저장되는 밝은 화면 값
+
+    def set_ink(self, value: str | None) -> None:
+        self.last_ink = value
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        if self.last_ink is None:
+            return
+        shown = memo_document.display_text_color if self.kind == "text" else memo_document.display_highlight
+        painter = QPainter(self)
+        painter.fillRect(
+            (self.width() - self.ICON) // 2, (self.height() + self.ICON) // 2,
+            self.ICON, self.BAR_HEIGHT, QColor(shown(self.last_ink, theme_apply.current_mode())),
+        )
         painter.end()
 
 
@@ -844,36 +873,37 @@ class FormatToolbar(QWidget):
         self.setSizePolicy(sp)
         # 첫 표시 시 한 줄 높이를 보장해 wrap된 큰 값이 부모로 전파되지 않게 한다.
         self.setMinimumHeight(T.CONTROL["sm"][0])
+        self._ink_buttons: dict[str, _InkToolButton] = {}
         self.memo_icons: list[tuple[QToolButton, str]] = []  # 메모 색이 바뀌면 다시 칠한다
         self._group_layout: QHBoxLayout | None = None
 
         # 좁은 폭에서는 묶음째 다음 줄로 넘어간다 (4.2)
         self._begin_group()
         self._state_buttons = {
-            "bold": self._add_icon_btn("fmt_bold.svg", tip("굵게", "Ctrl+B"), self.toggle_bold),
-            "italic": self._add_icon_btn("fmt_italic.svg", tip("기울임", "Ctrl+I"), self.toggle_italic),
-            "underline": self._add_icon_btn("fmt_underline.svg", tip("밑줄", "Ctrl+U"), self.toggle_underline),
-            "strike": self._add_icon_btn("fmt_strike.svg", "취소선", self.toggle_strike),
+            "bold": self._add_icon_btn("bold.svg", tip("굵게", "Ctrl+B"), self.toggle_bold),
+            "italic": self._add_icon_btn("italic.svg", tip("기울임", "Ctrl+I"), self.toggle_italic),
+            "underline": self._add_icon_btn("underline.svg", tip("밑줄", "Ctrl+U"), self.toggle_underline),
+            "strike": self._add_icon_btn("strikethrough.svg", "취소선", self.toggle_strike),
         }
         self._begin_group()
         self._add_font_btn()
-        self._add_color_menu_btn("fmt_text_color.svg", "글자색", kind="text")
-        self._add_color_menu_btn("fmt_bg_color.svg", "배경색", kind="bg")
+        self._add_color_menu_btn("baseline.svg", "글자색", kind="text")
+        self._add_color_menu_btn("highlighter.svg", "배경색", kind="bg")
         self._begin_group()
-        self._state_buttons["bullet"] = self._add_icon_btn("fmt_bullet.svg", "글머리 목록", self.bullet_list)
-        self._state_buttons["numbered"] = self._add_icon_btn("fmt_numbered.svg", "번호 목록", self.numbered_list)
+        self._state_buttons["bullet"] = self._add_icon_btn("list.svg", "글머리 목록", self.bullet_list)
+        self._state_buttons["numbered"] = self._add_icon_btn("list-ordered.svg", "번호 목록", self.numbered_list)
         self._begin_group()
-        self._add_icon_btn("fmt_align_left.svg", "왼쪽 정렬", lambda: self.set_alignment("left"))
-        self._add_icon_btn("fmt_align_center.svg", "가운데 정렬", lambda: self.set_alignment("center"))
-        self._add_icon_btn("fmt_align_right.svg", "오른쪽 정렬", lambda: self.set_alignment("right"))
+        self._add_icon_btn("text-align-start.svg", "왼쪽 정렬", lambda: self.set_alignment("left"))
+        self._add_icon_btn("text-align-center.svg", "가운데 정렬", lambda: self.set_alignment("center"))
+        self._add_icon_btn("text-align-end.svg", "오른쪽 정렬", lambda: self.set_alignment("right"))
         self._begin_group()
-        self._add_icon_btn("link_icon.svg", tip("링크 넣기", "Ctrl+K"), self.insert_link)
-        self._add_icon_btn("fmt_table.svg", "표 넣기", self.insert_table)
+        self._add_icon_btn("link.svg", tip("링크 넣기", "Ctrl+K"), self.insert_link)
+        self._add_icon_btn("table.svg", "표 넣기", self.insert_table)
         self._begin_group()
         self._add_datetime_btn()
         # 음성 녹음 (Phase 9-2) — 부모 윈도우의 toggle_recording 호출
         self.mic_btn = self._add_icon_btn(
-            "fmt_mic.svg", "음성 녹음 (시작/종료)", self._on_mic_clicked
+            "mic.svg", "음성 녹음 (시작/종료)", self._on_mic_clicked
         )
         editor.currentCharFormatChanged.connect(lambda _fmt: self.sync_states())
         editor.cursorPositionChanged.connect(self.sync_states)
@@ -1006,6 +1036,7 @@ class FormatToolbar(QWidget):
         cursor.mergeCharFormat(
             memo_document.text_color_format(color_hex, theme_apply.current_mode())
         )
+        self._remember_ink("text", color_hex)
         self.editor.setFocus()
 
     def apply_bg_color(self, color_hex: str | None) -> None:
@@ -1017,6 +1048,7 @@ class FormatToolbar(QWidget):
             memo_document.clear_highlight_format() if color_hex is None
             else memo_document.highlight_format(color_hex, theme_apply.current_mode())
         )
+        self._remember_ink("bg", color_hex)
         self.editor.setFocus()
 
     def pick_custom_text_color(self) -> None:
@@ -1039,7 +1071,7 @@ class FormatToolbar(QWidget):
         """글꼴(family) + 크기(size) 팝업."""
         btn = QToolButton(self)
         btn.setObjectName("fmtBtn")
-        self._icon(btn, "fmt_font.svg")
+        self._icon(btn, "a-large-small.svg")
         btn.setToolTip("글꼴 / 크기")
         btn.setFixedSize(T.CONTROL["sm"][0], T.CONTROL["sm"][0])
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1107,7 +1139,8 @@ class FormatToolbar(QWidget):
 
     def _add_color_menu_btn(self, svg_name: str, tip: str, *, kind: str) -> QToolButton:
         """kind='text' or 'bg'. 클릭 시 8색 그리드 + 사용자 정의 팝업."""
-        btn = QToolButton(self)
+        btn = _InkToolButton(kind, self)
+        self._ink_buttons[kind] = btn
         btn.setObjectName("fmtBtn")
         btn.setToolTip(tip)
         btn.setFixedSize(T.CONTROL["sm"][0], T.CONTROL["sm"][0])
@@ -1117,6 +1150,16 @@ class FormatToolbar(QWidget):
         btn.clicked.connect(lambda: self._open_ink_popup(btn, kind))
         self._group_layout.addWidget(btn)
         return btn
+
+    def _remember_ink(self, kind: str, value: str | None) -> None:
+        self._ink_buttons[kind].set_ink(value)
+        win = self.editor.window()
+        if hasattr(win, "db"):
+            win.db.set_setting_str(f"last_ink_{kind}", value or "")
+
+    def load_last_inks(self, db: MemoDatabase) -> None:
+        for kind, button in self._ink_buttons.items():
+            button.set_ink(db.get_setting_str(f"last_ink_{kind}", "") or None)
 
     def _current_ink(self, kind: str) -> str | None:
         """지금 글자의 색(저장 값). 고리 표시용."""
@@ -1200,7 +1243,7 @@ class FormatToolbar(QWidget):
         btn.setFixedSize(T.CONTROL["sm"][0], T.CONTROL["sm"][0])
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._icon(btn, "calendar_icon.svg")
+        self._icon(btn, "calendar.svg")
         btn.clicked.connect(lambda: self._open_date_popup(btn))
         self._group_layout.addWidget(btn)
 
@@ -1356,7 +1399,7 @@ class _SortSelector(QWidget):
         criterion, direction = sort_description(self._index)
         self._btn.setToolTip(f"정렬: {criterion} · {direction}")
         self._btn.setProperty("compact", self._compact)
-        asset = "sort_icon.svg" if self._compact else "chevron_down.svg"
+        asset = "arrow-down-wide-narrow.svg" if self._compact else "chevron-down.svg"
         self._btn.setIcon(QIcon(tinted_pixmap(asset, self._icon_color, 16)))
         if self._compact:
             self._btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
@@ -1406,7 +1449,7 @@ class DragGrip(QWidget):
         painter.setPen(QPen(QColor(t["line"]), 1))
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(outline)
-        icon = tinted_pixmap("pan_tool.svg", t["fg_secondary"], BAR_ICON)
+        icon = tinted_pixmap("grip-vertical.svg", t["fg_secondary"], BAR_ICON)
         painter.drawPixmap((self.width() - BAR_ICON) // 2, (self.height() - BAR_ICON) // 2, icon)
         painter.end()
 
@@ -1727,6 +1770,12 @@ class SlideMemoWindow(QWidget):
         self._recording_timer: QTimer | None = None
         # 0=오른쪽, 1=왼쪽 가장자리
         self.side = "left" if db.get_setting_int("side", 0) == 1 else "right"
+        self._edge_button = EdgeLogoButton()
+        self._edge_button.clicked.connect(self.show_bar)
+        self._edge_button.moved.connect(lambda top: self.db.set_setting_int(EDGE_BUTTON_Y_KEY, top))
+        self._edge_timer = QTimer(self)  # 전체 화면 앱을 살핀다. 숨겨 둔 동안만 돈다
+        self._edge_timer.setInterval(1000)
+        self._edge_timer.timeout.connect(self._sync_edge_button)
 
         self._load_tab_geometry()  # tab_width 등을 _setup_window/_build_ui 전에 결정
         self._load_display_mode()  # Tool 플래그 결정에 필요
@@ -1791,7 +1840,7 @@ class SlideMemoWindow(QWidget):
         for button, asset in self._bar_icons:
             self._set_bar_icon(button, asset)
         self._set_bar_icon(self.hide_btn, self.hide_icon_asset())
-        self._rec_stop_btn.setIcon(QIcon(tinted_pixmap("stop.svg", t["fg"], 16)))
+        self._rec_stop_btn.setIcon(QIcon(tinted_pixmap("square.svg", t["fg"], 16)))
         self.drag_grip.update()
 
     def _set_bar_icon(self, button: QPushButton, asset: str) -> None:
@@ -2059,6 +2108,7 @@ class SlideMemoWindow(QWidget):
 
         # 서식바: 서식 버튼들만 (색상 dot/사용자 정의는 제목 줄로 분리)
         self.format_toolbar = FormatToolbar(self.editor)
+        self.format_toolbar.load_last_inks(self.db)
 
         ep.addWidget(self.format_toolbar)
 
@@ -2161,10 +2211,10 @@ class SlideMemoWindow(QWidget):
             self._apply_pending_scroll
         )
         # 스크롤 막대 대신, 탭이 더 있는 쪽 끝에만 셰브런 단추를 보여 준다
-        self.tab_up_btn = self._tab_arrow("chevron_up.svg", "위쪽 탭 보기", -1)
+        self.tab_up_btn = self._tab_arrow("chevron-up.svg", "위쪽 탭 보기", -1)
         col_layout.addWidget(self.tab_up_btn)
         col_layout.addWidget(self.tab_scroll, stretch=1)
-        self.tab_down_btn = self._tab_arrow("chevron_down.svg", "아래쪽 탭 보기", 1)
+        self.tab_down_btn = self._tab_arrow("chevron-down.svg", "아래쪽 탭 보기", 1)
         col_layout.addWidget(self.tab_down_btn)
         _tab_bar = self.tab_scroll.verticalScrollBar()
         _tab_bar.rangeChanged.connect(lambda *_a: self._update_tab_arrows())
@@ -2194,7 +2244,7 @@ class SlideMemoWindow(QWidget):
             return button
 
         self.hide_btn = bar_button("", tip("잠깐 숨기기", HIDE_HOTKEY_LABEL), self.hide_bar)
-        self.trash_btn = bar_button("delete_icon.svg", "휴지통", self._toggle_trash_mode)
+        self.trash_btn = bar_button("trash-2.svg", "휴지통", self._toggle_trash_mode)
         # 휴지통 갯수 배지 (trash_btn 우측 상단에 absolute)
         # 단추 위로 조금 나가므로 묶음의 자식으로 둔다. 클릭은 아래로 통과시킨다
         self._trash_badge = QLabel(self.bar_group)
@@ -2206,9 +2256,9 @@ class SlideMemoWindow(QWidget):
         self._trash_badge.hide()
         # 휴지통 모드 전용 (평소엔 숨김). 본문 상단이 아니라 컬럼에 두어
         # 본문은 일반 모드와 같은 검색/정렬 화면을 유지한다.
-        self.col_empty_btn = bar_button("delete_forever_icon.svg", "휴지통 비우기", self._empty_trash)
+        self.col_empty_btn = bar_button("brush-cleaning.svg", "휴지통 비우기", self._empty_trash)
         self.col_empty_btn.hide()
-        self.col_back_btn = bar_button("back_icon.svg", "휴지통 닫기", self._exit_trash_mode)
+        self.col_back_btn = bar_button("arrow-left.svg", "휴지통 닫기", self._exit_trash_mode)
         self.col_back_btn.hide()
         self.new_tab_btn = bar_button("plus.svg", tip("새 메모", "Ctrl+N"), self.create_new_memo)
 
@@ -2288,7 +2338,7 @@ class SlideMemoWindow(QWidget):
         self._update_column_style()
 
     def hide_icon_asset(self) -> str:
-        return "hide_right.svg" if self.side == "right" else "hide_left.svg"
+        return "chevrons-right.svg" if self.side == "right" else "chevrons-left.svg"
 
     def _update_handles(self) -> None:
         """리사이즈 핸들 위치 + 가시성 갱신 (side / 펼침 상태 반영).
@@ -2480,6 +2530,7 @@ class SlideMemoWindow(QWidget):
             self.collapse()
 
     def _setup_shortcuts(self) -> None:
+        self._edit_shortcuts: list[QShortcut] = []  # 휴지통 미리 보기에서는 끈다
         for keys, slot in [
             ("Escape", self._on_escape),
             ("Ctrl+N", self.create_new_memo),
@@ -2512,6 +2563,8 @@ class SlideMemoWindow(QWidget):
         ]:
             sc = QShortcut(QKeySequence(keys), self)
             sc.activated.connect(slot)
+            if keys not in ("Ctrl+N", "Ctrl+F", "Ctrl+S", "Ctrl+Shift+C", "Ctrl+Shift+D"):
+                self._edit_shortcuts.append(sc)
 
     # ----- AI 컨텍스트 메뉴 -----
     def _show_editor_context_menu(self, pos) -> None:
@@ -2522,7 +2575,7 @@ class SlideMemoWindow(QWidget):
 
         if self.db.get_setting_str("ai_enabled", "0") == "1":
             menu.addSeparator()
-            ai_menu = menu.add_submenu("AI로 다듬기", "menu_ai.svg")
+            ai_menu = menu.add_submenu("AI로 다듬기", "sparkles.svg")
             for key, info in AI_FEATURES.items():
                 act = ai_menu.add_item(info["button"])
                 act.triggered.connect(lambda _checked, k=key: self._run_ai_feature(k))
@@ -2744,7 +2797,7 @@ class SlideMemoWindow(QWidget):
 
     def _tint_mic(self) -> None:
         color = T.WHITE if getattr(self, "_recording_now", False) else self._memo_icon_color
-        self.format_toolbar.mic_btn.setIcon(QIcon(tinted_pixmap("fmt_mic.svg", color, 16)))
+        self.format_toolbar.mic_btn.setIcon(QIcon(tinted_pixmap("mic.svg", color, 16)))
 
     def _on_ai_finished(self, feature_key: str, result: str, tokens: int, show_preview: bool) -> None:
         self._ai_pending = None
@@ -3078,6 +3131,8 @@ class SlideMemoWindow(QWidget):
         self._update_tabs_selected()
         if self.current_memo is not None:
             self._apply_memo_theme(self.current_memo.color)
+        if self._edge_timer.isActive():
+            self._show_edge_button()
 
     def expand(self) -> None:
         if not self.isVisible():
@@ -3134,6 +3189,7 @@ class SlideMemoWindow(QWidget):
         tray = getattr(self, "_tray", None)
         if tray is not None:
             tray.show()
+        self._show_edge_button()
         self.hide()
         # 숨기면 안내를 띄울 화면이 사라진다 → 복귀 방법은 트레이 풍선으로만
         # 알릴 수 있다. 숨김은 드문 의도적 동작이라 매번 띄운다.
@@ -3145,6 +3201,16 @@ class SlideMemoWindow(QWidget):
                 5000,
             )
 
+    def _show_edge_button(self) -> None:
+        """바가 있던 높이, 붙어 있던 쪽 가장자리. 끌어 옮긴 적이 있으면 그 자리."""
+        top = self.db.get_setting_int(EDGE_BUTTON_Y_KEY, -1)
+        self._edge_button.place(self.screen().geometry(), self.side, top if top >= 0 else self.y())
+        self._sync_edge_button()
+        self._edge_timer.start()
+
+    def _sync_edge_button(self) -> None:
+        self._edge_button.setVisible(not is_foreign_fullscreen(int(self._edge_button.winId())))
+
     def show_bar(self) -> None:
         """hide_bar로 숨긴 바를 이전 상태(펼침/접힘) 그대로 다시 꺼낸다."""
         if self.isVisible():
@@ -3155,6 +3221,8 @@ class SlideMemoWindow(QWidget):
         else:
             self.setMask(self._collapsed_mask_region())
         self.show()
+        self._edge_timer.stop()
+        self._edge_button.hide()
         self._force_topmost()
         self._update_handles()
         tray = getattr(self, "_tray", None)
@@ -3166,13 +3234,13 @@ class SlideMemoWindow(QWidget):
         (설정은 트레이 아이콘 우클릭 메뉴에도 그대로 있다)"""
         menu = ThemedMenu()
         menu.add_section("메모장")
-        settings_act = menu.add_item("설정", "settings_icon.svg")
+        settings_act = menu.add_item("설정", "settings.svg")
         n = self.db.count_trashed()
-        trash_act = menu.add_item(f"휴지통 보기 ({n})" if n else "휴지통 보기", "menu_delete.svg")
+        trash_act = menu.add_item(f"휴지통 보기 ({n})" if n else "휴지통 보기", "trash-2.svg")
         trash_act.setEnabled(n > 0)
         menu.addSeparator()
         menu.add_section("위치")
-        side_act = menu.add_item("반대쪽 가장자리로 옮기기")
+        side_act = menu.add_item("반대쪽 가장자리로 옮기기", "arrow-left-right.svg")
         hide_act = menu.add_item("잠깐 숨기기", shortcut=HIDE_HOTKEY_LABEL)
         chosen = menu.exec(self.tab_column.mapToGlobal(pos))
         self.raise_()
@@ -3308,6 +3376,14 @@ class SlideMemoWindow(QWidget):
         else:
             self._enter_trash_mode()
 
+    def _set_editing_enabled(self, enabled: bool) -> None:
+        self.editor.setReadOnly(not enabled)
+        self.title_input.setReadOnly(not enabled)
+        for widget in (self.format_toolbar, self.color_btn, self._ai_bar):
+            widget.setEnabled(enabled)
+        for shortcut in self._edit_shortcuts:
+            shortcut.setEnabled(enabled)
+
     def _enter_trash_mode(self) -> None:
         if self.trash_mode:
             return
@@ -3317,9 +3393,7 @@ class SlideMemoWindow(QWidget):
         self.save_now()
         self.trash_mode = True
         self._trash_preview_id = None
-        # 휴지통 메모는 보기 전용
-        self.editor.setReadOnly(True)
-        self.title_input.setReadOnly(True)
+        self._set_editing_enabled(False)  # 휴지통 메모는 보기 전용
         # 검색/정렬은 일반 모드와 동일하게 유지 — 휴지통에서도 찾고 정렬해야 한다.
         # 휴지통 메모엔 의미 없는 것만 숨긴다.
         self.pin_btn.hide()
@@ -3339,8 +3413,7 @@ class SlideMemoWindow(QWidget):
             return
         self.trash_mode = False
         self._trash_preview_id = None
-        self.editor.setReadOnly(False)
-        self.title_input.setReadOnly(False)
+        self._set_editing_enabled(True)
         self._update_trash_btn()  # 남은 항목이 있으면 다시 나타난다
         self.col_empty_btn.hide()
         self.col_back_btn.hide()
@@ -3508,9 +3581,9 @@ class SlideMemoWindow(QWidget):
         except KeyError:
             return
         menu = ThemedMenu()
-        restore_act = menu.add_item("복원하기", "menu_restore.svg")
+        restore_act = menu.add_item("복원하기", "archive-restore.svg")
         menu.addSeparator()
-        purge_act = menu.add_item("영구 삭제", "menu_delete_forever.svg", danger=True)
+        purge_act = menu.add_item("영구 삭제", "trash-2.svg", danger=True)
         chosen = menu.exec(button.mapToGlobal(button.rect().center()))
         self.raise_()
 
@@ -3661,10 +3734,10 @@ class SlideMemoWindow(QWidget):
         """선택된 메모 색을 메모 창에 반영한다. 저장값은 신뢰 경계라 정규화를 거친다."""
         tokens = theme_apply.apply_memo(self.body, normalize_color(color_name), self.side)
         self._memo_icon_color = tokens["memo_fg_secondary"]
-        for button, asset in self.format_toolbar.memo_icons + [(self.export_btn, "export_icon.svg")]:
+        for button, asset in self.format_toolbar.memo_icons + [(self.export_btn, "file-output.svg")]:
             button.setIcon(QIcon(tinted_pixmap(asset, self._memo_icon_color, 16)))
-        self._search_icon.setIcon(QIcon(tinted_pixmap("search_icon.svg", self._memo_icon_color, 16)))
-        self._ai_spark.setPixmap(tinted_pixmap("menu_ai.svg", self._memo_icon_color, 16))
+        self._search_icon.setIcon(QIcon(tinted_pixmap("search.svg", self._memo_icon_color, 16)))
+        self._ai_spark.setPixmap(tinted_pixmap("sparkles.svg", self._memo_icon_color, 16))
         self.color_btn.set_appearance(tokens["memo_band"], self._memo_icon_color)
         self.editor.set_bullet_colors(tokens["memo_face"], tokens["memo_fg"])
         self.sort_combo.set_icon_color(self._memo_icon_color)
@@ -3719,12 +3792,12 @@ class SlideMemoWindow(QWidget):
         menu = ThemedMenu()
         pin_act = menu.add_item(
             "고정 풀기" if memo.is_pinned else "고정",
-            "menu_keep_off.svg" if memo.is_pinned else "menu_keep.svg",
+            "pin-off.svg" if memo.is_pinned else "pin.svg",
         )
-        hist_act = menu.add_item("이전 버전 보기", "menu_history.svg", shortcut="Ctrl+Alt+Z")
-        export_act = menu.add_item("내보내기", "menu_export.svg")
+        hist_act = menu.add_item("이전 버전 보기", "history.svg", shortcut="Ctrl+Alt+Z")
+        export_act = menu.add_item("내보내기", "file-output.svg")
         menu.addSeparator()
-        del_act = menu.add_item("휴지통으로 옮기기", "menu_delete.svg", shortcut="Delete", danger=True)
+        del_act = menu.add_item("휴지통으로 옮기기", "trash-2.svg", shortcut="Delete", danger=True)
         chosen = menu.exec(button.mapToGlobal(pos))
         self.raise_()
 
@@ -3791,7 +3864,7 @@ class SlideMemoWindow(QWidget):
         if not hasattr(self, "pin_btn"):
             return
         pinned = bool(self.current_memo and self.current_memo.is_pinned)
-        asset = "keep_off_icon.svg" if pinned else "keep_icon.svg"
+        asset = "pin-off.svg" if pinned else "pin.svg"
         self.pin_btn.setIcon(QIcon(tinted_pixmap(asset, self._memo_icon_color, 16)))
         self.pin_btn.setToolTip("고정 풀기" if pinned else "메모 고정")
         self.pin_btn.setEnabled(self.current_memo is not None)
@@ -3871,12 +3944,12 @@ class SlideMemoWindow(QWidget):
 
     # ----- text change / autosave -----
     def _on_text_changed(self) -> None:
-        if self.current_memo is None:
+        if self.current_memo is None or self.trash_mode:
             return
         self.autosave_timer.start(AUTOSAVE_DELAY)
 
     def _on_color_changed(self, color: str) -> None:
-        if self.current_memo is None:
+        if self.current_memo is None or self.trash_mode:
             return
         self.current_memo = self.db.update(self.current_memo.id, color=color)
         self._apply_memo_theme(self.current_memo.color)  # DB가 정규화한 최종 색
@@ -3909,7 +3982,7 @@ class SlideMemoWindow(QWidget):
     def _show_slot_menu(self, color: str, popup: MemoColorPopup | None = None) -> None:
         menu = ThemedMenu()
         edit_act = menu.add_item("색 바꾸기")
-        del_act = menu.add_item("지우기", "menu_delete.svg", danger=True)
+        del_act = menu.add_item("지우기", "trash-2.svg", danger=True)
         chosen = menu.exec(QCursor.pos())
         if chosen is None:
             return
@@ -3946,9 +4019,10 @@ class SlideMemoWindow(QWidget):
         self._save_color_slots()
 
     def save_now(self) -> None:
-        if self.current_memo is None:
-            return
         self.autosave_timer.stop()
+        # 휴지통 미리 보기 중의 에디터 내용은 current_memo의 것이 아니다
+        if self.current_memo is None or self.trash_mode:
+            return
         title = self.title_input.text()
         content = memo_document.saved_html(self.editor.document())  # 이미지 포함 위해 HTML로 저장
         if title == self.current_memo.title and content == self.current_memo.content:
@@ -4110,10 +4184,10 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
             f"{'잠깐 숨기기' if window.isVisible() else '다시 보이기'}\t{HIDE_HOTKEY_LABEL}"
         )
     )
-    side_act = menu.add_item("반대쪽 가장자리로 옮기기")
+    side_act = menu.add_item("반대쪽 가장자리로 옮기기", "arrow-left-right.svg")
     side_act.triggered.connect(window.toggle_side)
     menu.addSeparator()
-    settings_act = menu.add_item("설정", "settings_icon.svg")
+    settings_act = menu.add_item("설정", "settings.svg")
 
     def _open_settings_from_tray() -> None:
         dlg = SettingsDialog(window.db, window)

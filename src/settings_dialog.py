@@ -104,7 +104,7 @@ def _eye_button(edit: QLineEdit) -> QPushButton:
 
     def sync(shown: bool) -> None:
         edit.setEchoMode(QLineEdit.EchoMode.Normal if shown else QLineEdit.EchoMode.Password)
-        icon = A.tinted_pixmap("eye_off.svg" if shown else "eye.svg", A.current()["fg_secondary"], 16)
+        icon = A.tinted_pixmap("eye-off.svg" if shown else "eye.svg", A.current()["fg_secondary"], 16)
         button.setIcon(QIcon(icon))
 
     button.toggled.connect(sync)
@@ -131,6 +131,8 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._build_general_tab(), "일반")
         tabs.addTab(self._build_ai_tab(), "AI")
         tabs.addTab(self._build_info_tab(), "정보")
+        for index, asset in enumerate(("sliders-horizontal.svg", "sparkles.svg", "info.svg")):
+            tabs.setTabIcon(index, QIcon(A.tinted_pixmap(asset, A.current()["fg_secondary"], 16)))
         root.addWidget(tabs)
 
         root.addWidget(line())

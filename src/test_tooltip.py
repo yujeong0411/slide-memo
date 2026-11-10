@@ -13,6 +13,9 @@ import main as m
 from database import MemoDatabase
 from theme import apply as A
 from theme import widgets as W
+import database
+
+database.APP_DIR = Path(tempfile.mkdtemp())  # 아이콘 캐시가 실제 데이터 폴더에 생기지 않게 한다
 
 app = QApplication([])
 A.apply_theme(app, "light")
