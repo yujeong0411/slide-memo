@@ -47,7 +47,7 @@ from PyQt6.QtCore import QEvent, QMimeData, QPoint, QRect, Qt  # noqa: E402
 from PyQt6.QtGui import QColor, QGuiApplication, QImage, QPainter, QPixmap  # noqa: E402
 from PyQt6.QtWidgets import (  # noqa: E402
     QApplication, QColorDialog, QDialog, QInputDialog, QLabel, QMenu, QMessageBox,
-    QPushButton, QTabWidget, QToolTip, QWidget,
+    QPushButton, QTabWidget, QWidget,
 )
 
 for _n, _v in (("APP_DIR", tmp), ("IMAGES_DIR", tmp / "images")):
@@ -404,11 +404,11 @@ def capture(win, db, tray, env):
         save(flat(grab_unshown(tb._make_date_popup())), "43_popup_datetime", "자체 팝업", "서식바 달력", "memo_popups.py DatePopup")
 
     def tooltip():
-        QToolTip.showText(QPoint(100, 100), "새 메모 (Ctrl+N)", win.new_tab_btn)
+        tips = M.install_tooltips(QApplication.instance())
+        tips.show_for(win.new_tab_btn)
         pump()
-        tips = [w for w in QApplication.topLevelWidgets() if w.objectName() == "qtooltip_label"]
-        save(flat(tips[0].grab()), "44_tooltip", "툴팁", "버튼에 마우스 올림", "main.py:347 STYLE QToolTip")
-        QToolTip.hideText()
+        save(tips.tip.grab(), "44_tooltip", "툴팁", "버튼에 마우스 올림", "widgets.py _AppToolTip")
+        tips.hide_tip()
 
     def menus():
         expanded("sunrise")

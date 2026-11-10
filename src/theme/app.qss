@@ -1,14 +1,7 @@
 /* 앱 껍데기: 설정, 대화창, 메뉴, 툴팁. 값은 tokens.py에서 온다.
    메인 창 안쪽 부품이 영향받지 않게 입력·단추 규칙은 QDialog 아래로 한정한다. */
 
-QToolTip {
-    background: $contrast;
-    color: $white;
-    border: none;
-    border-radius: ${r_control}px;
-    padding: 6px 8px;
-    font-size: ${caption_px}px;
-}
+QLabel#appToolTip { background: transparent; color: $white; }
 
 /* ----- 메뉴 (ThemedMenu가 그리고, 여기서는 크기만 정한다. 입력 칸 기본 메뉴는 그대로 쓴다) ----- */
 QMenu {
@@ -59,11 +52,12 @@ QLabel#trashBadge {
     color: $fg_secondary;
     font-size: ${label_px}px;
     font-weight: 500;
-    min-height: 20px;
-    max-height: 20px;
+    border: 2px solid $bg_canvas;
+    min-height: 16px;
+    max-height: 16px;
     min-width: 8px;
     border-radius: 10px;
-    padding: 0 6px;
+    padding: 0 4px;
 }
 
 /* ----- 떠 있는 카드: 배너, 녹음 줄, AI 진행 ----- */

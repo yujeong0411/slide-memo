@@ -56,7 +56,7 @@ Tab.side = "right"
 _probe = Tab(memo())
 assert _probe.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Ignored
 assert _probe.minimumWidth() == 0
-assert _probe.toolTip() == "t"
+assert _probe.tooltip_request() is None, "다 보이는 제목은 툴팁을 띄우지 않는다"
 
 # 세워 쌓기: 다 안 들어가면 끝을 말줄임, 툴팁엔 전체 제목 (9장 2)
 from PyQt6.QtGui import QFontMetrics  # noqa: E402

@@ -1,6 +1,7 @@
 ﻿"""Slide Memo - Windows 데스크탑용 슬라이드 메모장."""
 from __future__ import annotations
 
+import os
 import re
 import sys
 from datetime import datetime
@@ -86,7 +87,6 @@ from PyQt6.QtWidgets import (
     QTextBrowser,
     QTextEdit,
     QToolButton,
-    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -130,8 +130,10 @@ from theme.widgets import (
     make_button,
     message_box,
     notify,
+    install_tooltips,
     role_label,
     tip,
+    tooltip_visible,
 )
 
 
@@ -273,7 +275,28 @@ class MemoTabButton(QPushButton):
         self.setMinimumWidth(0)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
-        self.setToolTip(self.memo_title)  # 긴 제목은 잘리므로 전체를 보여 준다
+
+    def _title_lines(self, font: QFont) -> tuple[list[str], int]:
+        """지금 크기에서 보이는 줄과 한 줄 길이."""
+        start = self.TEXT_PADDING + (self.PIN_ICON_SIZE + self.PIN_GAP if self.is_pinned else 0)
+        length = max(1, self.height() - start - self.TEXT_PADDING)
+        lines = MemoTabButton.wrap_title(
+            self.memo_title, QFontMetrics(font), length, MemoTabButton.line_count(self.width())
+        )
+        return lines, length
+
+    def _tab_font(self) -> QFont:
+        font = theme_apply.base_font("label")
+        if self._selected:
+            font.setWeight(QFont.Weight.Bold)
+        return font
+
+    def tooltip_request(self) -> tuple[str, str] | None:
+        """제목이 잘렸을 때만 창 안쪽에 전체 제목을 보여 준다."""
+        shown = "".join("".join(self._title_lines(self._tab_font())[0]).split())
+        if shown == "".join(self.memo_title.split()):
+            return None
+        return self.memo_title, "left" if MemoTabButton.side == "right" else "right"
 
     def update_style(self, selected: bool) -> None:
         self._selected = selected
@@ -312,19 +335,14 @@ class MemoTabButton(QPushButton):
 
         content_left = 0 if side == "right" else self.BAND_WIDTH
         center_x = content_left + (self.width() - self.BAND_WIDTH) / 2
-        font = theme_apply.base_font("label")
-        if self._selected:
-            font.setWeight(QFont.Weight.Bold)
+        font = self._tab_font()
         start = self.TEXT_PADDING
         if self.is_pinned:  # 읽는 방향의 시작 쪽
             size = self.PIN_ICON_SIZE
             pin = MemoTabButton._pin_pixmap(t["memo_fg_secondary"], size)
             painter.drawPixmap(int(center_x - size / 2), start, pin)
             start += size + self.PIN_GAP
-        length = max(1, self.height() - start - self.TEXT_PADDING)
-        lines = MemoTabButton.wrap_title(
-            self.memo_title, QFontMetrics(font), length, MemoTabButton.line_count(self.width())
-        )
+        lines, length = self._title_lines(font)
 
         # 시계방향 90도: 위에서 아래로 읽고, 첫 줄이 오른쪽이다 (양쪽 가장자리 모두 같다)
         painter.setFont(font)
@@ -1820,7 +1838,7 @@ class SlideMemoWindow(QWidget):
         return (
             QApplication.activePopupWidget() is not None
             or QApplication.activeModalWidget() is not None
-            or QToolTip.isVisible()  # 툴팁도 topmost 창이라 순서 싸움에 진다
+            or tooltip_visible()  # 툴팁도 topmost 창이라 순서 싸움에 진다
             or (self._guide is not None and self._guide.isVisible())
         )
 
@@ -1884,7 +1902,7 @@ class SlideMemoWindow(QWidget):
         saved_family = self.db.get_setting_str("app_font_family", "")
         saved_size = self.db.get_setting_int("app_font_size", T.MEMO_BODY_DEFAULT_PT)
         family = saved_family if saved_family and saved_family in families else T.FONT_FAMILY
-        self.editor_font = QFont(family, saved_size)
+        self.editor_font = theme_apply.memo_font(family, saved_size)
         # 메모 탭의 회전 텍스트도 같은 family 사용 (크기는 paintEvent에서 작게 고정)
         MemoTabButton.app_font_family = self.editor_font.family()
 
@@ -1918,7 +1936,7 @@ class SlideMemoWindow(QWidget):
         self.editor.setTextCursor(restored)
         self.editor.blockSignals(False)
         # 위젯 + 문서 기본 폰트 (서식 없는 새 입력에도 적용)
-        memo_font = QFont(family, size)
+        memo_font = theme_apply.memo_font(family, size)
         self.editor.document().setDefaultFont(memo_font)
         self.editor.setFont(memo_font)
         # 메모 객체 + DB 저장 + 탭 갱신
@@ -2178,7 +2196,10 @@ class SlideMemoWindow(QWidget):
         self.hide_btn = bar_button("", tip("잠깐 숨기기", HIDE_HOTKEY_LABEL), self.hide_bar)
         self.trash_btn = bar_button("delete_icon.svg", "휴지통", self._toggle_trash_mode)
         # 휴지통 갯수 배지 (trash_btn 우측 상단에 absolute)
-        self._trash_badge = QLabel(self.trash_btn)
+        # 단추 위로 조금 나가므로 묶음의 자식으로 둔다. 클릭은 아래로 통과시킨다
+        self._trash_badge = QLabel(self.bar_group)
+        self._trash_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.trash_btn.installEventFilter(self)
         self._trash_badge.setObjectName("trashBadge")
         self._trash_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         theme_apply.set_tabular(self._trash_badge)
@@ -2331,6 +2352,8 @@ class SlideMemoWindow(QWidget):
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
         t = event.type()
+        if obj is getattr(self, "trash_btn", None) and t in (QEvent.Type.Move, QEvent.Type.Resize):
+            self._place_trash_badge()
         # 팝업/모달/툴팁이 떠 있으면 z-order를 건드리지 않는다. raise_()가 창
         # 그룹을 재정렬하면서 방금 뜬 것을 덮어버려 "드롭다운이 내려왔다 바로
         # 사라지는" / "툴팁이 바 뒤로 숨는" 현상이 생긴다.
@@ -3264,15 +3287,19 @@ class SlideMemoWindow(QWidget):
         if n > 0:
             self._trash_badge.setText(str(n) if n < 100 else "99+")
             self._trash_badge.adjustSize()
-            # trash_btn 우측 상단. 버튼 폭은 컬럼 폭과 같으므로 tab_width를 쓴다 —
-            # trash_btn.width()는 레이아웃 전에 Qt 기본값(640)을 돌려줘서 배지가
-            # 버튼 밖(x≈621)에 놓이고, 다음 갱신 전까지 안 보인다.
-            bw = self.tab_width
-            self._trash_badge.move(max(2, bw - self._trash_badge.width() - 2), 1)
+            self._place_trash_badge()
             self._trash_badge.show()
             self._trash_badge.raise_()
         else:
             self._trash_badge.hide()
+
+    def _place_trash_badge(self) -> None:
+        """중심을 아이콘 오른쪽 위 꼭짓점 쪽에 두고, 아이콘 아래 2/3는 가리지 않는다."""
+        button, badge = self.trash_btn.geometry(), self._trash_badge
+        icon_right = button.center().x() + BAR_ICON // 2
+        icon_top = button.center().y() - BAR_ICON // 2
+        x = min(icon_right - badge.width() // 2, self.bar_group.width() - badge.width() - 1)
+        badge.move(x, icon_top + BAR_ICON // 3 - badge.height())
 
     # ----- 휴지통 모드 -----
     def _toggle_trash_mode(self) -> None:
@@ -3600,7 +3627,7 @@ class SlideMemoWindow(QWidget):
         # 메모별 폰트 적용 (없으면 글로벌 default)
         family = memo.font_family or self.editor_font.family()
         size = memo.font_size or self.editor_font.pointSize() or T.MEMO_BODY_DEFAULT_PT
-        editor_font = QFont(family, size)
+        editor_font = theme_apply.memo_font(family, size)
         # 메모 전용 문서로 교체 (내용도 문서가 들고 온다)
         doc = self._document_for(memo)
         # 문서마다 기본 폰트를 직접 박아준다. editor.setFont()는 위젯 폰트만 바꿀 뿐
@@ -4331,7 +4358,11 @@ def main() -> int:
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
     _set_windows_app_user_model_id()
+    if sys.platform == "win32":
+        # DirectWrite는 NoSubpixelAntialias를 무시해 글자에 색 번짐이 남는다 (2.1)
+        os.environ.setdefault("QT_QPA_PLATFORM", "windows:fontengine=freetype")
     app = QApplication(sys.argv)
+    install_tooltips(app)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("Slide Memo")
     _install_translator(app)

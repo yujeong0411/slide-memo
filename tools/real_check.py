@@ -27,7 +27,7 @@ import main as M  # noqa: E402
 import settings_dialog as SD  # noqa: E402
 from PyQt6.QtCore import QPoint, QRect, Qt  # noqa: E402
 from PyQt6.QtGui import QGuiApplication  # noqa: E402
-from PyQt6.QtWidgets import QApplication, QLabel, QMessageBox, QToolTip  # noqa: E402
+from PyQt6.QtWidgets import QApplication, QLabel, QMessageBox  # noqa: E402
 from theme import apply as A  # noqa: E402
 from theme.widgets import ThemedMenu, add_box_button, message_box  # noqa: E402
 
@@ -233,12 +233,11 @@ backdrop.hide()
 wait(100)
 
 # 툴팁 마스크
-QToolTip.showText(dlg.mapToGlobal(QPoint(120, 40)), "새 메모 Ctrl+N", dlg)
+tips = M.install_tooltips(app)
+tips.show_for(dlg)
 wait(300)
-tips = [w for w in app.topLevelWidgets() if w.objectName() == "qtooltip_label"]
-print("tooltip mask empty", tips[0].mask().isEmpty(), "font", tips[0].font().family(), tips[0].font().pixelSize())
-shot(tips[0].frameGeometry().adjusted(-8, -8, 8, 8), "real_63_tooltip")
-QToolTip.hideText()
+shot(tips.tip.frameGeometry(), "real_63_tooltip")
+tips.hide_tip()
 dlg.hide()
 wait(100)
 

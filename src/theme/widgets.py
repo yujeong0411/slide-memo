@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import re
 
-from PyQt6.QtCore import QMargins, QModelIndex, QPoint, QRect, QRectF, QSize, Qt
-from PyQt6.QtGui import QAction, QColor, QFontMetrics, QKeySequence, QPainter, QPen
+from PyQt6.QtCore import QEvent, QMargins, QModelIndex, QObject, QPoint, QRect, QRectF, QSize, Qt
+from PyQt6.QtGui import QAction, QColor, QCursor, QFontMetrics, QKeySequence, QPainter, QPen
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -71,6 +71,147 @@ def _paint_soft_shadow(painter: QPainter, panel: QRectF, radius: int) -> None:
 def tip(label: str, shortcut: str) -> str:
     """툴팁: 단축키는 같은 줄에 72% 불투명도로 (4.5)."""
     return f'{label} &nbsp;<span style="color: rgba(255,255,255,0.72);">{shortcut}</span>'
+
+
+class _AppToolTip(QWidget):
+    """투명 창에 둥근 면과 앱 그림자를 그리는 툴팁 (4.5). OS 그림자는 끈다."""
+
+    PADDING_X, PADDING_Y, MAX_TEXT_WIDTH, BESIDE_GAP, CURSOR_GAP = 8, 4, 320, 8, 20
+
+    def __init__(self) -> None:
+        super().__init__(
+            None,
+            Qt.WindowType.ToolTip
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.NoDropShadowWindowHint,
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.label = QLabel()
+        self.label.setObjectName("appToolTip")
+        self.label.setFont(A.base_font("caption"))
+        self.label.setMinimumHeight(T.TYPE["caption"][1])
+        layout = QVBoxLayout(self)
+        m = _FLOAT_MARGINS
+        layout.setContentsMargins(
+            m.left() + self.PADDING_X, m.top() + self.PADDING_Y,
+            m.right() + self.PADDING_X, m.bottom() + self.PADDING_Y,
+        )
+        layout.addWidget(self.label)
+
+    def set_text(self, text: str) -> None:
+        self.label.setWordWrap(False)
+        self.label.setMinimumWidth(0)
+        self.label.setMaximumWidth(16777215)
+        self.label.setText(text)
+        if self.label.sizeHint().width() > self.MAX_TEXT_WIDTH:
+            self.label.setWordWrap(True)
+            self.label.setFixedWidth(self.MAX_TEXT_WIDTH)
+        self.layout().invalidate()
+        self.adjustSize()
+
+    def place(self, widget: QWidget, beside: str | None) -> None:
+        """beside가 있으면 위젯 옆 8px, 세로 가운데. 없으면 마우스 아래."""
+        m = _FLOAT_MARGINS
+        face_w = self.width() - m.left() - m.right()
+        face_h = self.height() - m.top() - m.bottom()
+        area = widget.screen().availableGeometry()
+        if beside is not None:
+            target = QRect(widget.mapToGlobal(QPoint(0, 0)), widget.size())
+            x = (
+                target.left() - self.BESIDE_GAP - face_w
+                if beside == "left"
+                else target.right() + 1 + self.BESIDE_GAP
+            )
+            y = target.center().y() - face_h // 2
+        else:
+            cursor = QCursor.pos()
+            x, y = cursor.x(), cursor.y() + self.CURSOR_GAP
+            if y + face_h > area.bottom():
+                y = cursor.y() - self.CURSOR_GAP - face_h
+        x = max(area.left(), min(x, area.right() - face_w + 1))
+        y = max(area.top(), min(y, area.bottom() - face_h + 1))
+        self.move(x - m.left(), y - m.top())
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        panel = QRectF(self.rect().marginsRemoved(_FLOAT_MARGINS))
+        radius = T.RADIUS["control"]
+        _paint_soft_shadow(painter, panel, radius)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(A.qcolor(A.current()["contrast"]))
+        painter.drawRoundedRect(panel, radius, radius)
+        painter.end()
+
+
+class _ToolTipManager(QObject):
+    """앱의 모든 ToolTip 이벤트를 가로채 _AppToolTip으로 띄운다.
+    지연(500ms)은 Qt의 대기 타이머(_AppStyle)가 그대로 맡는다.
+    위젯에 tooltip_request()가 있으면 (글, 놓을 쪽) 또는 None을 돌려받는다."""
+
+    _HIDE_ON_ANY = (
+        QEvent.Type.MouseButtonPress,
+        QEvent.Type.MouseButtonDblClick,
+        QEvent.Type.Wheel,
+        QEvent.Type.KeyPress,
+    )
+
+    def __init__(self, parent: QObject) -> None:
+        super().__init__(parent)
+        self.tip = _AppToolTip()
+        self.owner: QWidget | None = None
+
+    def hide_tip(self) -> None:
+        self.owner = None
+        self.tip.hide()
+
+    def show_for(self, widget: QWidget) -> bool:
+        request = getattr(widget, "tooltip_request", None)
+        if request is None:
+            text, beside = widget.toolTip(), None
+            if not text:
+                return False
+        else:
+            answer = request()
+            if answer is None:
+                self.hide_tip()
+                return True
+            text, beside = answer
+        if self.owner is not widget:
+            widget.destroyed.connect(self.hide_tip)
+        self.owner = widget
+        self.tip.set_text(text)
+        self.tip.place(widget, beside)
+        self.tip.show()
+        return True
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:  # noqa: N802
+        kind = event.type()
+        if kind == QEvent.Type.ToolTip:
+            return isinstance(obj, QWidget) and self.show_for(obj)
+        if self.owner is not None and (
+            kind in self._HIDE_ON_ANY
+            or (obj is self.owner and kind in (QEvent.Type.Leave, QEvent.Type.Hide))
+        ):
+            self.hide_tip()
+        return False
+
+
+_tooltips: _ToolTipManager | None = None
+
+
+def install_tooltips(app: QApplication) -> _ToolTipManager:
+    global _tooltips
+    if _tooltips is None:
+        _tooltips = _ToolTipManager(app)
+        app.installEventFilter(_tooltips)
+    return _tooltips
+
+
+def tooltip_visible() -> bool:
+    return _tooltips is not None and _tooltips.tip.isVisible()
 
 
 class ThemedMenu(QMenu):

@@ -6,17 +6,15 @@ import sys
 from pathlib import Path
 from string import Template
 
-from PyQt6.QtCore import QEvent, QObject, QRectF, QSize, Qt
+from PyQt6.QtCore import QEvent, QObject, QSize, Qt
 from PyQt6.QtGui import (
     QColor,
     QFont,
     QGuiApplication,
     QIcon,
     QPainter,
-    QPainterPath,
     QPalette,
     QPixmap,
-    QRegion,
 )
 from PyQt6.QtWidgets import QApplication, QDialogButtonBox, QProxyStyle, QStyle, QWidget
 
@@ -29,7 +27,7 @@ _QSS_SOURCES: dict[str, str] = {}
 _RGBA_RE = re.compile(r"rgba\((\d+),(\d+),(\d+),([\d.]+)\)")
 _TINT_CACHE: dict[tuple[str, str, int, float], QPixmap] = {}
 _QSS_ICONS = {"chevron_down": "fg_secondary", "chevron_up": "fg_secondary", "check": "on_accent"}
-_CLASS_FONTS = {"QMenu": "body", "QMessageBox": "body", "QTipLabel": "caption"}
+_CLASS_FONTS = {"QMenu": "body", "QMessageBox": "body"}
 
 
 def resource_path(name: str) -> Path:
@@ -91,9 +89,20 @@ def base_font(kind: str = "body") -> QFont:
     font.setPixelSize(px)
     font.setWeight(QFont.Weight(weight))
     font.setLetterSpacing(QFont.SpacingType.PercentageSpacing, T.LETTER_SPACING_PERCENT)
-    font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
-    font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
+    return refine_font(font)
+
+
+def refine_font(font: QFont) -> QFont:
+    """회색조로 다듬는다 (2.1). 실제 회색조는 main()의 FreeType 글꼴 엔진이 만든다."""
+    font.setHintingPreference(QFont.HintingPreference.PreferVerticalHinting)
+    font.setStyleStrategy(
+        QFont.StyleStrategy.PreferAntialias | QFont.StyleStrategy.NoSubpixelAntialias
+    )
     return font
+
+
+def memo_font(family: str, point_size: int) -> QFont:
+    return refine_font(QFont(family, point_size))
 
 
 def tabular_font(font: QFont) -> QFont:
@@ -145,19 +154,15 @@ class _AppStyle(QProxyStyle):
 
 class _WindowPolisher(QObject):
     """Qt가 직접 만드는 창에 글꼴을 준다. 클래스별 시스템 글꼴은 테마 변경 때 되돌아가므로
-    뜰 때마다 지정한다. 툴팁 창은 투명 처리가 안 먹어 마스크로 모서리를 둥글게 깎는다."""
+    뜰 때마다 지정한다."""
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802
         kind = event.type()
-        if kind not in (QEvent.Type.Polish, QEvent.Type.Resize):
+        if kind != QEvent.Type.Polish:
             return False
         class_name = obj.metaObject().className()
         if kind == QEvent.Type.Polish and class_name in _CLASS_FONTS:
             obj.setFont(base_font(_CLASS_FONTS[class_name]))
-        elif kind == QEvent.Type.Resize and class_name == "QTipLabel":
-            path = QPainterPath()
-            path.addRoundedRect(QRectF(obj.rect()), T.RADIUS["control"], T.RADIUS["control"])
-            obj.setMask(QRegion(path.toFillPolygon().toPolygon()))
         return False
 
 
