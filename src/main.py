@@ -10,6 +10,7 @@ from PyQt6.QtCore import (
     Qt,
     QEasingCurve,
     QEvent,
+    QLibraryInfo,
     QMimeData,
     QObject,
     QPoint,
@@ -18,11 +19,11 @@ from PyQt6.QtCore import (
     QSize,
     QThread,
     QTimer,
+    QTranslator,
     QUrl,
     pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QAction,
     QBrush,
     QColor,
     QDesktopServices,
@@ -59,12 +60,10 @@ from PyQt6.QtWidgets import (
     QGraphicsOpacityEffect,
     QGridLayout,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLayout,
     QLineEdit,
     QListWidget,
-    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -92,10 +91,15 @@ from database import (
     MemoVersion,
     normalize_color,
 )
+from theme import apply as theme_apply
+from theme import tokens as T
+from theme.apply import resource_path as _resource_path
+from theme.apply import tinted_pixmap
+from theme.widgets import AppDialog, ThemedMenu, add_box_button, confirm, message_box, notify, role_label
 
 
 # ----- 상수 -----
-TAB_WIDTH = 36          # 인덱스 가로 (기본값; 설정에서 조절)
+TAB_WIDTH = T.TAB_WIDTH_DEFAULT   # 인덱스 가로 (기본값; 설정에서 조절)
 TAB_WIDTH_MIN = 24
 TAB_WIDTH_MAX = 100
 EXPANDED_WIDTH = 520
@@ -105,7 +109,7 @@ AUTOSAVE_DELAY = 600
 # 메모별 undo 스택 유지 개수. 문서를 캐시해두면 메모를 전환했다 돌아와도 Ctrl+Z가
 # 살아있다. 이미지가 붙은 문서는 메모리를 먹으므로 LRU로 제한한다.
 UNDO_CACHE_SIZE = 10
-MEMO_TAB_HEIGHT = 110   # 인덱스 세로 (기본값; 설정에서 조절)
+MEMO_TAB_HEIGHT = T.TAB_HEIGHT_DEFAULT   # 인덱스 세로 (기본값; 설정에서 조절)
 MEMO_TAB_HEIGHT_MIN = 60
 MEMO_TAB_HEIGHT_MAX = 200
 NEW_TAB_HEIGHT = 38
@@ -315,40 +319,21 @@ STYLE = """
     background-color: #eceff4;
     color: #4a4a52;
 }
-QScrollBar:vertical {
+#tabScroll QScrollBar:vertical {
     background: transparent;
     width: 4px;
     margin: 0;
 }
-QScrollBar::handle:vertical {
+#tabScroll QScrollBar::handle:vertical {
     background: rgba(255,255,255,0.18);
     border-radius: 2px;
     min-height: 16px;
 }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+#tabScroll QScrollBar::add-line:vertical, #tabScroll QScrollBar::sub-line:vertical {
     height: 0;
 }
-QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+#tabScroll QScrollBar::add-page:vertical, #tabScroll QScrollBar::sub-page:vertical {
     background: transparent;
-}
-QMenu {
-    background-color: #313244;
-    color: #cdd6f4;
-    border: 1px solid #45475a;
-    padding: 4px;
-}
-QMenu::item {
-    padding: 4px 16px;
-    border-radius: 3px;
-}
-QMenu::item:selected {
-    background-color: #45475a;
-}
-QToolTip {
-    background-color: #ffffff;
-    color: #1e1e2e;
-    border: 1px solid #ccc;
-    padding: 4px 8px;
 }
 """
 
@@ -505,7 +490,7 @@ def body_stylesheet(t: dict[str, str], side: str = "right") -> str:
         padding: 6px;
         selection-background-color: {t["focus"]};
     }}
-    QTextEdit#editor QWidget {{
+    QTextEdit#editor > QWidget#qt_scrollarea_viewport {{
         background-color: {t["editor_bg"]};
     }}
     QTextEdit#editor:focus {{
@@ -573,44 +558,6 @@ def body_stylesheet(t: dict[str, str], side: str = "right") -> str:
 
 
 COLUMN_RADIUS = 8  # 탭 컬럼 바깥면 라운드 (본문 라운드와 같은 값)
-
-# 메뉴 아이콘 색/크기.
-# - 색: 컨텍스트 메뉴는 QMenu()를 부모 없이 만들어 앱 스타일시트(어두운 QMenu 정의)를
-#   물려받지 못한다 → 실제 배경은 흰색이므로 어두운 아이콘이어야 보인다.
-# - 크기: 스타일이 PM_SmallIconSize(=16)로 요청하므로 이 값을 올려도 화면에선 안 커진다.
-#   잘 안 보이면 색을 진하게 하거나 굵은 변형(menu_*.svg)을 쓴다.
-MENU_ICON_COLOR = "#1e1e2e"
-MENU_ICON_SIZE = 16
-
-_TINT_CACHE: dict[tuple[str, str, int], QPixmap] = {}
-
-
-def tinted_pixmap(asset_name: str, color: str, size: int) -> QPixmap:
-    """SVG 아이콘을 원하는 색으로 물들여 반환 (결과는 캐시).
-
-    Material Symbols SVG는 fill이 고정이라 어두운 배경 위에서는 그대로 쓸 수 없다.
-    렌더한 뒤 SourceIn 합성으로 색만 덮어씌운다.
-    """
-    key = (asset_name, color, size)
-    cached = _TINT_CACHE.get(key)
-    if cached is not None:
-        return cached
-    base = QIcon(str(_asset(asset_name))).pixmap(size, size)
-    tinted = QPixmap(base.size())
-    tinted.fill(Qt.GlobalColor.transparent)
-    p = QPainter(tinted)
-    p.drawPixmap(0, 0, base)
-    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-    p.fillRect(tinted.rect(), QColor(color))
-    p.end()
-    _TINT_CACHE[key] = tinted
-    return tinted
-
-
-def menu_icon(asset_name: str) -> QIcon:
-    """어두운 컨텍스트 메뉴용 아이콘."""
-    return QIcon(tinted_pixmap(asset_name, MENU_ICON_COLOR, MENU_ICON_SIZE))
-
 
 def _outer_radius_qss(side: str, *, top: bool, bottom: bool) -> str:
     """탭 컬럼 요소의 바깥면 모서리를 둥글게 하는 QSS 조각.
@@ -834,44 +781,17 @@ class RichPasteTextEdit(QTextEdit):
         if has_image and has_text:
             image = source.imageData()
             if isinstance(image, QImage) and not image.isNull():
-                from PyQt6.QtWidgets import QDialog, QHBoxLayout, QPushButton, QLabel, QVBoxLayout
-
-                dlg = QDialog(self.window())
-                dlg.setWindowTitle("붙여넣기 형식 선택")
-                dlg.setWindowFlags(
-                    Qt.WindowType.Dialog | Qt.WindowType.WindowStaysOnTopHint
-                )
-                dlg.setStyleSheet(
-                    "QDialog { background: #f5f5f5; }"
-                    "QLabel { color: #222; font-size: 10pt; }"
-                    "QPushButton { background: #e0e0e0; color: #222; border: 1px solid #bbb;"
-                    "  border-radius: 4px; padding: 6px 16px; font-size: 10pt; }"
-                    "QPushButton:hover { background: #c8c8c8; }"
-                )
-                vbox = QVBoxLayout(dlg)
-                vbox.setContentsMargins(16, 12, 16, 12)
-                vbox.setSpacing(12)
-                vbox.addWidget(QLabel("붙여넣기 형식을 선택하세요:"))
-                hbox = QHBoxLayout()
-                hbox.setSpacing(8)
-                btn_text = QPushButton("텍스트로 붙여넣기")
-                btn_img = QPushButton("이미지로 붙여넣기")
-                hbox.addWidget(btn_text)
-                hbox.addWidget(btn_img)
-                vbox.addLayout(hbox)
-
+                dlg = AppDialog("어떤 형식으로 붙여넣을까요?", self.window())
+                dlg.setWindowFlags(dlg.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+                dlg.body.addWidget(role_label("복사한 내용에 글자와 이미지가 함께 들어 있어요.", "description"))
                 result = [None]
 
-                def _pick_text():
-                    result[0] = "text"
+                def _pick(kind: str) -> None:
+                    result[0] = kind
                     dlg.accept()
 
-                def _pick_img():
-                    result[0] = "image"
-                    dlg.accept()
-
-                btn_text.clicked.connect(_pick_text)
-                btn_img.clicked.connect(_pick_img)
+                dlg.add_button("텍스트로 붙여넣기").clicked.connect(lambda: _pick("text"))
+                dlg.add_button("이미지로 붙여넣기", "primary").clicked.connect(lambda: _pick("image"))
                 dlg.exec()
 
                 if result[0] == "text":
@@ -919,104 +839,95 @@ class RichPasteTextEdit(QTextEdit):
         self.textCursor().insertImage(fmt)
 
 
-class LinkDialog(QDialog):
-    """링크 삽입 다이얼로그 (표시 텍스트 + URL)."""
+def _labeled_field(dlg: AppDialog, text: str, field: QWidget) -> None:
+    """입력 칸: 라벨을 위에 두고 사이 6 (4.7)."""
+    box = QVBoxLayout()
+    box.setSpacing(6)
+    box.addWidget(QLabel(text))
+    box.addWidget(field)
+    dlg.body.addLayout(box)
 
-    def __init__(self, display_text: str = "", parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("링크 삽입")
-        self.setMinimumWidth(320)
-        layout = QFormLayout(self)
+
+class LinkDialog(AppDialog):
+    """링크 넣기. 글자를 선택하고 열면 주소만 묻는다."""
+
+    def __init__(
+        self, display_text: str = "", parent: QWidget | None = None, *, show_text: bool = True
+    ) -> None:
+        super().__init__("링크 넣기", parent)
         self.text_edit = QLineEdit(display_text)
-        self.text_edit.setPlaceholderText("표시 텍스트")
         self.url_edit = QLineEdit()
-        self.url_edit.setPlaceholderText("https://...")
-        layout.addRow("표시 텍스트:", self.text_edit)
-        layout.addRow("URL:", self.url_edit)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        self.url_edit.setPlaceholderText("https://")
+        if show_text:
+            _labeled_field(self, "보이는 글자", self.text_edit)
+        _labeled_field(self, "주소", self.url_edit)
+        self.add_actions("넣기")
 
     def values(self) -> tuple[str, str]:
         return self.text_edit.text().strip(), self.url_edit.text().strip()
 
 
-class TableDialog(QDialog):
-    """표 삽입 다이얼로그 (행/열/헤더)."""
+class TableDialog(AppDialog):
+    """표 넣기 (행/열/머리글)."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("표 삽입")
-        layout = QVBoxLayout(self)
+        super().__init__("표 넣기", parent)
         size_row = QHBoxLayout()
-        size_row.addWidget(QLabel("행:"))
+        size_row.setSpacing(8)
+        size_row.addWidget(QLabel("행"))
         self.rows_spin = QSpinBox()
         self.rows_spin.setRange(1, 20)
         self.rows_spin.setValue(3)
         size_row.addWidget(self.rows_spin)
         size_row.addSpacing(12)
-        size_row.addWidget(QLabel("열:"))
+        size_row.addWidget(QLabel("열"))
         self.cols_spin = QSpinBox()
         self.cols_spin.setRange(1, 10)
         self.cols_spin.setValue(3)
         size_row.addWidget(self.cols_spin)
         size_row.addStretch(1)
-        layout.addLayout(size_row)
-        self.header_check = QCheckBox("헤더 행 포함")
+        self.body.addLayout(size_row)
+        self.header_check = QCheckBox("머리글 행 넣기")
         self.header_check.setChecked(True)
-        layout.addWidget(self.header_check)
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("삽입")
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        self.body.addWidget(self.header_check)
+        self.add_actions("넣기")
 
     def values(self) -> tuple[int, int, bool]:
         return self.rows_spin.value(), self.cols_spin.value(), self.header_check.isChecked()
 
 
-class VersionDialog(QDialog):
+class VersionDialog(AppDialog):
     """이전 버전 목록 + 미리보기. 선택한 버전으로 되돌린다."""
 
     def __init__(self, versions: list[MemoVersion], parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("이전 버전")
-        self.resize(660, 440)
+        super().__init__("이전 버전 보기", parent)
+        self.setFixedWidth(660)
+        self.resize(660, 480)
         self._versions = versions
 
-        layout = QVBoxLayout(self)
-        layout.addWidget(
-            QLabel(
-                f"자동 저장된 이전 내용 {len(versions)}개입니다.\n"
-                "되돌려도 지금 내용이 버전으로 남으므로 다시 취소할 수 있습니다."
+        self.body.addWidget(
+            role_label(
+                f"자동 저장된 이전 내용이 {len(versions)}개 있어요. "
+                "되돌려도 지금 내용이 버전으로 남으니 다시 취소할 수 있어요.",
+                "description",
             )
         )
 
         row = QHBoxLayout()
+        row.setSpacing(8)
         self.list = QListWidget()
         self.list.setFixedWidth(180)
+        self.list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        theme_apply.set_tabular(self.list)
         for v in versions:
             self.list.addItem(_version_label(v))
         row.addWidget(self.list)
         self.preview = QTextBrowser()
         self.preview.setOpenExternalLinks(False)
         row.addWidget(self.preview, 1)
-        layout.addLayout(row)
+        self.body.addLayout(row, 1)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        self._ok_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
-        self._ok_btn.setText("이 버전으로 되돌리기")
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("닫기")
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        self._ok_btn = self.add_actions("이 버전으로 되돌리기", "닫기")
 
         self.list.currentRowChanged.connect(self._on_row_changed)
         if versions:
@@ -1873,24 +1784,14 @@ class FormatToolbar(QWidget):
         cursor = self.editor.textCursor()
         selected = cursor.selectedText().strip()
 
-        if selected:
-            url, ok = QInputDialog.getText(
-                self, "링크 삽입", "URL:", text=""
-            )
-            if not ok or not url.strip():
-                self.editor.setFocus()
-                return
-            url = url.strip()
-            display = selected
-        else:
-            dlg = LinkDialog(parent=self)
-            if dlg.exec() != QDialog.DialogCode.Accepted:
-                self.editor.setFocus()
-                return
-            display, url = dlg.values()
-            if not url:
-                self.editor.setFocus()
-                return
+        dlg = LinkDialog(selected, self.window(), show_text=not selected)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            self.editor.setFocus()
+            return
+        display, url = dlg.values()
+        if not url:
+            self.editor.setFocus()
+            return
 
         if url and not url.startswith(("http://", "https://", "ftp://", "mailto:")):
             url = "https://" + url
@@ -1918,7 +1819,7 @@ class FormatToolbar(QWidget):
 
     # ----- 표 삽입 -----
     def insert_table(self) -> None:
-        dlg = TableDialog(parent=self)
+        dlg = TableDialog(parent=self.window())
         if dlg.exec() != QDialog.DialogCode.Accepted:
             self.editor.setFocus()
             return
@@ -3170,22 +3071,19 @@ class SlideMemoWindow(QWidget):
     def _show_editor_context_menu(self, pos) -> None:
         from ai_features import AI_FEATURES
 
-        menu = self.editor.createStandardContextMenu()
+        menu = ThemedMenu()
+        menu.adopt_standard_actions(self.editor.createStandardContextMenu())
 
-        ai_enabled = self.db.get_setting_str("ai_enabled", "0") == "1"
-        if ai_enabled:
+        if self.db.get_setting_str("ai_enabled", "0") == "1":
             menu.addSeparator()
-            ai_menu = menu.addMenu("✨ AI")
+            ai_menu = menu.add_submenu("AI로 다듬기", "menu_ai.svg")
             for key, info in AI_FEATURES.items():
-                act = QAction(info["label"], ai_menu)
+                act = ai_menu.add_item(info["label"])
                 act.triggered.connect(lambda _checked, k=key: self._run_ai_feature(k))
-                ai_menu.addAction(act)
 
             if self._ai_pending is not None:
                 menu.addSeparator()
-                cancel_act = QAction("AI 취소 (ESC)", menu)
-                cancel_act.triggered.connect(self._cancel_ai)
-                menu.addAction(cancel_act)
+                menu.add_item("AI 취소", shortcut="Esc").triggered.connect(self._cancel_ai)
 
         menu.exec(self.editor.mapToGlobal(pos))
 
@@ -3424,29 +3322,12 @@ class SlideMemoWindow(QWidget):
         feature = AI_FEATURES.get(feature_key, {})
         label = feature.get("label", feature_key)
 
-        dlg = QDialog(self)
-        dlg.setWindowTitle(f"AI {label} — 미리보기")
-        dlg.resize(480, 360)
-        dlg.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
-        layout = QVBoxLayout(dlg)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
-
-        info_lbl = QLabel(f"<b>{label}</b> 결과를 적용하시겠습니까?")
-        layout.addWidget(info_lbl)
-
+        dlg = AppDialog(f"{label} 결과를 넣을까요?", self)
+        dlg.resize(500, 360)
         preview = QTextBrowser()
         preview.setPlainText(result)
-        layout.addWidget(preview, stretch=1)
-
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        btns.button(QDialogButtonBox.StandardButton.Ok).setText("적용")
-        btns.button(QDialogButtonBox.StandardButton.Cancel).setText("취소")
-        btns.accepted.connect(dlg.accept)
-        btns.rejected.connect(dlg.reject)
-        layout.addWidget(btns)
+        dlg.body.addWidget(preview, 1)
+        dlg.add_actions("넣기")
 
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._apply_ai_result(feature_key, result)
@@ -3863,19 +3744,16 @@ class SlideMemoWindow(QWidget):
     def _show_column_menu(self, pos) -> None:
         """바(탭 열) 우클릭 메뉴. 상시 아이콘에서 뺀 기능들이 여기에 모인다.
         (설정은 트레이 아이콘 우클릭 메뉴에도 그대로 있다)"""
-        menu = QMenu()
-        settings_act = menu.addAction(menu_icon("settings_icon.svg"), "설정")
+        menu = ThemedMenu()
+        menu.add_section("메모장")
+        settings_act = menu.add_item("설정", "settings_icon.svg")
         n = self.db.count_trashed()
-        trash_act = menu.addAction(
-            menu_icon("menu_delete.svg"),
-            f"휴지통 ({n})" if n else "휴지통 (비어 있음)",
-        )
+        trash_act = menu.add_item(f"휴지통 보기 ({n})" if n else "휴지통 보기", "menu_delete.svg")
         trash_act.setEnabled(n > 0)
         menu.addSeparator()
-        side_act = menu.addAction("왼쪽 / 오른쪽 가장자리 전환")
-        hide_act = menu.addAction(
-            f"잠깐 숨기기 ({HIDE_HOTKEY_LABEL} / 트레이 클릭으로 복귀)"
-        )
+        menu.add_section("위치")
+        side_act = menu.add_item("반대쪽 가장자리로 옮기기")
+        hide_act = menu.add_item("잠깐 숨기기", shortcut=HIDE_HOTKEY_LABEL)
         chosen = menu.exec(self.tab_column.mapToGlobal(pos))
         self.raise_()
         if chosen == settings_act:
@@ -4012,7 +3890,7 @@ class SlideMemoWindow(QWidget):
         if self.trash_mode:
             return
         if self.db.count_trashed() == 0:
-            QMessageBox.information(self, "휴지통", "휴지통이 비어 있습니다.")
+            notify(self, "휴지통이 비어 있어요")
             return
         self.save_now()
         self.trash_mode = True
@@ -4077,14 +3955,10 @@ class SlideMemoWindow(QWidget):
         n = self.db.count_trashed()
         if n == 0:
             return
-        reply = QMessageBox.question(
-            self,
-            "휴지통 전체 비우기",
-            f"휴지통의 모든 메모({n}개)를 영구 삭제합니다.\n"
-            "첨부 이미지도 함께 삭제되며 복구할 수 없습니다.\n계속할까요?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+        if not confirm(
+            self, "휴지통을 비울까요?",
+            f"메모 {n}개를 지워요. 비운 메모는 되돌릴 수 없습니다.", "비우기", danger=True,
+        ):
             return
         for memo in self.db.list_trashed_memos():
             _delete_memo_images(memo.content)
@@ -4106,14 +3980,7 @@ class SlideMemoWindow(QWidget):
                 memo = self.db.get(memo_id)
             except KeyError:
                 return
-            reply = QMessageBox.question(
-                self,
-                "영구 삭제 확인",
-                f"'{memo.title or '(제목 없음)'}' 메모를 완전히 삭제할까요?\n"
-                "첨부 이미지도 함께 삭제되며 복구할 수 없습니다.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if reply != QMessageBox.StandardButton.Yes:
+            if not self._confirm_purge(memo):
                 return
             # 삭제 전 이웃 메모 (일반 모드와 같은 패턴)
             trashed = self.db.list_trashed_memos()
@@ -4209,15 +4076,23 @@ class SlideMemoWindow(QWidget):
         # 접힌 상태에서 휴지통 메모를 누른 경우 본문을 펼친다
         self.expand()
 
+    def _confirm_purge(self, memo: Memo) -> bool:
+        return confirm(
+            self, "메모를 완전히 지울까요?",
+            f"'{memo.title or '(제목 없음)'}' 메모와 첨부 이미지를 지워요. "
+            "지운 메모는 되돌릴 수 없습니다.",
+            "지우기", danger=True,
+        )
+
     def _show_trash_menu(self, memo_id: int, button: QPushButton) -> None:
         try:
             memo = self.db.get(memo_id)
         except KeyError:
             return
-        menu = QMenu()
-        restore_act = menu.addAction(menu_icon("menu_restore.svg"), "복원")
+        menu = ThemedMenu()
+        restore_act = menu.add_item("복원하기", "menu_restore.svg")
         menu.addSeparator()
-        purge_act = menu.addAction(menu_icon("menu_delete_forever.svg"), "영구 삭제")
+        purge_act = menu.add_item("영구 삭제", "menu_delete_forever.svg", danger=True)
         chosen = menu.exec(button.mapToGlobal(button.rect().center()))
         self.raise_()
 
@@ -4227,14 +4102,7 @@ class SlideMemoWindow(QWidget):
                 self._trash_preview_id = None
             self._after_trash_change()
         elif chosen == purge_act:
-            reply = QMessageBox.question(
-                self,
-                "영구 삭제 확인",
-                f"'{memo.title or '(제목 없음)'}' 메모를 완전히 삭제할까요?\n"
-                "첨부 이미지도 함께 삭제되며 복구할 수 없습니다.",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if reply != QMessageBox.StandardButton.Yes:
+            if not self._confirm_purge(memo):
                 return
             # 삭제 전 이웃 메모 — 미리보기 자동 이동용
             trashed = self.db.list_trashed_memos()
@@ -4429,16 +4297,15 @@ class SlideMemoWindow(QWidget):
             memo = self.db.get(memo_id)
         except KeyError:
             return
-        menu = QMenu()
-        # 아이콘은 상단 버튼과 같은 Material Symbols. 메뉴 배경이 어두워 틴트가 필요하다.
-        pin_act = menu.addAction(
-            menu_icon("menu_keep_off.svg" if memo.is_pinned else "menu_keep.svg"),
-            "고정 해제" if memo.is_pinned else "고정",
+        menu = ThemedMenu()
+        pin_act = menu.add_item(
+            "고정 풀기" if memo.is_pinned else "고정",
+            "menu_keep_off.svg" if memo.is_pinned else "menu_keep.svg",
         )
-        hist_act = menu.addAction(menu_icon("menu_history.svg"), "이전 버전…")
-        export_act = menu.addAction(menu_icon("menu_export.svg"), "내보내기…")
+        hist_act = menu.add_item("이전 버전 보기", "menu_history.svg", shortcut="Ctrl+Alt+Z")
+        export_act = menu.add_item("내보내기", "menu_export.svg")
         menu.addSeparator()
-        del_act = menu.addAction(menu_icon("menu_delete.svg"), "휴지통으로 이동 (Delete)")
+        del_act = menu.add_item("휴지통으로 옮기기", "menu_delete.svg", shortcut="Delete", danger=True)
         chosen = menu.exec(button.mapToGlobal(pos))
         self.raise_()
 
@@ -4622,9 +4489,9 @@ class SlideMemoWindow(QWidget):
         self.db.set_setting_str(USER_SLOTS_KEY, "|".join(self._color_slots))
 
     def _show_slot_menu(self, dot: ColorDot) -> None:
-        menu = QMenu()
-        edit_act = menu.addAction("색 편집…")
-        del_act = menu.addAction("삭제")
+        menu = ThemedMenu()
+        edit_act = menu.add_item("색 바꾸기")
+        del_act = menu.add_item("지우기", "menu_delete.svg", danger=True)
         chosen = menu.exec(dot.mapToGlobal(dot.rect().bottomLeft()))
         self.raise_()
         if chosen == edit_act:
@@ -4828,9 +4695,7 @@ class SlideMemoWindow(QWidget):
             # 닫힌 먹통 상태가 된다. 종료는 진행하되 조용히 넘기지는 않는다 —
             # 마지막 편집이 날아가는 상황이라 사용자가 알아야 한다.
             print(f"[close] 종료 중 저장 실패: {e}")
-            QMessageBox.warning(
-                self, "저장 실패", f"마지막 내용을 저장하지 못했습니다.\n\n{e}"
-            )
+            notify(self, "마지막 내용을 저장하지 못했어요", str(e), warning=True)
         finally:
             self.db.close()
         event.accept()
@@ -4884,15 +4749,6 @@ def _delete_memo_images(html: str) -> None:
             print(f"[trash] 이미지 삭제 실패: {p.name} ({e})")
 
 
-def _resource_path(name: str) -> Path:
-    """PyInstaller --onefile 실행 시엔 sys._MEIPASS, dev 시엔 프로젝트 루트
-    (src/의 부모) — assets/, logo.ico 등이 그곳에 있다."""
-    base = Path(
-        getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent)
-    )
-    return base / name
-
-
 def _asset(name: str) -> Path:
     """assets/ 폴더 내 리소스 경로."""
     return _resource_path(f"assets/{name}")
@@ -4933,11 +4789,10 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
     tray = QSystemTrayIcon(icon, window)
     tray.setToolTip("Slide Memo")
 
-    menu = QMenu()
-    toggle_act = QAction("열기 / 접기", menu)
+    menu = ThemedMenu()
+    toggle_act = menu.add_item("열기 / 접기")
     toggle_act.triggered.connect(window.toggle)
-    menu.addAction(toggle_act)
-    hide_act = QAction(f"잠깐 숨기기 ({HIDE_HOTKEY_LABEL})", menu)
+    hide_act = menu.add_item("잠깐 숨기기", shortcut=HIDE_HOTKEY_LABEL)
 
     def _toggle_hidden() -> None:
         if window.isVisible():
@@ -4946,18 +4801,16 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
             window.show_bar()
 
     hide_act.triggered.connect(_toggle_hidden)
-    menu.addAction(hide_act)
     menu.aboutToShow.connect(
         lambda: hide_act.setText(
-            f"잠깐 숨기기 ({HIDE_HOTKEY_LABEL})" if window.isVisible()
-            else f"다시 보이기 ({HIDE_HOTKEY_LABEL})"
+            f"{'잠깐 숨기기' if window.isVisible() else '다시 보이기'}\t{HIDE_HOTKEY_LABEL}"
         )
     )
-    side_act = QAction("왼쪽 / 오른쪽 가장자리 전환", menu)
+    side_act = menu.add_item("반대쪽 가장자리로 옮기기")
     side_act.triggered.connect(window.toggle_side)
-    menu.addAction(side_act)
     menu.addSeparator()
-    settings_act = QAction("⚙ 설정", menu)
+    settings_act = menu.add_item("설정", "settings_icon.svg")
+
     def _open_settings_from_tray() -> None:
         dlg = SettingsDialog(window.db, window)
         dlg.exec()
@@ -4971,11 +4824,8 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
             window.restart_guide()
 
     settings_act.triggered.connect(_open_settings_from_tray)
-    menu.addAction(settings_act)
     menu.addSeparator()
-    quit_act = QAction("종료", menu)
-    quit_act.triggered.connect(window.request_quit)
-    menu.addAction(quit_act)
+    menu.add_item("종료").triggered.connect(window.request_quit)
     tray.setContextMenu(menu)
 
     def on_activate(reason: QSystemTrayIcon.ActivationReason) -> None:
@@ -5037,33 +4887,17 @@ class UpdateChecker(QThread):
             pass
 
 
-class UpdateDialog(QDialog):
+class UpdateDialog(AppDialog):
     def __init__(self, current: str, latest: str, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("업데이트 알림")
-        self.setMinimumWidth(300)
-        layout = QVBoxLayout(self)
-        layout.setSpacing(16)
-
-        msg = QLabel(f"새 버전이 출시되었습니다!\n\n현재  v{current}  →  최신  v{latest}")
-        msg.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(msg)
-
-        btn_row = QHBoxLayout()
-        download_btn = QPushButton("지금 다운로드")
-        download_btn.setDefault(True)
-        download_btn.clicked.connect(self._open_download)
-        later_btn = QPushButton("나중에")
-        later_btn.clicked.connect(self.reject)
-        btn_row.addWidget(download_btn)
-        btn_row.addWidget(later_btn)
-        layout.addLayout(btn_row)
+        super().__init__("새 버전이 나왔어요", parent)
+        self.body.addWidget(role_label(f"v{latest}", "badge"), 0, Qt.AlignmentFlag.AlignLeft)
+        self.body.addWidget(role_label(f"지금 쓰는 버전은 v{current}이에요.", "description"))
+        self.add_actions("업데이트하기", "나중에").clicked.connect(self._open_download)
 
     def _open_download(self) -> None:
         QDesktopServices.openUrl(
             QUrl(f"https://github.com/{_GITHUB_REPO}/releases/latest/download/SlideMemo-Setup.exe")
         )
-        self.accept()
 
 
 WHATS_NEW_KEY = "seen_whatsnew_version"
@@ -5108,18 +4942,16 @@ def _whats_new_since(seen: str) -> list[tuple[str, list[str]]]:
 def _show_welcome(window: "SlideMemoWindow", db: MemoDatabase) -> None:
     """신규 설치 첫 실행 안내. 튜토리얼을 예고 없이 시작하지 않고 먼저 물어본다.
     (업그레이드 사용자는 이 팝업 대신 '새로운 기능'을 본다)"""
-    box = QMessageBox(window)
-    box.setWindowTitle("Slide Memo 시작하기")
-    box.setIcon(QMessageBox.Icon.Information)
-    box.setText("화면 가장자리에 붙어 있는 메모장입니다.")
-    box.setInformativeText(
-        "· 탭을 클릭하면 메모가 펼쳐지고, <b>Esc</b>로 접힙니다.<br>"
-        "· 나머지 사용법을 <b>말풍선으로 짧게</b> 안내해드릴까요?"
+    box = message_box(
+        window,
+        "화면 가장자리에 붙어 있는 메모장이에요",
+        "· 탭을 누르면 메모가 펼쳐지고, <b>Esc</b>로 접혀요.<br>"
+        "· 나머지 사용법을 <b>말풍선으로 짧게</b> 안내해 드릴까요?"
         " (바 4단계 · 메모 4단계, 언제든 건너뛸 수 있어요)<br>"
-        "· 나중에 보시려면 <b>설정 → 사용법 가이드 다시 보기</b>."
+        "· 나중에 보려면 <b>설정 → 사용법 다시 보기</b>를 누르세요.",
     )
-    start_btn = box.addButton("가이드 보기", QMessageBox.ButtonRole.AcceptRole)
-    box.addButton("나중에", QMessageBox.ButtonRole.RejectRole)
+    add_box_button(box, "나중에", QMessageBox.ButtonRole.RejectRole)
+    start_btn = add_box_button(box, "가이드 보기", QMessageBox.ButtonRole.AcceptRole, "primary")
     box.setDefaultButton(start_btn)
     box.setWindowFlags(box.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     box.exec()
@@ -5142,19 +4974,17 @@ def _show_whats_new(window: "SlideMemoWindow", db: MemoDatabase, is_upgrade: boo
     if not items:
         return
     db.set_setting_str(WHATS_NEW_KEY, APP_VERSION)  # 먼저 저장 — 다시 뜨지 않게
-    box = QMessageBox(window)
-    box.setWindowTitle("새로운 기능")
-    box.setIcon(QMessageBox.Icon.Information)
-    box.setText(f"Slide Memo가 v{APP_VERSION}로 업데이트되었습니다.")
-    box.setInformativeText(
+    box = message_box(
+        window,
+        f"v{APP_VERSION}로 업데이트했어요",
         "<br>".join(
             f"<b>v{v}</b><br>" + "".join(f"&nbsp;· {ln}<br>" for ln in lines)
             for v, lines in items
-        )
+        ),
     )
     # 기존 사용자는 가이드가 생긴 줄 모른다 → 여기서 바로 볼 수 있게 한다
-    guide_btn = box.addButton("사용법 가이드 보기", QMessageBox.ButtonRole.ActionRole)
-    ok_btn = box.addButton("확인", QMessageBox.ButtonRole.AcceptRole)
+    guide_btn = add_box_button(box, "사용법 가이드 보기", QMessageBox.ButtonRole.ActionRole)
+    ok_btn = add_box_button(box, "확인", QMessageBox.ButtonRole.AcceptRole, "primary")
     box.setDefaultButton(ok_btn)
     box.setWindowFlags(box.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     box.exec()
@@ -5172,19 +5002,37 @@ def _show_palette_notice(window: "SlideMemoWindow", db: MemoDatabase, is_upgrade
     if not is_upgrade or db.get_setting_str(PALETTE_NOTICE_KEY, "") == "1":
         return
     db.set_setting_str(PALETTE_NOTICE_KEY, "1")
-    box = QMessageBox(window)
-    box.setWindowTitle("색 팔레트가 바뀌었어요")
-    box.setIcon(QMessageBox.Icon.Information)
-    box.setText("메모 색을 직접 고르고 관리할 수 있게 바뀌었습니다.")
-    box.setInformativeText(
+    box = message_box(
+        window,
+        "메모 색을 직접 고르고 관리할 수 있게 바뀌었습니다.",
         "· 기본 색은 2개만 남고, <b>+ 버튼</b>으로 원하는 색을 최대 4개까지 추가합니다.<br>"
         "· 추가한 색 위에서 <b>우클릭</b>하면 편집·삭제할 수 있어요.<br>"
         "· 직접 편집해두셨던 색은 그대로 옮겨왔습니다.<br>"
-        "· <b>기존 메모의 색은 그대로</b>입니다."
+        "· <b>기존 메모의 색은 그대로</b>입니다.",
     )
+    add_box_button(box, "확인", QMessageBox.ButtonRole.AcceptRole, "primary")
     box.setWindowFlags(box.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     box.exec()
     window._force_topmost()
+
+
+def _install_translator(app: QApplication) -> None:
+    """OK·Cancel·Undo 같은 Qt 기본 문구를 한국어로. 번역 파일이 없어도 앱은 동작한다."""
+    translator = QTranslator(app)
+    for folder in (
+        QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath),
+        str(_resource_path("PyQt6/Qt6/translations")),
+    ):
+        if translator.load("qtbase_ko", folder):
+            app.installTranslator(translator)
+            return
+
+
+def _register_fonts() -> None:
+    fonts_dir = _resource_path("assets/fonts")
+    if fonts_dir.exists():
+        for font_file in fonts_dir.glob("*.otf"):
+            QFontDatabase.addApplicationFont(str(font_file))
 
 
 def main() -> int:
@@ -5196,6 +5044,9 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("Slide Memo")
+    _install_translator(app)
+    _register_fonts()
+    theme_apply.apply_theme(app, theme_apply.system_mode())
 
     # 로딩 splash — 마퀴 progress bar로 'import + 초기화 진행 중' 신호.
     # QApplication 이후에야 뜨므로 그 이전 부트로더/import 구간은 가리지 못함.
@@ -5222,20 +5073,6 @@ def main() -> int:
     )
     splash.show()
     app.processEvents()
-    # 앱 전역 UI 폰트 — assets/fonts/의 번들 Pretendard를 우선 등록.
-    # 시스템에도 없고 번들도 못 찾으면 Qt가 OS 기본으로 fallback.
-    _fonts_dir = _resource_path("assets/fonts")
-    if _fonts_dir.exists():
-        for _font_file in _fonts_dir.glob("*.otf"):
-            QFontDatabase.addApplicationFont(str(_font_file))
-        for _font_file in _fonts_dir.glob("*.ttf"):
-            QFontDatabase.addApplicationFont(str(_font_file))
-    if "Pretendard" in set(QFontDatabase.families()):
-        _app_font = QFont("Pretendard", 10)
-        _app_font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
-        _app_font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
-        app.setFont(_app_font)
-
     app_icon = load_app_icon()
     if app_icon is not None:
         app.setWindowIcon(app_icon)

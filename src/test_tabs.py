@@ -296,7 +296,7 @@ def ink_width(w):
     return (max(cols) - min(cols) + 1) if cols else 0
 
 
-_narrow, _wide = ink_width(m.TAB_WIDTH), ink_width(m.TAB_WIDTH_MAX)
+_narrow, _wide = ink_width(36), ink_width(m.TAB_WIDTH_MAX)  # 36: 아직 한 줄인 폭
 assert _narrow > 0 and _wide > _narrow * 1.5, (_narrow, _wide)
 
 print("tabs OK")

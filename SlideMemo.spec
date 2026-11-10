@@ -31,14 +31,14 @@ def _keep_data(entry):
     # Qt 자체 번역 파일(.qm). 이 앱은 QTranslator/tr()을 쓰지 않고 한국어를
     # 파이썬 문자열로 직접 넣는다. -6.4MB
     dest = entry[0].replace('\\', '/')
-    return not dest.startswith('PyQt6/Qt6/translations/')
+    return not dest.startswith('PyQt6/Qt6/translations/') or dest.endswith('/qtbase_ko.qm')
 
 
 a = Analysis(
     ['src/main.py'],
     pathex=['src'],
     binaries=litellm_binaries + tiktoken_binaries + tiktoken_ext_binaries,
-    datas=[('logo.ico', '.'), ('logo.png', '.'), ('assets', 'assets')] + litellm_datas + tiktoken_datas + tiktoken_ext_datas,
+    datas=[('logo.ico', '.'), ('logo.png', '.'), ('assets', 'assets'), ('src/theme/*.qss', 'theme')] + litellm_datas + tiktoken_datas + tiktoken_ext_datas,
     hiddenimports=['keyring.backends', 'keyring.backends.Windows', 'tiktoken_ext', 'tiktoken_ext.openai_public'] + litellm_hiddenimports + tiktoken_hiddenimports + tiktoken_ext_hiddenimports,
     hookspath=[],
     hooksconfig={},

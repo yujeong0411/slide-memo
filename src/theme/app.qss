@@ -1,0 +1,219 @@
+/* 앱 껍데기: 설정, 대화창, 메뉴, 툴팁. 값은 tokens.py에서 온다.
+   메인 창 안쪽 부품이 영향받지 않게 입력·단추 규칙은 QDialog 아래로 한정한다. */
+
+QToolTip {
+    background: $contrast;
+    color: $white;
+    border: none;
+    border-radius: ${r_control}px;
+    padding: 6px 8px;
+    font-size: ${caption_px}px;
+}
+
+/* ----- 메뉴 (ThemedMenu가 그리고, 여기서는 크기만 정한다. 입력 칸 기본 메뉴는 그대로 쓴다) ----- */
+QMenu {
+    background: $bg_raised;
+    color: $fg;
+    border: 1px solid $line;
+    padding: 4px;
+}
+QMenu::item {
+    padding: 5px 12px 5px 32px;
+    border-radius: ${r_control}px;
+    background: transparent;
+}
+QMenu::item:selected { background: $overlay_hover; }
+QMenu::item:disabled { color: $fg_disabled; }
+QMenu::separator { height: 9px; }
+
+/* ----- 대화창 ----- */
+QDialog, QMessageBox { background: $bg_canvas; color: $fg; }
+
+QDialog QLabel[role="dialogTitle"] {
+    font-size: ${title_px}px;
+    font-weight: 700;
+    color: $fg;
+}
+QDialog QLabel[role="group"] {
+    font-size: ${label_px}px;
+    font-weight: 500;
+    color: $fg_secondary;
+}
+QDialog QLabel[role="description"] { color: $fg_secondary; }
+QDialog QLabel[role="hint"] { font-size: ${caption_px}px; color: $fg_hint; }
+QDialog QLabel[role="value"] { font-size: ${caption_px}px; color: $fg_secondary; }
+QDialog QLabel[state="error"] { color: $danger; }
+QDialog QLabel[role="badge"] {
+    background: $accent_weak;
+    color: $accent_strong;
+    font-size: ${label_px}px;
+    font-weight: 500;
+    border-radius: 10px;
+    padding: 1px 8px;
+}
+QDialog QFrame[role="line"] { background: $line; border: none; }
+
+QMessageBox QLabel#qt_msgbox_label {
+    font-size: ${title_px}px;
+    font-weight: 700;
+    color: $fg;
+    min-width: 400px;
+}
+QMessageBox QLabel#qt_msgbox_informativelabel { color: $fg_secondary; }
+
+/* ----- 단추. 테두리 1px을 늘 깔아 두어 포커스 때 색만 바뀐다 ----- */
+QDialog QPushButton {
+    background: $secondary_bg;
+    color: $fg;
+    border: 1px solid $secondary_border;
+    border-radius: ${r_control}px;
+    min-height: ${md_inner}px;
+    max-height: ${md_inner}px;
+    padding: 0 ${md_pad}px;
+    font-weight: 500;
+}
+QDialog QPushButton:hover { background: $secondary_hover; }
+QDialog QPushButton:pressed { background: $secondary_press; }
+QDialog QPushButton:focus { border-color: $focus; }
+QDialog QPushButton:disabled { color: $fg_disabled; }
+
+QDialog QPushButton[variant="primary"] {
+    background: $accent;
+    color: $on_accent;
+    border-color: transparent;
+}
+QDialog QPushButton[variant="primary"]:hover { background: $primary_hover; }
+QDialog QPushButton[variant="primary"]:pressed { background: $accent_press; }
+QDialog QPushButton[variant="primary"]:focus { border-color: $focus; }
+QDialog QPushButton[variant="primary"]:disabled { background: $bg_muted; color: $fg_disabled; }
+
+QDialog QPushButton[variant="danger"] {
+    background: $danger_fill;
+    color: $white;
+    border-color: transparent;
+}
+QDialog QPushButton[variant="danger"]:hover { background: $danger_hover; }
+QDialog QPushButton[variant="danger"]:pressed { background: $danger_press; }
+QDialog QPushButton[variant="danger"]:focus { border-color: $focus; }
+
+QDialog QPushButton[variant="icon"] {
+    background: transparent;
+    color: $fg_secondary;
+    border-color: transparent;
+    min-width: ${md_inner}px;
+    max-width: ${md_inner}px;
+    padding: 0;
+}
+QDialog QPushButton[variant="icon"]:hover { background: $overlay_hover; }
+QDialog QPushButton[variant="icon"]:pressed { background: $overlay_press; }
+QDialog QPushButton[variant="icon"]:focus { border-color: $focus; }
+
+/* ----- 입력 ----- */
+QDialog QLineEdit, QDialog QSpinBox, QDialog QComboBox {
+    background: $bg_canvas;
+    color: $fg;
+    border: 1px solid $line_control;
+    border-radius: ${r_control}px;
+    min-height: ${md_inner}px;
+    max-height: ${md_inner}px;
+    padding: 0 ${md_pad}px;
+    selection-background-color: $selection_bg;
+    selection-color: $selection_fg;
+}
+QDialog QLineEdit:focus, QDialog QSpinBox:focus, QDialog QComboBox:focus { border-color: $accent; }
+QDialog QLineEdit:disabled, QDialog QSpinBox:disabled, QDialog QComboBox:disabled {
+    color: $fg_disabled;
+    border-color: $line_strong;
+}
+
+QDialog QComboBox::drop-down { border: none; width: 28px; }
+QDialog QComboBox::down-arrow { image: url("$icon_chevron_down"); width: 16px; height: 16px; }
+QComboBox QAbstractItemView {
+    background: $bg_raised;
+    color: $fg;
+    border: 1px solid $line;
+    border-radius: ${r_control}px;
+    padding: 4px;
+    outline: 0;
+}
+
+QDialog QSpinBox::up-button, QDialog QSpinBox::down-button {
+    background: transparent;
+    border: none;
+    width: 20px;
+}
+QDialog QSpinBox::up-arrow { image: url("$icon_chevron_up"); width: 12px; height: 12px; }
+QDialog QSpinBox::down-arrow { image: url("$icon_chevron_down"); width: 12px; height: 12px; }
+
+QDialog QTextBrowser, QDialog QListWidget {
+    background: $bg_canvas;
+    color: $fg;
+    border: 1px solid $line;
+    border-radius: ${r_control}px;
+    padding: 8px;
+    outline: 0;
+    selection-background-color: $selection_bg;
+    selection-color: $selection_fg;
+}
+QDialog QListWidget::item { min-height: 32px; border-radius: ${r_control}px; padding: 0 8px; }
+QDialog QListWidget::item:hover { background: $overlay_hover; }
+QDialog QListWidget::item:selected { background: $accent_weak; color: $accent_strong; }
+
+/* ----- 체크박스 ----- */
+QDialog QCheckBox { spacing: 8px; color: $fg; }
+QDialog QCheckBox:disabled { color: $fg_disabled; }
+QDialog QCheckBox::indicator {
+    width: 14px;
+    height: 14px;
+    background: $bg_canvas;
+    border: 1px solid $line_control;
+    border-radius: ${r_small}px;
+}
+QDialog QCheckBox::indicator:checked {
+    image: url("$icon_check");
+    background: $accent;
+    border-color: $accent;
+}
+QDialog QCheckBox:focus::indicator { border-color: $focus; }
+QDialog QCheckBox::indicator:disabled { background: $bg_muted; border-color: $line_strong; }
+
+/* ----- 슬라이더 ----- */
+QDialog QSlider::groove:horizontal { height: 4px; border-radius: 2px; background: $line_strong; }
+QDialog QSlider::sub-page:horizontal { background: $accent; border-radius: 2px; }
+QDialog QSlider::add-page:horizontal { background: $line_strong; border-radius: 2px; }
+QDialog QSlider::handle:horizontal {
+    width: 14px;
+    height: 14px;
+    margin: -6px 0;
+    background: $white;
+    border: 1px solid $line_control;
+    border-radius: 8px;
+}
+QDialog QSlider:focus::handle:horizontal { border-color: $focus; }
+QDialog QSlider::sub-page:horizontal:disabled { background: $fg_disabled; }
+
+/* ----- 탭 ----- */
+QDialog QTabWidget::pane { border: none; border-top: 1px solid $line; }
+QDialog QTabWidget::tab-bar { left: 24px; }
+QDialog QTabBar { qproperty-drawBase: 0; }
+QDialog QTabBar::tab {
+    background: transparent;
+    color: $fg_secondary;
+    height: 30px;
+    padding: 0 4px;
+    margin-right: 8px;
+    font-weight: 500;
+    border: none;
+    border-bottom: 2px solid transparent;
+}
+QDialog QTabBar::tab:hover { color: $fg; }
+QDialog QTabBar::tab:selected { color: $accent_text; border-bottom-color: $accent; }
+QDialog QTabBar::tab:selected:focus { color: $fg; border-bottom-color: $focus; }
+
+/* ----- 스크롤 ----- */
+QDialog QScrollArea { background: transparent; border: none; }
+QDialog QScrollArea > QWidget > QWidget { background: transparent; }
+QDialog QScrollBar:vertical { background: transparent; width: 6px; margin: 0; }
+QDialog QScrollBar::handle:vertical { background: $scroll; border-radius: 3px; min-height: 20px; }
+QDialog QScrollBar::add-line:vertical, QDialog QScrollBar::sub-line:vertical { height: 0; }
+QDialog QScrollBar::add-page:vertical, QDialog QScrollBar::sub-page:vertical { background: transparent; }

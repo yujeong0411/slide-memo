@@ -1,25 +1,23 @@
-"""설정 다이얼로그 (일반 / AI / 정보 탭)."""
+"""설정 창 (일반 / AI / 정보 탭)."""
 from __future__ import annotations
 
 from datetime import datetime
 
 from PyQt6.QtCore import Qt, QThread, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtGui import QDesktopServices, QIcon
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QDialogButtonBox,
     QFormLayout,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QSlider,
+    QSpinBox,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -40,6 +38,9 @@ from ai_provider import (
     save_api_key,
 )
 from database import MemoDatabase
+from theme import apply as A
+from theme import tokens as T
+from theme.widgets import line, make_button, notify, role_label, themed_combo
 
 _KEY_HELP_URLS: dict[str, str] = {
     "anthropic": "https://console.anthropic.com/",
@@ -54,6 +55,8 @@ _COST_PER_1K: dict[str, float] = {
     "gemini": 0.0,
     "ollama": 0.0,
 }
+
+_LABEL_WIDTH = 112
 
 
 class _TestWorker(QThread):
@@ -71,6 +74,43 @@ class _TestWorker(QThread):
         self.result_ready.emit(ok, msg)
 
 
+def _form() -> QFormLayout:
+    form = QFormLayout()
+    form.setContentsMargins(0, 0, 0, 0)
+    form.setHorizontalSpacing(12)
+    form.setVerticalSpacing(12)
+    form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+    return form
+
+
+def _add_row(form: QFormLayout, text: str, field) -> None:
+    label = QLabel(text)
+    label.setFixedWidth(_LABEL_WIDTH)
+    form.addRow(label, field)
+
+
+def _status(label: QLabel, text: str, error: bool = False) -> None:
+    label.setProperty("state", "error" if error else "")
+    A.repolish(label)
+    label.setText(text)
+
+
+def _eye_button(edit: QLineEdit) -> QPushButton:
+    button = make_button("", "icon")
+    button.setCheckable(True)
+    button.setToolTip("키 보이기 / 숨기기")
+
+    def sync(shown: bool) -> None:
+        edit.setEchoMode(QLineEdit.EchoMode.Normal if shown else QLineEdit.EchoMode.Password)
+        icon = A.tinted_pixmap("eye_off.svg" if shown else "eye.svg", A.current()["fg_secondary"], 16)
+        button.setIcon(QIcon(icon))
+
+    button.toggled.connect(sync)
+    sync(False)
+    return button
+
+
 class SettingsDialog(QDialog):
     def __init__(self, db: MemoDatabase, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -79,11 +119,12 @@ class SettingsDialog(QDialog):
         self._original_key: str | None = None
 
         self.setWindowTitle("설정")
-        self.setMinimumWidth(460)
+        self.setFixedWidth(500)
         self.setWindowFlag(Qt.WindowType.WindowContextHelpButtonHint, False)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(8, 8, 8, 8)
+        root.setContentsMargins(0, 12, 0, 0)
+        root.setSpacing(0)
 
         tabs = QTabWidget()
         tabs.addTab(self._build_general_tab(), "일반")
@@ -91,72 +132,92 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._build_info_tab(), "정보")
         root.addWidget(tabs)
 
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        btns.accepted.connect(self._save_and_accept)
-        btns.rejected.connect(self.reject)
-        root.addWidget(btns)
+        root.addWidget(line())
+        footer = QHBoxLayout()
+        footer.setContentsMargins(24, 16, 24, 16)
+        footer.setSpacing(8)
+        footer.addStretch(1)
+        cancel = make_button("취소")
+        cancel.clicked.connect(self.reject)
+        footer.addWidget(cancel)
+        save = make_button("저장하기", "primary")
+        save.setDefault(True)
+        save.clicked.connect(self._save_and_accept)
+        footer.addWidget(save)
+        root.addLayout(footer)
 
         self._load_settings()
+
+    def _combo(self) -> QComboBox:
+        return themed_combo(QComboBox())
+
+    def _slider_row(self, low: int, high: int, page: int) -> tuple[QHBoxLayout, QSlider, QLabel]:
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setRange(low, high)
+        slider.setSingleStep(1)
+        slider.setPageStep(page)
+        value = role_label("", "value")
+        value.setFixedWidth(52)
+        value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        A.set_tabular(value)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(12)
+        row.addWidget(slider, 1)
+        row.addWidget(value)
+        return row, slider, value
 
     # ── 일반 탭 ──────────────────────────────────────────────────
     def _build_general_tab(self) -> QWidget:
         w = QWidget()
         outer = QVBoxLayout(w)
-        outer.setContentsMargins(16, 16, 16, 16)
+        outer.setContentsMargins(24, 20, 24, 20)
         outer.setSpacing(12)
 
-        # 앱 위치 + 표시 방식
-        side_form = QFormLayout()
-        side_form.setVerticalSpacing(8)
-        self._side_combo = QComboBox()
+        outer.addWidget(role_label("화면", "group"))
+        screen_form = _form()
+        self._side_combo = self._combo()
         self._side_combo.addItem("오른쪽 가장자리", 0)
         self._side_combo.addItem("왼쪽 가장자리", 1)
-        side_form.addRow("앱 위치:", self._side_combo)
+        _add_row(screen_form, "붙는 위치", self._side_combo)
+        self._display_mode_combo = self._combo()
+        self._display_mode_combo.addItem("숨기기 (트레이에만 표시)", "tray")
+        self._display_mode_combo.addItem("표시 (트레이에는 숨기기)", "taskbar")
+        self._display_mode_combo.addItem("작업 표시줄과 트레이 모두 표시", "both")
+        _add_row(screen_form, "작업 표시줄", self._display_mode_combo)
+        outer.addLayout(screen_form)
 
-        self._display_mode_combo = QComboBox()
-        self._display_mode_combo.addItem("트레이만 (작업표시줄에 안 뜸)", "tray")
-        self._display_mode_combo.addItem("작업표시줄만 (트레이 X)", "taskbar")
-        self._display_mode_combo.addItem("둘 다 표시", "both")
-        side_form.addRow("앱 표시 방식:", self._display_mode_combo)
-
-        outer.addLayout(side_form)
-
-        # 인덱스 탭 설정 그룹
-        outer.addWidget(self._build_tab_geometry_group())
-
-        # 창 투명도 (드래그 시 실시간 미리보기)
-        opacity_row = QHBoxLayout()
-        opacity_row.addWidget(QLabel("창 투명도:"))
-        self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
-        self._opacity_slider.setRange(50, 100)
-        self._opacity_slider.setSingleStep(1)
-        self._opacity_slider.setPageStep(5)
-        self._opacity_lbl = QLabel("100%")
-        self._opacity_lbl.setMinimumWidth(40)
+        outer.addSpacing(12)
+        outer.addWidget(role_label("인덱스 탭", "group"))
+        tab_form = _form()
+        width_row, self._tab_width_slider, self._tab_width_lbl = self._slider_row(24, 100, 4)
+        self._tab_width_slider.valueChanged.connect(
+            lambda v: self._tab_width_lbl.setText(f"{v} px")
+        )
+        _add_row(tab_form, "탭 너비", width_row)
+        height_row, self._memo_tab_height_slider, self._memo_tab_height_lbl = self._slider_row(60, 200, 10)
+        self._memo_tab_height_slider.valueChanged.connect(
+            lambda v: self._memo_tab_height_lbl.setText(f"{v} px")
+        )
+        _add_row(tab_form, "탭 높이", height_row)
+        opacity_row, self._opacity_slider, self._opacity_lbl = self._slider_row(50, 100, 5)
         self._opacity_slider.valueChanged.connect(self._on_opacity_preview)
-        opacity_row.addWidget(self._opacity_slider, stretch=1)
-        opacity_row.addWidget(self._opacity_lbl)
-        outer.addLayout(opacity_row)
+        _add_row(tab_form, "창 불투명도", opacity_row)
+        outer.addLayout(tab_form)
 
-        # 시스템 시작 시 자동 실행
-        self._autostart_chk = QCheckBox("시스템 시작 시 자동 실행")
+        outer.addSpacing(12)
+        outer.addWidget(role_label("동작", "group"))
+        self._autostart_chk = QCheckBox("Windows를 켤 때 자동으로 실행")
         outer.addWidget(self._autostart_chk)
         if not autostart.is_supported():
             self._autostart_chk.setEnabled(False)
-            unsupported_note = QLabel("※ 현재 OS에서는 지원되지 않습니다.")
-            unsupported_note.setStyleSheet("color: gray; font-size: 9pt;")
-            outer.addWidget(unsupported_note)
-
-        # 클립보드 자동 캡쳐
-        self._clipboard_capture_chk = QCheckBox("메모 앱 펼칠 때 클립보드 자동 감지")
+            outer.addWidget(role_label("이 운영체제에서는 쓸 수 없습니다.", "hint"))
+        self._clipboard_capture_chk = QCheckBox("메모를 펼칠 때 클립보드 확인")
         outer.addWidget(self._clipboard_capture_chk)
 
         # 사용법 안내(말풍선 가이드) 다시 보기 — 창을 닫으면 처음부터 시작한다
         guide_row = QHBoxLayout()
-        guide_row.setContentsMargins(0, 6, 0, 0)
-        guide_btn = QPushButton("사용법 가이드 다시 보기")
+        guide_btn = make_button("사용법 다시 보기")
         guide_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         guide_btn.clicked.connect(self._request_guide_restart)
         guide_row.addWidget(guide_btn)
@@ -171,247 +232,132 @@ class SettingsDialog(QDialog):
         self.restart_guide_requested = True
         self.accept()
 
-    def _build_tab_geometry_group(self) -> QGroupBox:
-        group = QGroupBox("인덱스 탭 설정")
-        form = QFormLayout(group)
-        form.setVerticalSpacing(10)
-
-        # 가로 폭 슬라이더 (24 ~ 60 px) — 각 메모 탭(슬라이드 노출 폭)
-        self._tab_width_slider = QSlider(Qt.Orientation.Horizontal)
-        self._tab_width_slider.setRange(24, 100)
-        self._tab_width_slider.setSingleStep(1)
-        self._tab_width_slider.setPageStep(4)
-        self._tab_width_lbl = QLabel("30 px")
-        self._tab_width_lbl.setMinimumWidth(48)
-        self._tab_width_slider.valueChanged.connect(
-            lambda v: self._tab_width_lbl.setText(f"{v} px")
-        )
-        width_row = QHBoxLayout()
-        width_row.setContentsMargins(0, 0, 0, 0)
-        width_row.addWidget(self._tab_width_slider, stretch=1)
-        width_row.addWidget(self._tab_width_lbl)
-        form.addRow("가로 폭:", width_row)
-
-        # 세로 길이 슬라이더 (60 ~ 200 px) — 각 메모 탭 하나의 높이
-        self._memo_tab_height_slider = QSlider(Qt.Orientation.Horizontal)
-        self._memo_tab_height_slider.setRange(60, 200)
-        self._memo_tab_height_slider.setSingleStep(1)
-        self._memo_tab_height_slider.setPageStep(10)
-        self._memo_tab_height_lbl = QLabel("116 px")
-        self._memo_tab_height_lbl.setMinimumWidth(48)
-        self._memo_tab_height_slider.valueChanged.connect(
-            lambda v: self._memo_tab_height_lbl.setText(f"{v} px")
-        )
-        height_row = QHBoxLayout()
-        height_row.setContentsMargins(0, 0, 0, 0)
-        height_row.addWidget(self._memo_tab_height_slider, stretch=1)
-        height_row.addWidget(self._memo_tab_height_lbl)
-        form.addRow("세로 길이:", height_row)
-
-        return group
-
     # ── AI 탭 ────────────────────────────────────────────────────
+    def _key_row(self, edit: QLineEdit, placeholder: str, test_slot) -> tuple[QHBoxLayout, QPushButton, QPushButton]:
+        edit.setEchoMode(QLineEdit.EchoMode.Password)
+        edit.setPlaceholderText(placeholder)
+        eye = _eye_button(edit)
+        test = make_button("키 확인하기")
+        test.clicked.connect(test_slot)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        row.addWidget(edit, 1)
+        row.addWidget(eye)
+        row.addWidget(test)
+        return row, eye, test
+
     def _build_ai_tab(self) -> QWidget:
         # 내용물이 길어서 탭 자체를 스크롤 영역으로 감싼다 — 다른 탭(일반/정보)의
         # 작은 높이에 맞춰 다이얼로그 전체 크기가 결정되도록.
         w = QWidget()
         outer = QVBoxLayout(w)
-        outer.setContentsMargins(16, 16, 16, 16)
-        outer.setSpacing(10)
+        outer.setContentsMargins(24, 20, 24, 20)
+        outer.setSpacing(12)
 
-        # 마스터 토글
         self._ai_enabled_chk = QCheckBox("AI 기능 사용")
         outer.addWidget(self._ai_enabled_chk)
 
         # 나머지 AI 설정을 묶는 컨테이너 (토글로 한 번에 enable/disable)
         self._ai_body = QWidget()
-        form = QFormLayout(self._ai_body)
-        form.setContentsMargins(0, 0, 0, 0)
-        form.setVerticalSpacing(10)
+        form = _form()
+        self._ai_body.setLayout(form)
 
-        # 제공자
-        self._provider_combo = QComboBox()
+        self._provider_combo = self._combo()
         for pid, pinfo in PROVIDERS.items():
             self._provider_combo.addItem(pinfo["name"], pid)
         self._provider_combo.currentIndexChanged.connect(self._on_provider_changed)
-        form.addRow("제공자:", self._provider_combo)
+        _add_row(form, "제공자", self._provider_combo)
 
-        # API 키 행
-        key_row = QHBoxLayout()
-        key_row.setContentsMargins(0, 0, 0, 0)
         self._key_edit = QLineEdit()
-        self._key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self._key_edit.setPlaceholderText("API 키 입력")
-        key_row.addWidget(self._key_edit)
-        self._eye_btn = QPushButton("👁")
-        self._eye_btn.setFixedWidth(30)
-        self._eye_btn.setCheckable(True)
-        self._eye_btn.setToolTip("키 표시/숨김")
-        self._eye_btn.toggled.connect(
-            lambda on: self._key_edit.setEchoMode(
-                QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password
-            )
-        )
-        key_row.addWidget(self._eye_btn)
-        self._test_btn = QPushButton("테스트")
-        self._test_btn.setFixedWidth(60)
-        self._test_btn.clicked.connect(self._run_test)
-        key_row.addWidget(self._test_btn)
+        key_row, self._eye_btn, self._test_btn = self._key_row(self._key_edit, "API 키 입력", self._run_test)
         self._key_row_widget = QWidget()
         self._key_row_widget.setLayout(key_row)
-        form.addRow("API 키:", self._key_row_widget)
+        _add_row(form, "API 키", self._key_row_widget)
 
-        # 키 발급 도움말
-        self._key_help_lbl = QLabel()
+        self._key_help_lbl = role_label("", "hint")
         self._key_help_lbl.setOpenExternalLinks(False)
-        self._key_help_lbl.linkActivated.connect(
-            lambda url: QDesktopServices.openUrl(QUrl(url))
-        )
-        self._key_help_lbl.setStyleSheet("font-size: 9pt;")
+        self._key_help_lbl.linkActivated.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
         form.addRow("", self._key_help_lbl)
 
-        # 모델
-        self._model_combo = QComboBox()
-        form.addRow("모델:", self._model_combo)
-
+        self._model_combo = self._combo()
+        _add_row(form, "모델", self._model_combo)
         outer.addWidget(self._ai_body)
 
-        # 구분선
-        sep = QWidget()
-        sep.setFixedHeight(1)
-        sep.setStyleSheet("background: rgba(0,0,0,0.12);")
-        outer.addWidget(sep)
-
-        # 사용량
-        usage_header = QLabel("── 이번 달 사용량 ──")
-        usage_header.setStyleSheet("color: gray; font-size: 9pt;")
-        outer.addWidget(usage_header)
-
+        outer.addSpacing(12)
+        outer.addWidget(role_label("이번 달 사용량", "group"))
         usage_row = QHBoxLayout()
         self._usage_lbl = QLabel("토큰: 0")
+        A.set_tabular(self._usage_lbl)
         usage_row.addWidget(self._usage_lbl)
         usage_row.addStretch(1)
-        reset_btn = QPushButton("통계 초기화")
-        reset_btn.setFixedWidth(80)
+        reset_btn = make_button("통계 지우기")
         reset_btn.clicked.connect(self._reset_usage)
         usage_row.addWidget(reset_btn)
         outer.addLayout(usage_row)
 
-        # 미리보기 체크
-        self._preview_chk = QCheckBox("AI 결과 적용 전 미리보기")
+        self._preview_chk = QCheckBox("AI 결과를 넣기 전에 미리 보기")
         outer.addWidget(self._preview_chk)
 
-        # 테스트 결과
-        self._test_result_lbl = QLabel()
+        self._test_result_lbl = role_label("", "hint")
         self._test_result_lbl.setWordWrap(True)
-        self._test_result_lbl.setStyleSheet("font-size: 9pt;")
         outer.addWidget(self._test_result_lbl)
 
-        # 음성 녹음 (Whisper) 그룹
-        sep2 = QWidget()
-        sep2.setFixedHeight(1)
-        sep2.setStyleSheet("background: rgba(0,0,0,0.12);")
-        outer.addWidget(sep2)
-        rec_header = QLabel("── 음성 녹음 (Whisper) ──")
-        rec_header.setStyleSheet("color: gray; font-size: 9pt;")
-        outer.addWidget(rec_header)
-        self._recording_enabled_chk = QCheckBox("음성 녹음 기능 사용 (마이크 버튼 활성화)")
+        outer.addSpacing(12)
+        outer.addWidget(role_label("음성 녹음 (Whisper)", "group"))
+        self._recording_enabled_chk = QCheckBox("음성 녹음 기능 사용 (마이크 단추 켜기)")
         outer.addWidget(self._recording_enabled_chk)
         self._recording_keep_chk = QCheckBox("녹음 파일을 메모에 첨부")
         outer.addWidget(self._recording_keep_chk)
-        rec_max_row = QHBoxLayout()
-        rec_max_row.addWidget(QLabel("최대 녹음 시간 (초):"))
-        from PyQt6.QtWidgets import QSpinBox
+
+        rec_form = _form()
         self._recording_max_spin = QSpinBox()
         self._recording_max_spin.setRange(60, 600)
         self._recording_max_spin.setSingleStep(30)
         self._recording_max_spin.setValue(300)
-        rec_max_row.addWidget(self._recording_max_spin)
-        rec_max_row.addStretch(1)
-        outer.addLayout(rec_max_row)
+        self._recording_max_spin.setFixedWidth(112)
+        A.set_tabular(self._recording_max_spin)
+        _add_row(rec_form, "최대 녹음 시간(초)", self._recording_max_spin)
+        outer.addLayout(rec_form)
 
         # Whisper용 OpenAI 키. AI 제공자가 OpenAI면 keyring 항목이 같아서
         # 칸이 두 개면 서로 덮어쓴다 → 그때는 이 칸을 숨기고 안내만 띄운다.
         self._whisper_key_widget = QWidget()
         wk_col = QVBoxLayout(self._whisper_key_widget)
         wk_col.setContentsMargins(0, 0, 0, 0)
-        wk_col.setSpacing(6)
-        whisper_key_row = QHBoxLayout()
+        wk_col.setSpacing(8)
         self._whisper_key_edit = QLineEdit()
-        self._whisper_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self._whisper_key_edit.setPlaceholderText("Whisper용 OpenAI API 키")
-        whisper_key_row.addWidget(self._whisper_key_edit)
-        self._whisper_eye_btn = QPushButton("👁")
-        self._whisper_eye_btn.setFixedWidth(30)
-        self._whisper_eye_btn.setCheckable(True)
-        self._whisper_eye_btn.toggled.connect(
-            lambda on: self._whisper_key_edit.setEchoMode(
-                QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password
-            )
+        whisper_row, self._whisper_eye_btn, self._whisper_test_btn = self._key_row(
+            self._whisper_key_edit, "Whisper용 OpenAI API 키", self._run_whisper_test
         )
-        whisper_key_row.addWidget(self._whisper_eye_btn)
-        self._whisper_test_btn = QPushButton("테스트")
-        self._whisper_test_btn.setFixedWidth(60)
-        self._whisper_test_btn.clicked.connect(self._run_whisper_test)
-        whisper_key_row.addWidget(self._whisper_test_btn)
-        wk_col.addLayout(whisper_key_row)
-        self._whisper_test_lbl = QLabel()
-        self._whisper_test_lbl.setStyleSheet("font-size: 9pt;")
+        wk_col.addLayout(whisper_row)
+        self._whisper_test_lbl = role_label("", "hint")
         self._whisper_test_lbl.setWordWrap(True)
         wk_col.addWidget(self._whisper_test_lbl)
-
-        # OpenAI 키 발급 페이지 링크
-        whisper_key_help = QLabel(
-            '<a href="https://platform.openai.com/api-keys">OpenAI API 키 발급 페이지 →</a>'
+        whisper_key_help = role_label(
+            '<a href="https://platform.openai.com/api-keys">OpenAI API 키 발급 페이지 →</a>', "hint"
         )
         whisper_key_help.setOpenExternalLinks(False)
-        whisper_key_help.linkActivated.connect(
-            lambda url: QDesktopServices.openUrl(QUrl(url))
-        )
-        whisper_key_help.setStyleSheet("font-size: 9pt;")
+        whisper_key_help.linkActivated.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
         wk_col.addWidget(whisper_key_help)
         outer.addWidget(self._whisper_key_widget)
 
-        self._whisper_shared_lbl = QLabel(
-            "※ AI 제공자가 OpenAI라 위에 등록한 키를 그대로 사용합니다."
-        )
-        self._whisper_shared_lbl.setStyleSheet("color: gray; font-size: 9pt;")
+        self._whisper_shared_lbl = role_label("AI 제공자가 OpenAI라서 위에 넣은 키를 그대로 써요.", "hint")
         self._whisper_shared_lbl.setWordWrap(True)
         outer.addWidget(self._whisper_shared_lbl)
 
-        rec_note = QLabel(
-            "Whisper API 비용: 분당 약 $0.006. 마이크 권한 필요."
-        )
-        rec_note.setStyleSheet("color: gray; font-size: 9pt;")
+        rec_note = role_label("Whisper API 비용은 분당 약 $0.006이에요. 마이크 권한이 필요해요.", "hint")
         rec_note.setWordWrap(True)
         outer.addWidget(rec_note)
 
         outer.addStretch(1)
 
-        # 마스터 토글 연결
         self._ai_enabled_chk.toggled.connect(self._ai_body.setEnabled)
         # QScrollArea로 감싸 다이얼로그 자체 높이가 길어지지 않도록
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # viewport 회색 배경 제거 — 다른 탭(일반/정보)과 같은 시스템 배경
-        scroll.setStyleSheet(
-            "QScrollArea { background: transparent; border: none; }"
-            "QScrollArea > QWidget > QWidget { background: transparent; }"
-            "QScrollArea QScrollBar:vertical {"
-            "  background: rgba(0,0,0,0.04); width: 6px; margin: 0;"
-            "}"
-            "QScrollArea QScrollBar::handle:vertical {"
-            "  background: rgba(0,0,0,0.35); border-radius: 3px;"
-            "  min-height: 20px;"
-            "}"
-            "QScrollArea QScrollBar::handle:vertical:hover {"
-            "  background: rgba(0,0,0,0.55);"
-            "}"
-            "QScrollArea QScrollBar::add-line:vertical,"
-            " QScrollArea QScrollBar::sub-line:vertical { height: 0; }"
-        )
         scroll.setWidget(w)
         return scroll
 
@@ -419,33 +365,28 @@ class SettingsDialog(QDialog):
     def _build_info_tab(self) -> QWidget:
         w = QWidget()
         layout = QVBoxLayout(w)
-        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(8)
         layout.addWidget(QLabel("<b>Slide Memo</b>"))
         from main import APP_VERSION
         layout.addWidget(QLabel(f"버전: {APP_VERSION}"))
-        layout.addWidget(QLabel("PyQt6 기반 Windows 슬라이드 메모장"))
+        layout.addWidget(role_label("PyQt6로 만든 Windows 슬라이드 메모장", "description"))
         layout.addSpacing(8)
-        copyright_lbl = QLabel(
-            "© 2026 nursecoder <br>"
-            "MIT License"
-        )
-        copyright_lbl.setStyleSheet("font-size: 9pt; color: #555;")
+        copyright_lbl = role_label("© 2026 nursecoder<br>MIT License", "hint")
         copyright_lbl.setWordWrap(True)
         layout.addWidget(copyright_lbl)
         layout.addSpacing(8)
-        db_lbl = QLabel(f"데이터 위치: {self.db.db_path.parent}")
-        db_lbl.setStyleSheet("font-size: 9pt; color: gray;")
+        db_lbl = role_label(f"데이터 위치: {self.db.db_path.parent}", "hint")
         db_lbl.setWordWrap(True)
         layout.addWidget(db_lbl)
-        open_btn = QPushButton("데이터 폴더 열기")
-        open_btn.setFixedWidth(120)
+        open_row = QHBoxLayout()
+        open_btn = make_button("데이터 폴더 열기")
         open_btn.clicked.connect(
-            lambda: QDesktopServices.openUrl(
-                QUrl.fromLocalFile(str(self.db.db_path.parent))
-            )
+            lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.db.db_path.parent)))
         )
-        layout.addWidget(open_btn)
+        open_row.addWidget(open_btn)
+        open_row.addStretch(1)
+        layout.addLayout(open_row)
         layout.addStretch(1)
         return w
 
@@ -468,10 +409,10 @@ class SettingsDialog(QDialog):
         self._display_mode_combo.setCurrentIndex(max(0, idx))
 
         # 인덱스 탭 설정 (값/범위는 main.py 상수와 동일)
-        tab_w = max(24, min(self.db.get_setting_int("tab_width", 30), 100))
+        tab_w = max(24, min(self.db.get_setting_int("tab_width", T.TAB_WIDTH_DEFAULT), 100))
         self._tab_width_slider.setValue(tab_w)
         self._tab_width_lbl.setText(f"{tab_w} px")
-        tab_h = max(60, min(self.db.get_setting_int("memo_tab_height", 116), 200))
+        tab_h = max(60, min(self.db.get_setting_int("memo_tab_height", T.TAB_HEIGHT_DEFAULT), 200))
         self._memo_tab_height_slider.setValue(tab_h)
         self._memo_tab_height_lbl.setText(f"{tab_h} px")
 
@@ -595,8 +536,7 @@ class SettingsDialog(QDialog):
         key = self._key_edit.text().strip() or None
 
         self._test_btn.setEnabled(False)
-        self._test_result_lbl.setStyleSheet("font-size: 9pt; color: gray;")
-        self._test_result_lbl.setText("⏳ 테스트 중...")
+        _status(self._test_result_lbl, "확인하는 중이에요")
 
         self._test_worker = _TestWorker(provider, model, key)
         self._test_worker.result_ready.connect(self._on_test_result)
@@ -604,32 +544,22 @@ class SettingsDialog(QDialog):
 
     def _on_test_result(self, ok: bool, msg: str) -> None:
         self._test_btn.setEnabled(True)
-        color = "#2d8a4e" if ok else "#c0392b"
-        self._test_result_lbl.setStyleSheet(f"font-size: 9pt; color: {color};")
-        self._test_result_lbl.setText(msg)
+        _status(self._test_result_lbl, msg, error=not ok)
 
     def _run_whisper_test(self) -> None:
         key = self._whisper_key_edit.text().strip()
         if not key:
-            self._whisper_test_lbl.setStyleSheet("color: gray; font-size: 9pt;")
-            self._whisper_test_lbl.setText("키를 입력하세요.")
+            _status(self._whisper_test_lbl, "키를 먼저 넣어 주세요.")
             return
         self._whisper_test_btn.setEnabled(False)
-        self._whisper_test_lbl.setStyleSheet("color: gray; font-size: 9pt;")
-        self._whisper_test_lbl.setText("⏳ 테스트 중...")
+        _status(self._whisper_test_lbl, "확인하는 중이에요")
         try:
             from openai import OpenAI
             client = OpenAI(api_key=key)
             client.models.list()
-            self._whisper_test_lbl.setStyleSheet(
-                "color: #2d8a4e; font-size: 9pt;"
-            )
-            self._whisper_test_lbl.setText("✓ OpenAI 키 유효")
+            _status(self._whisper_test_lbl, "OpenAI 키가 정상이에요.")
         except Exception as e:
-            self._whisper_test_lbl.setStyleSheet(
-                "color: #c0392b; font-size: 9pt;"
-            )
-            self._whisper_test_lbl.setText(f"실패: {type(e).__name__}: {e}")
+            _status(self._whisper_test_lbl, f"확인하지 못했어요: {type(e).__name__}: {e}", error=True)
         finally:
             self._whisper_test_btn.setEnabled(True)
 
@@ -682,7 +612,7 @@ class SettingsDialog(QDialog):
             if want != current:
                 ok, msg = autostart.set_enabled(want)
                 if not ok:
-                    QMessageBox.warning(self, "자동 실행", msg)
+                    notify(self, "자동 실행을 바꾸지 못했어요", msg, warning=True)
 
         # 클립보드 자동 캡쳐
         self.db.set_setting_int(
