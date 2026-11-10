@@ -40,6 +40,11 @@ QFrame#barGroup[side="left"] {
     border-top-right-radius: ${r_surface}px;
     border-bottom-right-radius: ${r_surface}px;
 }
+QPushButton#tabArrow { background: $bg_canvas; border: 1px solid $line; padding: 0; }
+QPushButton#tabArrow[side="right"] { border-right: none; }
+QPushButton#tabArrow[side="left"] { border-left: none; }
+QPushButton#tabArrow:hover { background: $secondary_hover; }
+QPushButton#tabArrow:focus { border-color: $focus; }
 QPushButton#barBtn {
     background: transparent;
     border: 1px solid transparent;

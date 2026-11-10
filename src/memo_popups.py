@@ -256,6 +256,8 @@ class DatePopup(PopupPanel):
 class ElideLabel(QLabel):
     """폭이 모자라면 끝을 말줄임하는 한 줄 라벨."""
 
+    MIN_VISIBLE_CHARS = 8  # "복사한 글" 다음에 내용이 조금은 보여야 의미가 있다
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._full = ""
@@ -273,9 +275,12 @@ class ElideLabel(QLabel):
         self._elide()
 
     def _elide(self) -> None:
-        QLabel.setText(self, QFontMetrics(self.font()).elidedText(
+        elided = QFontMetrics(self.font()).elidedText(
             self._full, Qt.TextElideMode.ElideRight, max(0, self.width())
-        ))
+        )
+        # 알아볼 수 없을 만큼 좁으면 아예 비운다
+        too_short = elided != self._full and len(elided.rstrip("…")) < self.MIN_VISIBLE_CHARS
+        QLabel.setText(self, "" if too_short else elided)
 
     def minimumSizeHint(self):  # noqa: N802
         hint = super().minimumSizeHint()

@@ -32,6 +32,7 @@ from PyQt6.QtGui import (
     QDesktopServices,
     QFont,
     QFontDatabase,
+    QFontMetrics,
     QFontMetricsF,
     QGuiApplication,
     QIcon,
@@ -223,36 +224,40 @@ class MemoTabButton(QPushButton):
     button_height = MEMO_TAB_HEIGHT  # 클래스 변수: 설정에서 조절 시 갱신
 
     BAND_WIDTH = 4
-    PADDING_Y = 8
-    LINE_HEIGHT = 18
-    SPACE_HEIGHT = 9  # 띄어쓰기는 반 칸
+    TEXT_PADDING = 8  # 글자 줄의 앞뒤 여백
+    SIDE_PADDING = 8  # 줄 수 계산에서 빼는 안쪽 여백
+    LINE_HEIGHT = T.TYPE["label"][1]
     PIN_ICON_SIZE = 12
-    PIN_TOP = 2
-    ELLIPSIS = "…"
+    PIN_GAP = 4
 
     @staticmethod
     def _pin_pixmap(fg: str, size: int) -> QPixmap:
         return tinted_pixmap("menu_keep.svg", fg, size)
 
     @classmethod
-    def _cell_height(cls, char: str) -> int:
-        return cls.SPACE_HEIGHT if char.isspace() else cls.LINE_HEIGHT
+    def line_count(cls, width: int) -> int:
+        """폭 40이면 한 줄, 48이면 두 줄."""
+        return max(1, (width - cls.BAND_WIDTH - cls.SIDE_PADDING) // cls.LINE_HEIGHT)
 
-    @classmethod
-    def stacked_cells(cls, title: str, room: int) -> list[str]:
-        """세로로 쌓을 글자 칸. 다 안 들어가면 마지막 칸을 말줄임으로 바꾼다."""
-        if sum(cls._cell_height(c) for c in title) <= room:
-            return list(title)
-        cells: list[str] = []
-        used = 0
-        for char in title:
-            used += cls._cell_height(char)
-            if used > room - cls.LINE_HEIGHT:
-                break
-            cells.append(char)
-        while cells and cells[-1].isspace():
-            cells.pop()
-        return cells + [cls.ELLIPSIS]
+    @staticmethod
+    def wrap_title(title: str, metrics: QFontMetrics, length: int, max_lines: int) -> list[str]:
+        """띄어쓰기에서 줄을 나누고, 마지막 줄 끝에서만 말줄임한다.
+        띄어쓰기 없이 줄보다 긴 낱말만 글자 단위로 자른다."""
+        lines: list[str] = []
+        rest = title.strip()
+        while rest and len(lines) < max_lines - 1 and metrics.horizontalAdvance(rest) > length:
+            fit = 0
+            for end in range(1, len(rest) + 1):
+                if metrics.horizontalAdvance(rest[:end]) > length:
+                    break
+                fit = end
+            space = rest.rfind(" ", 0, fit + 1)
+            split = space if space > 0 else max(1, fit)
+            lines.append(rest[:split].rstrip())
+            rest = rest[split:].lstrip()
+        if rest:
+            lines.append(metrics.elidedText(rest, Qt.TextElideMode.ElideRight, length))
+        return lines
 
     def __init__(self, memo: Memo, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -308,31 +313,29 @@ class MemoTabButton(QPushButton):
 
         content_left = 0 if side == "right" else self.BAND_WIDTH
         center_x = content_left + (self.width() - self.BAND_WIDTH) / 2
-        top = self.PADDING_Y
-        if self.is_pinned:  # 글자 칸을 쓰지 않고 위 여백에 넣는다
-            size = self.PIN_ICON_SIZE
-            pin = MemoTabButton._pin_pixmap(t["memo_fg_secondary"], size)
-            painter.drawPixmap(int(center_x - size / 2), self.PIN_TOP, pin)
-            top = self.PIN_TOP + size
-
-        font = theme_apply.base_font("body_strong")
+        font = theme_apply.base_font("label")
         if self._selected:
             font.setWeight(QFont.Weight.Bold)
+        start = self.TEXT_PADDING
+        if self.is_pinned:  # 읽는 방향의 시작 쪽
+            size = self.PIN_ICON_SIZE
+            pin = MemoTabButton._pin_pixmap(t["memo_fg_secondary"], size)
+            painter.drawPixmap(int(center_x - size / 2), start, pin)
+            start += size + self.PIN_GAP
+        length = max(1, self.height() - start - self.TEXT_PADDING)
+        lines = MemoTabButton.wrap_title(
+            self.memo_title, QFontMetrics(font), length, MemoTabButton.line_count(self.width())
+        )
+
+        # 시계방향 90도: 위에서 아래로 읽고, 첫 줄이 오른쪽이다 (양쪽 가장자리 모두 같다)
         painter.setFont(font)
-        ink = QColor(theme_apply.current()["fg_secondary"] if self.is_untitled else t["memo_fg"])
-        painter.setPen(ink)
-        y = top
-        for char in MemoTabButton.stacked_cells(self.memo_title, self.height() - top - self.PADDING_Y):
-            if char == self.ELLIPSIS:  # 세로로 쌓을 때는 세로 점 세 개
-                painter.setPen(Qt.PenStyle.NoPen)
-                painter.setBrush(ink)
-                middle = y + self.LINE_HEIGHT / 2
-                for dot in (-4, 0, 4):
-                    painter.drawEllipse(QPointF(center_x, middle + dot), 1.2, 1.2)
-            else:
-                cell = QRectF(center_x - 12, y, 24, self.LINE_HEIGHT)
-                painter.drawText(cell, Qt.AlignmentFlag.AlignCenter, char)
-            y += self._cell_height(char)
+        painter.setPen(QColor(theme_apply.current()["fg_secondary"] if self.is_untitled else t["memo_fg"]))
+        painter.translate(center_x, start)
+        painter.rotate(90)
+        block_top = -len(lines) * self.LINE_HEIGHT / 2
+        for index, line in enumerate(lines):
+            rect = QRectF(0, block_top + index * self.LINE_HEIGHT, length, self.LINE_HEIGHT)
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, line)
         painter.end()
 
 
@@ -2141,6 +2144,7 @@ class SlideMemoWindow(QWidget):
         col_layout.setSpacing(0)
 
         # 세로 이동 그립 (맨 위)
+        self._bar_icons: list[tuple[QPushButton, str]] = []
         self.drag_grip = DragGrip(self.tab_column)
         col_layout.addWidget(self.drag_grip)
         col_layout.addSpacing(4)
@@ -2176,12 +2180,19 @@ class SlideMemoWindow(QWidget):
         self.tab_scroll.verticalScrollBar().rangeChanged.connect(
             self._apply_pending_scroll
         )
+        # 스크롤 막대 대신, 탭이 더 있는 쪽 끝에만 셰브런 단추를 보여 준다
+        self.tab_up_btn = self._tab_arrow("chevron_up.svg", "위쪽 탭 보기", -1)
+        col_layout.addWidget(self.tab_up_btn)
         col_layout.addWidget(self.tab_scroll, stretch=1)
+        self.tab_down_btn = self._tab_arrow("chevron_down.svg", "아래쪽 탭 보기", 1)
+        col_layout.addWidget(self.tab_down_btn)
+        _tab_bar = self.tab_scroll.verticalScrollBar()
+        _tab_bar.rangeChanged.connect(lambda *_a: self._update_tab_arrows())
+        _tab_bar.valueChanged.connect(lambda *_a: self._update_tab_arrows())
 
         col_layout.addSpacing(4)
 
         # 아래 묶음: 잠깐 숨기기(모두 접기 자리) + 휴지통 + 새 메모
-        self._bar_icons: list[tuple[QPushButton, str]] = []
         self.bar_group = QFrame(self.tab_column)
         self.bar_group.setObjectName("barGroup")
         group_layout = QVBoxLayout(self.bar_group)
@@ -2238,6 +2249,27 @@ class SlideMemoWindow(QWidget):
         self._fit_top_row()
         if hasattr(self, "_trash_badge"):
             self._update_trash_btn()
+
+    def _tab_arrow(self, asset: str, tooltip: str, direction: int) -> QPushButton:
+        button = QPushButton(self.tab_column)
+        button.setObjectName("tabArrow")
+        button.setFixedHeight(T.CONTROL["sm"][0])
+        button.setIconSize(QSize(BAR_ICON, BAR_ICON))
+        button.setToolTip(tooltip)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.clicked.connect(lambda: self._step_tabs(direction))
+        button.hide()
+        self._bar_icons.append((button, asset))
+        return button
+
+    def _step_tabs(self, direction: int) -> None:
+        bar = self.tab_scroll.verticalScrollBar()
+        bar.setValue(bar.value() + direction * MemoTabButton.button_height)
+
+    def _update_tab_arrows(self) -> None:
+        bar = self.tab_scroll.verticalScrollBar()
+        self.tab_up_btn.setVisible(bar.value() > 0)
+        self.tab_down_btn.setVisible(bar.value() < bar.maximum())
 
     def _fit_top_row(self) -> None:
         """폭이 모자라면 정렬 콤보를 아이콘 단추로 바꿔 검색 칸에 자리를 준다."""
@@ -3073,6 +3105,8 @@ class SlideMemoWindow(QWidget):
         self.is_expanded = True
         # 펼침 — 현재 메모의 인디케이터 다시 표시
         self._update_tabs_selected()
+        if self.current_memo is not None and not self.trash_mode:
+            self._scroll_to_memo(self.current_memo.id)
         # setMask 해제 → body 영역도 보이게 됨. 윈도우 폭은 이미 펼친 폭이라
         # setGeometry 호출 불필요 (mask만으로 시각적 펼침).
         self.clearMask()
@@ -3470,6 +3504,7 @@ class SlideMemoWindow(QWidget):
             w = self.tabs_layout.itemAt(i).widget()
             if isinstance(w, MemoTabButton):
                 w.update_style(selected=(w.memo_id == memo_id))
+        self._scroll_to_memo(memo_id)
         # 접힌 상태에서 휴지통 메모를 누른 경우 본문을 펼친다
         self.expand()
 
@@ -3521,8 +3556,9 @@ class SlideMemoWindow(QWidget):
 
     def _update_column_style(self) -> None:
         """아래 묶음의 둥근 면을 현재 side에 맞춘다. 손잡이는 직접 그리므로 다시 칠만 한다."""
-        self.bar_group.setProperty("side", MemoTabButton.side)
-        theme_apply.repolish(self.bar_group)
+        for widget in (self.bar_group, self.tab_up_btn, self.tab_down_btn):
+            widget.setProperty("side", MemoTabButton.side)
+            theme_apply.repolish(widget)
         self.drag_grip.update()
 
     def _update_tabs_selected(self) -> None:
@@ -3553,6 +3589,7 @@ class SlideMemoWindow(QWidget):
             return
         self._load_memo(memo)
         self._update_tabs_selected()
+        self._scroll_to_memo(memo_id)
         self.expand()
 
     # ----- 메모별 문서(undo 스택) 캐시 -----

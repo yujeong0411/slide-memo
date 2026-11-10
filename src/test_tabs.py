@@ -59,13 +59,23 @@ assert _probe.minimumWidth() == 0
 assert _probe.toolTip() == "t"
 
 # 세워 쌓기: 다 안 들어가면 끝을 말줄임, 툴팁엔 전체 제목 (9장 2)
-_room = H - 2 * Tab.PADDING_Y
-assert Tab.stacked_cells("주간", _room) == ["주", "간"]
-assert Tab.stacked_cells("가나다라마", _room) == list("가나다라마"), "높이 112에 5자"
-assert Tab.stacked_cells("가나다라마바", _room) == ["가", "나", "다", "라", Tab.ELLIPSIS]
-# 띄어쓰기는 반 칸, 말줄임 앞의 띄어쓰기는 지운다
-assert Tab.stacked_cells("주간 회의 준비", _room) == ["주", "간", " ", "회", Tab.ELLIPSIS]
-assert Tab(memo("가나다라마바")).toolTip() == "가나다라마바"
+from PyQt6.QtGui import QFontMetrics  # noqa: E402
+
+from theme import apply as A  # noqa: E402
+
+assert Tab.line_count(40) == 1 and Tab.line_count(48) == 2 and Tab.line_count(24) == 1
+_fm = QFontMetrics(A.base_font("label"))
+_long = "주간 회의 준비 자료 정리와 다음 분기 계획을 함께 적어 두는 메모"
+_one = Tab.wrap_title("짧은 제목", _fm, 96, 1)
+assert _one == ["짧은 제목"]
+_lines = Tab.wrap_title(_long, _fm, 96, 2)
+assert len(_lines) == 2, _lines
+assert not _lines[0].endswith("…") and _lines[1].endswith("…"), "마지막 줄 끝에서만 줄인다"
+assert _long.startswith(_lines[0]) and _long[len(_lines[0])] == " ", "줄은 띄어쓰기에서 나눈다"
+assert all(_fm.horizontalAdvance(l) <= 96 for l in _lines)
+# 띄어쓰기 없는 긴 낱말도 자리를 넘지 않는다
+_word = Tab.wrap_title("가" * 40, _fm, 96, 2)
+assert len(_word) == 2 and all(_fm.horizontalAdvance(l) <= 96 for l in _word)
 assert Tab(memo("  ")).memo_title == "제목 없음" and Tab(memo("  ")).is_untitled
 
 # 깨진 색이 DB에 있어도 탭은 그려져야 앱이 켜진다
@@ -95,6 +105,33 @@ assert not _badge.isHidden(), "휴지통에 메모가 있는데 배지가 숨겨
 assert 0 <= _badge.x() <= _win.tab_width - _badge.width(), (_badge.x(), _badge.width(), _win.tab_width)
 assert _win.trash_btn.height() == m.BAR_BUTTON_HEIGHT or not _win.trash_btn.isVisible()
 assert _win.drag_grip.height() == m.GRIP_HEIGHT
+
+# ----- 탭이 많으면 더 있는 쪽 끝에만 셰브런 -----
+_many_db = MemoDatabase(Path(tempfile.mkdtemp()) / "many.db")
+for _i in range(12):
+    _many_db.create(title=f"메모 {_i}", content="x")
+_many = m.SlideMemoWindow(_many_db)
+_many.show()
+_app.processEvents()
+_bar = _many.tab_scroll.verticalScrollBar()
+_bar.setValue(0)
+_app.processEvents()
+assert _bar.maximum() > 0, "탭이 넘치지 않아 시험이 안 된다"
+assert not _many.tab_up_btn.isVisibleTo(_many) and _many.tab_down_btn.isVisibleTo(_many)
+_many.tab_down_btn.click()
+_app.processEvents()
+assert _bar.value() == Tab.button_height, "누르면 탭 하나만큼 움직인다"
+assert _many.tab_up_btn.isVisibleTo(_many)
+_bar.setValue(_bar.maximum())
+_app.processEvents()
+assert not _many.tab_down_btn.isVisibleTo(_many), "맨 끝이면 아래 셰브런은 없다"
+# 메모를 펼치면 그 탭이 보이는 위치로
+_bar.setValue(0)
+_last = _many_db.list_all()[-1]
+_many.select_memo(_last.id)
+_app.processEvents()
+assert _bar.value() > 0, "펼친 메모의 탭으로 스크롤되지 않았다"
+_many.close()
 
 # ----- 좁은 창: 정렬 콤보가 아이콘이 된다 -----
 _win.resize(520, 500)

@@ -52,6 +52,12 @@ assert A.current_mode() == "light", "시스템 변경을 따라가지 않았다"
 A.system_mode = original
 assert shown_color() == RED_LIGHT
 
+# 같은 모드로 다시 저장하면 Ctrl+Z 기록을 지우지 않는다
+_doc = win.editor.document()
+db.set_setting_str(A.THEME_MODE_KEY, "light")
+win.apply_screen_mode()
+assert win.editor.document() is _doc, "모드가 그대로인데 문서를 다시 만들었다"
+
 # 왕복해도 저장 내용이 바뀌지 않는다
 win.save_now()
 assert RED_LIGHT.lower() in db.get(memo.id).content.lower()
@@ -59,7 +65,7 @@ assert len(saved_before) > 0
 
 # 설정 창 저장
 dlg = SD.SettingsDialog(db, win)
-assert dlg._theme_combo.currentData() == "system"
+assert dlg._theme_combo.currentData() == "light"
 dlg._theme_combo.setCurrentIndex(dlg._theme_combo.findData("dark"))
 dlg._save_and_accept()
 assert db.get_setting_str(A.THEME_MODE_KEY) == "dark"
