@@ -198,7 +198,6 @@ class _Preview(QWidget):
         painter.setClipPath(path)
         painter.fillRect(area, QColor(tokens["memo_face"]))
         tab_left = area.right() - 32
-        painter.fillRect(QRectF(tab_left - 4, 0, 4, area.height()), QColor(tokens["memo_edge"]))
         painter.fillRect(QRectF(area.right() - 4, 0, 4, area.height()), QColor(tokens["memo_band"]))
 
         painter.setPen(QColor(tokens["memo_fg"]))
@@ -214,6 +213,10 @@ class _Preview(QWidget):
         painter.setFont(A.base_font("label"))
         painter.drawText(QRectF(tab_left, 8, 28, 18), Qt.AlignmentFlag.AlignCenter, "메")
         painter.drawText(QRectF(tab_left, 26, 28, 18), Qt.AlignmentFlag.AlignCenter, "모")
+        painter.setClipping(False)
+        painter.setPen(QPen(A.qcolor(A.current()["line"]), 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(area.adjusted(0.5, 0.5, -0.5, -0.5), T.RADIUS["control"], T.RADIUS["control"])
         painter.end()
 
 

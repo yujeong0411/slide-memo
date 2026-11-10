@@ -14,8 +14,10 @@ from PyQt6.QtCore import (
     QMimeData,
     QObject,
     QPoint,
+    QPointF,
     QPropertyAnimation,
     QRect,
+    QRectF,
     QSize,
     QThread,
     QTimer,
@@ -29,6 +31,7 @@ from PyQt6.QtGui import (
     QDesktopServices,
     QFont,
     QFontDatabase,
+    QFontMetricsF,
     QGuiApplication,
     QIcon,
     QImage,
@@ -373,6 +376,50 @@ class RichPasteTextEdit(QTextEdit):
     """클립보드 이미지를 파일로 저장 후 에디터에 바로 표시하는 리치 텍스트 에디터."""
 
     IMG_MAX_WIDTH = 440  # 에디터 폭에 맞춘 이미지 표시 최대 폭
+    BULLET_GAP = 7  # 글머리표와 글자 사이 (시안 6~8px)
+    _bullet_colors: tuple[QColor, QColor] | None = None  # (메모 면, 글자)
+
+    def set_bullet_colors(self, face: str, ink: str) -> None:
+        self._bullet_colors = (QColor(face), QColor(ink))
+        self.viewport().update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        if self._bullet_colors is not None:
+            self._repaint_bullets(*self._bullet_colors)
+
+    def _repaint_bullets(self, face: QColor, ink: QColor) -> None:
+        """Qt는 기호 뒤 간격을 공백 한 칸으로 고정한다. 저장 내용을 바꾸지 않으려고
+        기호 자리(첫 줄 왼쪽 빈 칸)만 지우고 간격을 띄워 다시 그린다."""
+        painter = QPainter(self.viewport())
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        layout = self.document().documentLayout()
+        offset = QPointF(-self.horizontalScrollBar().value(), -self.verticalScrollBar().value())
+        bottom = self.viewport().height()
+        block = self.cursorForPosition(QPoint(0, 0)).block()
+        while block.isValid():
+            box = layout.blockBoundingRect(block).translated(offset)
+            if box.top() > bottom:
+                break
+            text_list = block.textList()
+            if (
+                text_list is not None
+                and text_list.format().style() == QTextListFormat.Style.ListDisc
+                and block.layout().lineCount() > 0
+            ):
+                line = block.layout().lineAt(0)
+                metrics = QFontMetricsF(block.charFormat().font())
+                size = metrics.lineSpacing() / 3
+                left = box.left() + line.x()
+                top = box.top() + line.y()
+                painter.fillRect(QRectF(left - 40, top, 39, metrics.height()), face)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(ink)
+                painter.drawEllipse(
+                    QRectF(left - self.BULLET_GAP - size, top + (metrics.height() - size) / 2, size, size)
+                )
+            block = block.next()
+        painter.end()
 
     def insertFromMimeData(self, source: QMimeData) -> None:  # noqa: N802
         if source is None:
@@ -3747,6 +3794,7 @@ class SlideMemoWindow(QWidget):
         self._search_icon.setIcon(QIcon(tinted_pixmap("search_icon.svg", self._memo_icon_color, 16)))
         self._ai_spark.setPixmap(tinted_pixmap("menu_ai.svg", self._memo_icon_color, 16))
         self.color_btn.set_appearance(tokens["memo_band"], self._memo_icon_color)
+        self.editor.set_bullet_colors(tokens["memo_face"], tokens["memo_fg"])
         self._update_pin_btn()
 
     def _refresh_search_marks(self) -> None:

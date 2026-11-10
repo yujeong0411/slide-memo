@@ -30,7 +30,7 @@ LIGHT: dict[str, str] = {
     "overlay_hover": "rgba(27,29,34,0.08)",
     "overlay_press": "rgba(27,29,34,0.16)",
     "scroll": "#C9CCD2",
-    "highlight": "#FFDD95",
+    "highlight": "#FFB870",
 }
 
 DARK: dict[str, str] = {
@@ -60,7 +60,7 @@ DARK: dict[str, str] = {
     "overlay_hover": "rgba(250,250,250,0.08)",
     "overlay_press": "rgba(250,250,250,0.16)",
     "scroll": "#6C6C6C",
-    "highlight": "#FFDD95",
+    "highlight": "#FFB870",
 }
 
 MODES: dict[str, dict[str, str]] = {"light": LIGHT, "dark": DARK}

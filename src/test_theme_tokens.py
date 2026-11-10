@@ -29,7 +29,9 @@ def demo():
     assert abs(M.contrast(T.WHITE, T.LIGHT["danger_fill"]) - 7.13) <= 0.02
     assert abs(M.contrast(T.WHITE, T.LIGHT["contrast"]) - 13.02) <= 0.02
     assert abs(M.contrast(T.WHITE, T.DARK["contrast"]) - 6.29) <= 0.02
-    assert abs(M.contrast(T.HIGHLIGHT_FG, T.LIGHT["highlight"]) - 12.87) <= 0.02
+    assert abs(M.contrast(T.HIGHLIGHT_FG, T.LIGHT["highlight"]) - 9.91) <= 0.02
+    assert T.LIGHT["highlight"] == T.DARK["highlight"], "두 화면 모드에서 같은 값"
+    assert T.LIGHT["highlight"] not in [light for _, light, _dark in T.HIGHLIGHTS], "형광펜과 구분돼야 한다"
     assert abs(M.contrast(T.SELECTION_FG, T.SELECTION_BG) - 6.41) <= 0.02
 
     # 3.0 프리셋: 띠 4.1 이상, 면 위 글자 12 이상

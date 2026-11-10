@@ -92,6 +92,9 @@ assert table.format().hasProperty(QTextFormat.Property.FrameBorderBrush)
 assert table.cellAt(0, 0).format().background().color().alpha() > 0, "머리 칸이 칠해져야 한다"
 assert table.cellAt(1, 0).format().background().style().name == "NoBrush"
 assert "BACKGROUND-COLOR" not in MD.saved_html(doc).upper()
+_cell = table.cellAt(1, 1).format().toTableCellFormat()
+assert (_cell.leftPadding(), _cell.rightPadding(), _cell.topPadding(), _cell.bottomPadding()) == (12, 12, 6, 6)
+assert "PADDING-LEFT:12" not in MD.saved_html(doc).upper().replace(" ", ""), "표시용 여백은 저장되지 않는다"
 
 # ----- 색 옮기기 -----
 with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:

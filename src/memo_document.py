@@ -31,6 +31,14 @@ _TEXT_PAIRS = {light.upper(): dark for _, light, dark in T.TEXT_COLORS}
 _HIGHLIGHT_PAIRS = {light.upper(): dark for _, light, dark in T.HIGHLIGHTS}
 _TABLE_LINE_ALPHA = 0.30
 _TABLE_HEAD_ALPHA = 0.06
+_CELL_PADDING_X = 12
+_CELL_PADDING_Y = 6
+_CELL_PADDING_PROPS = (
+    QTextFormat.Property.TableCellLeftPadding,
+    QTextFormat.Property.TableCellRightPadding,
+    QTextFormat.Property.TableCellTopPadding,
+    QTextFormat.Property.TableCellBottomPadding,
+)
 
 
 def link_color(mode: str) -> str:
@@ -110,6 +118,15 @@ def decorate_table(table: QTextTable, mode: str) -> None:
     fmt.setBorderBrush(_alpha_brush(_ink(mode), _TABLE_LINE_ALPHA))
     fmt.setBorderCollapse(True)
     table.setFormat(fmt)
+    for row in range(table.rows()):
+        for column in range(table.columns()):
+            cell = table.cellAt(row, column)
+            cell_format = cell.format().toTableCellFormat()
+            cell_format.setLeftPadding(_CELL_PADDING_X)
+            cell_format.setRightPadding(_CELL_PADDING_X)
+            cell_format.setTopPadding(_CELL_PADDING_Y)
+            cell_format.setBottomPadding(_CELL_PADDING_Y)
+            cell.setFormat(cell_format)
     if not _is_head_row(table):
         return
     for column in range(table.columns()):
@@ -223,12 +240,15 @@ def saved_html(doc: QTextDocument) -> str:
         fmt.clearProperty(QTextFormat.Property.FrameBorderBrush)
         fmt.clearProperty(QTextFormat.Property.TableBorderCollapse)
         table.setFormat(fmt)
-        for column in range(table.columns()):
-            cell = table.cellAt(0, column)
-            cell_format = cell.format()
-            if cell_format.hasProperty(ORIGINAL_BG):
-                cell_format.clearBackground()
-                cell_format.clearProperty(ORIGINAL_BG)
+        for row in range(table.rows()):
+            for column in range(table.columns()):
+                cell = table.cellAt(row, column)
+                cell_format = cell.format()
+                for prop in _CELL_PADDING_PROPS:
+                    cell_format.clearProperty(prop)
+                if cell_format.hasProperty(ORIGINAL_BG):
+                    cell_format.clearBackground()
+                    cell_format.clearProperty(ORIGINAL_BG)
                 cell.setFormat(cell_format)
     return clone.toHtml()
 
