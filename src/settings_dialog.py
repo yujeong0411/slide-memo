@@ -218,8 +218,6 @@ class SettingsDialog(QDialog):
         if not autostart.is_supported():
             self._autostart_chk.setEnabled(False)
             outer.addWidget(role_label("이 운영체제에서는 쓸 수 없습니다.", "hint"))
-        self._clipboard_capture_chk = QCheckBox("메모를 펼칠 때 클립보드 확인")
-        outer.addWidget(self._clipboard_capture_chk)
 
         # 사용법 안내(말풍선 가이드) 다시 보기 — 창을 닫으면 처음부터 시작한다
         guide_row = QHBoxLayout()
@@ -435,11 +433,6 @@ class SettingsDialog(QDialog):
         if autostart.is_supported():
             self._autostart_chk.setChecked(autostart.is_enabled())
 
-        # 클립보드 자동 캡쳐 (기본 켜짐)
-        self._clipboard_capture_chk.setChecked(
-            self.db.get_setting_int("clipboard_capture_enabled", 1) == 1
-        )
-
         # AI
         enabled = self.db.get_setting_str(AI_KEY_ENABLED, "0") == "1"
         provider = self.db.get_setting_str(AI_KEY_PROVIDER, "anthropic")
@@ -625,12 +618,6 @@ class SettingsDialog(QDialog):
                 ok, msg = autostart.set_enabled(want)
                 if not ok:
                     notify(self, "자동 실행을 바꾸지 못했어요", msg, warning=True)
-
-        # 클립보드 자동 캡쳐
-        self.db.set_setting_int(
-            "clipboard_capture_enabled",
-            1 if self._clipboard_capture_chk.isChecked() else 0,
-        )
 
         # 음성 녹음
         self.db.set_setting_int(

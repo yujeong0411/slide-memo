@@ -95,13 +95,6 @@ QPushButton#textBtn {
 }
 QPushButton#textBtn:hover { background: $overlay_hover; }
 QPushButton#textBtn:focus { border-color: $focus; }
-QPushButton#cardClose {
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: ${r_control}px;
-    padding: 0;
-}
-QPushButton#cardClose:hover { background: $overlay_hover; }
 QProgressBar#splashBar { background: $bg_muted; border: none; border-radius: 2px; }
 QProgressBar#splashBar::chunk { background: $accent; border-radius: 2px; }
 

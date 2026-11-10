@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QDate, QPropertyAnimation, QPoint, QRectF, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFontMetrics, QIcon, QPainter, QPen, QPixmap
+from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractButton,
     QFrame,
@@ -251,41 +251,6 @@ class DatePopup(PopupPanel):
             self._grid.addWidget(cell, 1 + position // 7, position % 7)
             self._cells.append(cell)
         self.adjustSize()
-
-
-class ElideLabel(QLabel):
-    """폭이 모자라면 끝을 말줄임하는 한 줄 라벨."""
-
-    MIN_VISIBLE_CHARS = 8  # "복사한 글" 다음에 내용이 조금은 보여야 의미가 있다
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._full = ""
-        self.setMinimumWidth(0)
-
-    def setText(self, text: str) -> None:  # noqa: N802
-        self._full = " ".join(text.split())
-        self._elide()
-
-    def full_text(self) -> str:
-        return self._full
-
-    def resizeEvent(self, event) -> None:  # noqa: N802
-        super().resizeEvent(event)
-        self._elide()
-
-    def _elide(self) -> None:
-        elided = QFontMetrics(self.font()).elidedText(
-            self._full, Qt.TextElideMode.ElideRight, max(0, self.width())
-        )
-        # 알아볼 수 없을 만큼 좁으면 아예 비운다
-        too_short = elided != self._full and len(elided.rstrip("…")) < self.MIN_VISIBLE_CHARS
-        QLabel.setText(self, "" if too_short else elided)
-
-    def minimumSizeHint(self):  # noqa: N802
-        hint = super().minimumSizeHint()
-        hint.setWidth(0)
-        return hint
 
 
 class Toast(QFrame):

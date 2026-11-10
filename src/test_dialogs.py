@@ -30,16 +30,4 @@ versions = m.VersionDialog(
 )
 assert focused(versions) is versions.list
 
-# 좁은 배너: 알아볼 수 없으면 미리보기를 비운다
-from memo_popups import ElideLabel  # noqa: E402
-
-label = ElideLabel()
-label.setText("복사한 글 “3분기 실적 보고서 초안 공유드립니다”")
-label.resize(20, 20)
-label._elide()  # 화면에 없으면 resizeEvent가 오지 않는다
-assert label.text() == "", label.text()
-label.resize(600, 20)
-label._elide()
-assert label.text() == label.full_text()
-
 print("dialogs OK")

@@ -164,7 +164,6 @@ wait(250)
 
 # 실제 메인 창 (임시 DB)
 M.SlideMemoWindow._register_hotkey = lambda self: None
-M.SlideMemoWindow._check_clipboard = lambda self: self._clipboard_banner.hide()
 for key, color in (("장보기 목록", "pink"), ("주간 회의 준비 자료 정리", "blue"), ("레시피", "green"), ("아주 긴 제목을 가진 메모가 탭에서 어떻게 보이는지 확인하기", "yellow")):
     db.create(key, "<p>가짜 메모입니다.</p><ul><li>첫째</li><li>둘째</li></ul>", color)
 db.set_setting_int(M.GUIDE_BAR_KEY, 1)

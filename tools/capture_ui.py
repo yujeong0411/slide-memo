@@ -110,7 +110,6 @@ def grab_top(w):
 M.UpdateChecker.start = lambda self: None
 M.SlideMemoWindow._register_hotkey = lambda self: None
 M.SlideMemoWindow._force_topmost = lambda self: None
-M.SlideMemoWindow._check_clipboard = lambda self: self._clipboard_banner.hide()
 M.QSystemTrayIcon.show = lambda self: None
 M.QSystemTrayIcon.showMessage = lambda self, *a: None
 M.SlideMemoWindow._screen_rect = lambda self: QRect(0, 0, 1920, 1080)
@@ -332,20 +331,12 @@ def capture(win, db, tray, env):
         pump()
         expanded("sunrise")
         main_shot("21_main_narrow", f"창을 최소 폭({M.MIN_W}px)까지 줄임, 서식바 줄바꿈")
-        win._clipboard_banner_label.setText("복사한 글 “3분기 실적 보고서 초안 공유드립니다. 확인 부탁드려요”")
-        win._clipboard_banner.show()
-        main_shot("23b_main_banner_narrow", "좁은 창의 클립보드 배너", "main.py _clipboard_banner")
-        win._clipboard_banner.hide()
         win.setGeometry(g)
         expanded("blank")
         main_shot("22_main_empty_memo", "새 메모 (자리표시자)")
 
     def transient():
         expanded("sunrise")
-        win._clipboard_banner_label.setText("복사한 글 “3분기 실적 보고서 초안 공유드립니다. 확인 부탁드려요”")
-        win._clipboard_banner.show()
-        main_shot("23_main_clipboard_banner", "클립보드에 텍스트가 있을 때 펼침", "main.py:2644 _clipboard_banner")
-        win._clipboard_banner.hide()
         win._show_toast("메모를 휴지통으로 옮겼어요", on_click=lambda: None)
         win._toast_timer.stop()
         win._toast_lbl.finish_animation()
