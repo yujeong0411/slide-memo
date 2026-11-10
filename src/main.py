@@ -4219,7 +4219,7 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
 
 
 def _set_windows_app_user_model_id() -> None:
-    """Windows 작업표시줄이 logo.ico를 쓰게 한다.
+    """Windows 작업표시줄이 앱 아이콘을 쓰게 한다.
     AppUserModelID를 명시 안 하면 호스트(python.exe) 아이콘이 표시됨."""
     if sys.platform != "win32":
         return
