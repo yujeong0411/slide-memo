@@ -64,7 +64,7 @@ assert win._tray.visible is False, "expand() 복귀가 임시 트레이를 안 �
 win.hide_btn.click()
 assert not win.isVisible(), "숨기기 버튼이 hide_bar를 안 탔다"
 win.show_bar()
-assert win.hide_btn.text() == ("»" if win.side == "right" else "«")
+assert win.hide_icon_asset() == ("hide_right.svg" if win.side == "right" else "hide_left.svg")
 
 # 복귀 방법 안내는 숨길 때마다 (no-op인 중복 hide_bar에는 안 뜬다)
 _msg_db = MemoDatabase(Path(tempfile.mkdtemp()) / "hint.db")

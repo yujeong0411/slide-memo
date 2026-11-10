@@ -17,6 +17,7 @@ AI_FEATURES: dict[str, dict] = {
     "summarize": {
         "label": "요약",
         "button": "요약하기",
+        "progress": "요약하는 중이에요",
         "system": "You are a concise summarizer. Summarize in the same language as the input. Output only the summary, no preamble.",
         "user_template": "Summarize the following text:\n\n{{text}}",
         "needs_selection": False,
@@ -26,6 +27,7 @@ AI_FEATURES: dict[str, dict] = {
     "translate": {
         "label": "번역 (한↔영)",
         "button": "번역하기",
+        "progress": "번역하는 중이에요",
         "system": "You are a professional translator. If the input is Korean, translate to English. If English, translate to Korean. Output only the translation.",
         "user_template": "Translate:\n\n{{text}}",
         "needs_selection": False,
@@ -35,6 +37,7 @@ AI_FEATURES: dict[str, dict] = {
     "spellcheck": {
         "label": "맞춤법 교정",
         "button": "맞춤법 고치기",
+        "progress": "맞춤법을 고치는 중이에요",
         "system": "You are a proofreader. Fix spelling, grammar, and punctuation errors. Preserve the original language and style. Output only the corrected text.",
         "user_template": "Fix errors in:\n\n{{text}}",
         "needs_selection": False,
@@ -44,6 +47,7 @@ AI_FEATURES: dict[str, dict] = {
     "title": {
         "label": "제목 생성",
         "button": "제목 짓기",
+        "progress": "제목을 짓는 중이에요",
         "system": "You are a title writer. Generate a short, descriptive title (under 10 words) for the given text. Use the same language as the text. Output only the title.",
         "user_template": "Generate a title for:\n\n{{text}}",
         "needs_selection": False,
@@ -53,6 +57,7 @@ AI_FEATURES: dict[str, dict] = {
     "keywords": {
         "label": "키워드 추출",
         "button": "키워드 뽑기",
+        "progress": "키워드를 뽑는 중이에요",
         "system": "You are a keyword extractor. Extract 5-10 key terms or phrases from the text. Use the same language. Output only a comma-separated list of keywords.",
         "user_template": "Extract keywords from:\n\n{{text}}",
         "needs_selection": False,
@@ -113,7 +118,7 @@ class AIWorker(QThread):
                 return
             except litellm.InternalServerError as e:
                 if attempt < max_attempts and not self._cancelled:
-                    self.progress.emit(f"⏳ 서버 과부하, 재시도 중... ({attempt}/{max_attempts - 1})")
+                    self.progress.emit(f"서버가 바빠서 다시 시도하는 중이에요 ({attempt}/{max_attempts - 1})")
                     time.sleep(3)
                     continue
                 if not self._cancelled:

@@ -26,17 +26,169 @@ QMenu::item:selected { background: $overlay_hover; }
 QMenu::item:disabled { color: $fg_disabled; }
 QMenu::separator { height: 9px; }
 
+/* ----- 바 ----- */
+#mainContainer, #tabColumn, #tabScroll, #tabsContainer { background: transparent; border: none; }
+#tabScroll QScrollBar:vertical { background: transparent; width: 4px; margin: 0; }
+#tabScroll QScrollBar::handle:vertical { background: $scroll; border-radius: 2px; min-height: 16px; }
+#tabScroll QScrollBar::add-line:vertical, #tabScroll QScrollBar::sub-line:vertical { height: 0; }
+#tabScroll QScrollBar::add-page:vertical, #tabScroll QScrollBar::sub-page:vertical { background: transparent; }
+
+QFrame#barGroup { background: $bg_canvas; border: 1px solid $line; }
+QFrame#barGroup[side="right"] {
+    border-right: none;
+    border-top-left-radius: ${r_surface}px;
+    border-bottom-left-radius: ${r_surface}px;
+}
+QFrame#barGroup[side="left"] {
+    border-left: none;
+    border-top-right-radius: ${r_surface}px;
+    border-bottom-right-radius: ${r_surface}px;
+}
+QPushButton#barBtn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: ${r_control}px;
+    padding: 0;
+}
+QPushButton#barBtn:hover { background: $overlay_hover; }
+QPushButton#barBtn:pressed { background: $overlay_press; }
+QPushButton#barBtn:focus { border-color: $focus; }
+QLabel#trashBadge {
+    background: $bg_muted;
+    color: $fg_secondary;
+    font-size: ${label_px}px;
+    font-weight: 500;
+    min-height: 20px;
+    max-height: 20px;
+    min-width: 8px;
+    border-radius: 10px;
+    padding: 0 6px;
+}
+
+/* ----- 떠 있는 카드: 배너, 녹음 줄, AI 진행 ----- */
+QFrame#floatCard {
+    background: $bg_raised;
+    border: 1px solid $line;
+    border-radius: ${r_control}px;
+}
+QFrame#floatCard QLabel { color: $fg_secondary; background: transparent; }
+QLabel#recDot { background: $danger; border-radius: 4px; }
+QFrame#toast { background: $contrast; border: none; border-radius: ${r_control}px; }
+QFrame#toast QLabel { color: $white; background: transparent; }
+QPushButton#toastAction {
+    background: transparent;
+    color: $white;
+    border: 1px solid transparent;
+    text-decoration: underline;
+    font-weight: 500;
+    padding: 0;
+}
+QPushButton#textBtn {
+    background: transparent;
+    color: $accent_text;
+    border: 1px solid transparent;
+    border-radius: ${r_control}px;
+    text-decoration: underline;
+    font-weight: 500;
+    padding: 2px 4px;
+}
+QPushButton#textBtn:hover { background: $overlay_hover; }
+QPushButton#textBtn:focus { border-color: $focus; }
+QPushButton#cardClose {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: ${r_control}px;
+    padding: 0;
+}
+QPushButton#cardClose:hover { background: $overlay_hover; }
+QProgressBar#splashBar { background: $bg_muted; border: none; border-radius: 2px; }
+QProgressBar#splashBar::chunk { background: $accent; border-radius: 2px; }
+
+/* ----- 작은 단추(sm): 팝업, 말풍선, 카드 안 ----- */
+QFrame#popupCard QPushButton[variant], QFrame#floatCard QPushButton[variant] {
+    border: 1px solid transparent;
+    border-radius: ${r_control}px;
+    min-height: ${sm_inner}px;
+    max-height: ${sm_inner}px;
+    padding: 0 ${sm_pad}px;
+    font-weight: 500;
+}
+QFrame#popupCard QPushButton[variant="primary"] { background: $accent; color: $on_accent; }
+QFrame#popupCard QPushButton[variant="primary"]:hover { background: $primary_hover; }
+QFrame#popupCard QPushButton[variant="primary"]:pressed { background: $accent_press; }
+QFrame#popupCard QPushButton[variant="ghost"], QFrame#floatCard QPushButton[variant="ghost"] {
+    background: transparent;
+    color: $fg_secondary;
+}
+QFrame#popupCard QPushButton[variant="ghost"]:hover, QFrame#floatCard QPushButton[variant="ghost"]:hover { background: $overlay_hover; }
+QFrame#floatCard QPushButton[variant="secondary"] { background: $secondary_bg; color: $fg; border-color: $secondary_border; }
+QFrame#floatCard QPushButton[variant="secondary"]:hover { background: $secondary_hover; }
+QFrame#popupCard QPushButton[variant="iconSm"] {
+    background: transparent;
+    min-width: ${sm_inner}px;
+    max-width: ${sm_inner}px;
+    padding: 0;
+}
+QFrame#popupCard QPushButton[variant="iconSm"]:hover { background: $overlay_hover; }
+QFrame#popupCard QPushButton:focus, QFrame#floatCard QPushButton:focus { border-color: $focus; }
+
 /* ----- 자체 팝업 ----- */
 QFrame#popupCard {
     background: $bg_raised;
     border: 1px solid $line;
     border-radius: ${r_control}px;
 }
+QFrame#popupCard QLabel { color: $fg; background: transparent; }
 QFrame#popupCard QLabel[role="group"] {
     font-size: ${label_px}px;
     font-weight: 500;
     color: $fg_secondary;
 }
+QFrame#popupCard QLabel[role="description"] { color: $fg_secondary; }
+QFrame#popupCard QLabel[role="popupTitle"] { font-weight: 500; }
+QFrame#popupCard QLabel[role="weekday"] { font-size: ${caption_px}px; color: $fg_hint; min-height: 32px; min-width: 32px; }
+QFrame#popupCard QLabel[role="step"] { font-size: ${caption_px}px; color: $fg_hint; }
+QFrame#popupCard QLabel[role="guideTitle"] { font-weight: 500; color: $fg; }
+QPushButton#popupItem {
+    background: transparent;
+    color: $fg;
+    border: 1px solid transparent;
+    border-radius: ${r_control}px;
+    min-height: ${md_inner}px;
+    max-height: ${md_inner}px;
+    padding: 0 12px 0 8px;
+    text-align: left;
+}
+QPushButton#popupItem:hover { background: $overlay_hover; }
+QPushButton#popupItem:pressed { background: $overlay_press; }
+QPushButton#popupItem:focus { border-color: $focus; }
+QPushButton#chip {
+    background: transparent;
+    color: $fg;
+    border: 1px solid $line_strong;
+    border-radius: 12px;
+    min-height: ${sm_inner}px;
+    max-height: ${sm_inner}px;
+    padding: 0 ${md_pad}px;
+}
+QPushButton#chip:hover { background: $overlay_hover; }
+QPushButton#chip:focus { border-color: $focus; }
+QPushButton#chip[selected="true"] { background: $chip_selected; color: $on_accent; border-color: transparent; }
+QPushButton#dayCell {
+    background: transparent;
+    color: $fg;
+    border: 1px solid transparent;
+    border-radius: ${r_control}px;
+    min-width: 30px;
+    max-width: 30px;
+    min-height: ${md_inner}px;
+    max-height: ${md_inner}px;
+    padding: 0;
+}
+QPushButton#dayCell:hover { background: $overlay_hover; }
+QPushButton#dayCell:focus { border-color: $focus; }
+QPushButton#dayCell[today="true"] { border-color: $line_strong; }
+QPushButton#dayCell[selected="true"] { background: $accent_weak; color: $accent_strong; }
 
 /* ----- 대화창 ----- */
 QDialog, QMessageBox { background: $bg_canvas; color: $fg; }
@@ -123,7 +275,7 @@ QDialog QPushButton[variant="icon"]:pressed { background: $overlay_press; }
 QDialog QPushButton[variant="icon"]:focus { border-color: $focus; }
 
 /* ----- 입력 ----- */
-QDialog QLineEdit, QDialog QSpinBox, QDialog QComboBox {
+QDialog QLineEdit, QDialog QSpinBox, QDialog QComboBox, QFrame#popupCard QComboBox {
     background: $bg_canvas;
     color: $fg;
     border: 1px solid $line_control;
@@ -134,15 +286,15 @@ QDialog QLineEdit, QDialog QSpinBox, QDialog QComboBox {
     selection-background-color: $selection_bg;
     selection-color: $selection_fg;
 }
-QDialog QComboBox { combobox-popup: 0; }
-QDialog QLineEdit:focus, QDialog QSpinBox:focus, QDialog QComboBox:focus { border-color: $accent; }
+QDialog QComboBox, QFrame#popupCard QComboBox { combobox-popup: 0; }
+QDialog QLineEdit:focus, QDialog QSpinBox:focus, QDialog QComboBox:focus, QFrame#popupCard QComboBox:focus { border-color: $accent; }
 QDialog QLineEdit:disabled, QDialog QSpinBox:disabled, QDialog QComboBox:disabled {
     color: $fg_disabled;
     border-color: $line_strong;
 }
 
-QDialog QComboBox::drop-down { border: none; width: 28px; }
-QDialog QComboBox::down-arrow { image: url("$icon_chevron_down"); width: 16px; height: 16px; }
+QDialog QComboBox::drop-down, QFrame#popupCard QComboBox::drop-down { border: none; width: 28px; }
+QDialog QComboBox::down-arrow, QFrame#popupCard QComboBox::down-arrow { image: url("$icon_chevron_down"); width: 16px; height: 16px; }
 QComboBox QAbstractItemView {
     background: $bg_raised;
     color: $fg;

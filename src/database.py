@@ -71,6 +71,8 @@ SORT_CLAUSES = {
     "updated_asc": "updated_at ASC, id ASC",
     "title_az": "title COLLATE NOCASE ASC, id ASC",
     "created_desc": "created_at DESC, id DESC",
+    "created_asc": "created_at ASC, id ASC",
+    "title_za": "title COLLATE NOCASE DESC, id DESC",
 }
 
 

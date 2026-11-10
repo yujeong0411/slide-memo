@@ -38,7 +38,7 @@ a = Analysis(
     ['src/main.py'],
     pathex=['src'],
     binaries=litellm_binaries + tiktoken_binaries + tiktoken_ext_binaries,
-    datas=[('logo.ico', '.'), ('logo.png', '.'), ('assets', 'assets'), ('src/theme/*.qss', 'theme')] + litellm_datas + tiktoken_datas + tiktoken_ext_datas,
+    datas=[('assets', 'assets'), ('src/theme/*.qss', 'theme')] + litellm_datas + tiktoken_datas + tiktoken_ext_datas,
     hiddenimports=['keyring.backends', 'keyring.backends.Windows', 'tiktoken_ext', 'tiktoken_ext.openai_public'] + litellm_hiddenimports + tiktoken_hiddenimports + tiktoken_ext_hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -70,7 +70,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['logo.ico'],
+    icon=['assets/icons/SlideMemo.ico'],
 )
 coll = COLLECT(
     exe,

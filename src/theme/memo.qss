@@ -75,6 +75,12 @@ QToolButton#sortCombo {
 }
 QToolButton#sortCombo:hover { background: $memo_hover; }
 QToolButton#sortCombo::menu-indicator { width: 0; }
+QToolButton#sortCombo[compact="true"] {
+    background: transparent;
+    border-color: transparent;
+    padding: 0;
+}
+QToolButton#sortCombo[compact="true"]:hover { background: $memo_hover; }
 
 QToolButton#colorBtn {
     background: transparent;
@@ -93,6 +99,7 @@ QToolButton#fmtBtn:hover { background: $memo_hover; }
 QToolButton#fmtBtn:pressed { background: $memo_selected; }
 QToolButton#fmtBtn[on="true"] { background: $memo_selected; }
 QToolButton#fmtBtn::menu-indicator { width: 0; height: 0; }
+QToolButton#fmtBtn[recording="true"] { background: $danger_fill; border-radius: 12px; }
 QFrame#fmtSep { background: $memo_divider; border: none; }
 
 QPushButton#aiFeatureBtn {

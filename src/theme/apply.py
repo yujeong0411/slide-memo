@@ -205,6 +205,7 @@ def _qss_values(mode: str, t: dict[str, str]) -> dict[str, object]:
         sm_pad=T.CONTROL["sm"][1] - 1,
         r_control=T.RADIUS["control"],
         r_small=T.RADIUS["small"],
+        r_surface=T.RADIUS["surface"],
     )
     values.update(_write_qss_icons(mode, t))
     return values
@@ -241,6 +242,7 @@ def apply_memo(body: QWidget, color: str, side: str) -> dict[str, str]:
     values: dict[str, object] = dict(tokens)
     values.update(
         body_corners=_body_corners(side),
+        danger_fill=current()["danger_fill"],
         selection_bg=T.SELECTION_BG,
         selection_fg=T.SELECTION_FG,
         title_px=T.TYPE["title"][0],

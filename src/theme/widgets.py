@@ -68,6 +68,11 @@ def _paint_soft_shadow(painter: QPainter, panel: QRectF, radius: int) -> None:
         painter.drawRoundedRect(grown, radius + spread, radius + spread)
 
 
+def tip(label: str, shortcut: str) -> str:
+    """툴팁: 단축키는 같은 줄에 72% 불투명도로 (4.5)."""
+    return f'{label} &nbsp;<span style="color: rgba(255,255,255,0.72);">{shortcut}</span>'
+
+
 class ThemedMenu(QMenu):
     """QSS로는 항목별 색(위험 항목, 단축키, 묶음 제목)을 줄 수 없어 직접 그린다 (4.3)."""
 
@@ -302,7 +307,7 @@ class PopupPanel(QFrame):
     def hideEvent(self, event) -> None:  # noqa: N802
         super().hideEvent(event)
         if self._owner is not None:
-            self._owner.raise_()
+            self._owner.window().raise_()
 
 
 class AppDialog(QDialog):
