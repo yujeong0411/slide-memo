@@ -38,3 +38,6 @@ blog-images/
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code 개인 허용 설정 (사용자 경로가 들어간다)
+.claude/settings.local.json
