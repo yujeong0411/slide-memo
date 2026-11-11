@@ -25,6 +25,10 @@ docs/ui-audit-after/
 .vscode/
 *.swp
 
+# 개편 시안·개편 전 캡처는 저장소에 두지 않는다 (기준은 docs/ui-design/SlideMemo-design.md)
+docs/ui-design/mockup/
+docs/ui-audit/
+
 # OS
 .DS_Store
 Thumbs.db
