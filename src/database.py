@@ -137,6 +137,8 @@ class MemoDatabase:
         self.conn = sqlite3.connect(str(self.db_path))
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
+        # 지우거나 고친 내용이 DB 파일 빈 공간에 남지 않게 0으로 덮어쓴다 (동기화와 상관없이)
+        self.conn.execute("PRAGMA secure_delete = ON")
         self._backed_up: set[str] = set()
         self._init_schema()
         self._migrate()
