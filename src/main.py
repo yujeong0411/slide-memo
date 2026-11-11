@@ -2905,18 +2905,22 @@ class SlideMemoWindow(QWidget):
 
     # ----- 가이드 (말풍선 투어) -----
     def _guide_script(self, which: str) -> list[tuple[str, str, object]]:
-        """(제목, 설명, 대상 위젯을 돌려주는 함수) 목록. 한 번에 4개를 넘기지 않는다 —
-        길어지면 끝까지 보는 사람이 급격히 줄어서, 나머지는 만든 적 없는 셈이 된다."""
+        """(제목, 설명, 대상 위젯을 돌려주는 함수) 목록. 한 자리에서 5개를 넘기지 않는다 —
+        길어지면 끝까지 보는 사람이 급격히 줄어서, 나머지는 만든 적 없는 셈이 된다.
+        바 단계는 아래 묶음 순서(새 메모 → 휴지통 → 숨기기)를 따라간다 (9장 31)."""
         if which == "bar":
             return [
                 ("탭을 눌러 메모를 펼쳐요", "한 번 더 누르거나 Esc를 누르면 접혀요.",
                  lambda: self._first_tab_btn() or self.tab_scroll),
-                ("새 메모를 만들어요", "아래쪽 더하기 단추나 Ctrl+N으로 바로 만들 수 있어요.",
+                ("새 메모를 만들어요", "탭 아래 더하기 단추를 누르거나 Ctrl+N을 눌러요.",
                  lambda: self.new_tab_btn),
-                ("바 크기를 바꿔요", "바 안쪽 가장자리를 끌면 폭이, 위아래 끝을 끌면 길이가 바뀌어요.",
-                 lambda: self.tab_column),
+                ("지운 메모는 휴지통에 있어요", "여기서 다시 꺼내거나 완전히 지울 수 있어요.",
+                 lambda: self.trash_btn if self.trash_btn.isVisible() else None),
+                ("바를 옮기고 크기를 바꿔요",
+                 "손잡이를 끌면 위아래로 옮겨요. 바 안쪽 가장자리를 끌면 폭이, 위아래 끝을 끌면 길이가 바뀌어요.",
+                 lambda: self.drag_grip),
                 ("바를 잠깐 숨겨요",
-                 "화살표 단추나 Ctrl+Shift+Z로 숨기고, 트레이 아이콘으로 되돌려요. 바를 우클릭하면 설정이 있어요.",
+                 "Ctrl+Shift+Z로도 숨길 수 있어요. 남은 로고 단추를 누르면 다시 나와요. 설정은 바를 우클릭해서 열어요.",
                  lambda: self.hide_btn),
             ]
         return [

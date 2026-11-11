@@ -28,7 +28,7 @@ win.show()
 # ----- 1단계: 바 사용법 -----
 win.start_guide("bar")
 total = len(win._guide_script("bar"))
-assert total == 4, total  # 한 자리에서 4개를 넘기지 않는다
+assert total == 5, total  # 한 자리에서 5개를 넘기지 않는다
 assert win._guide.isVisible(), "말풍선이 안 떴다"
 assert win._guide.step_lbl.text() == f"1/{total}"
 # 말풍선이 떠 있는 동안엔 바가 topmost를 재점령하면 안 된다 (툴팁과 같은 이유)
