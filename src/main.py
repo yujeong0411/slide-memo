@@ -4361,22 +4361,35 @@ def _whats_new_since(seen: str) -> list[tuple[str, list[str]]]:
     return [(v, lines) for v, lines in WHATS_NEW if _ver_tuple(v) > seen_t]
 
 
+WELCOME_TITLE = "화면 가장자리에 붙는 메모장이에요"
+WELCOME_LINES = (
+    "탭을 누르면 메모가 펼쳐지고, 한 번 더 누르거나 Esc를 누르면 접혀요.",
+    "사용법을 말풍선으로 짧게 알려 드릴까요? 언제든 건너뛸 수 있어요.",
+)
+WELCOME_HINT = "나중에 보려면 바를 우클릭해서 설정의 '사용법 다시 보기'를 눌러요."
+
+
 def _show_welcome(window: "SlideMemoWindow", db: MemoDatabase) -> None:
     """신규 설치 첫 실행 안내. 튜토리얼을 예고 없이 시작하지 않고 먼저 물어본다.
     (업그레이드 사용자는 이 팝업 대신 '새로운 기능'을 본다)"""
-    bar_steps = len(window._guide_script("bar"))  # 단계 수는 가이드 목록을 따라간다
-    body_steps = len(window._guide_script("body"))
+    caption_px = T.TYPE["caption"][0]
+
+    def gap(px: int) -> str:
+        return f'<br><span style="font-size: {px}px;">&nbsp;</span><br>'
+
+    hint = theme_apply.current()["fg_secondary"]
     box = message_box(
         window,
-        "화면 가장자리에 붙어 있는 메모장이에요",
-        "· 탭을 누르면 메모가 펼쳐지고, <b>Esc</b>로 접혀요.<br>"
-        "· 나머지 사용법을 <b>말풍선으로 짧게</b> 안내해 드릴까요?"
-        f" (바 {bar_steps}단계 · 메모 {body_steps}단계, 언제든 건너뛸 수 있어요)<br>"
-        "· 나중에 보려면 <b>설정 → 사용법 다시 보기</b>를 누르세요.",
+        WELCOME_TITLE,
+        # 메시지 창의 글 칸은 문단 여백을 무시해서, 작은 빈 줄로 문단을 띄운다
+        f"{WELCOME_LINES[0]}{gap(6)}{WELCOME_LINES[1]}{gap(10)}"
+        f'<span style="font-size: {caption_px}px; color: {hint};">{WELCOME_HINT}</span>',
     )
     add_box_button(box, "나중에", QMessageBox.ButtonRole.RejectRole)
     start_btn = add_box_button(box, "가이드 보기", QMessageBox.ButtonRole.AcceptRole, "primary")
+    # 되돌릴 수 없는 일이 아니라서 Enter로 바로 시작한다
     box.setDefaultButton(start_btn)
+    start_btn.setFocus()
     box.setWindowFlags(box.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     box.exec()
     window._force_topmost()
