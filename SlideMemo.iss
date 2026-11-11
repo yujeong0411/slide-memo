@@ -48,6 +48,11 @@ Type: files; Name: "{autoprograms}\Slide Memo\Slide Memo 제거.lnk"
 Type: dirifempty; Name: "{autoprograms}\Slide Memo"
 Type: files; Name: "{autodesktop}\Slide Memo.lnk"
 
+; 자동 실행은 앱 설정이 켜고 끈다(HKCU Run 값 "SlideMemo"). 설치할 때는 만들지도 바꾸지도 않고(ValueType: none),
+; 제거할 때만 지운다. 없으면 제거한 뒤에도 사라진 exe를 가리키는 값이 남았다 (2.1.0 Sandbox 시험).
+[Registry]
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "SlideMemo"; ValueType: none; Flags: uninsdeletevalue
+
 [Files]
 Source: "dist\SlideMemo\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\SlideMemo\*"; Excludes: "{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
