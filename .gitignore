@@ -29,6 +29,11 @@ docs/ui-audit-after/
 docs/ui-design/mockup/
 docs/ui-audit/
 
+# 블로그용 페이지와 그림은 저장소에 두지 않는다
+guide.ts
+slide-memo.ts
+blog-images/
+
 # OS
 .DS_Store
 Thumbs.db
