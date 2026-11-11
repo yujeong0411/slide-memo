@@ -101,6 +101,10 @@ class Op:
     def seq(self) -> int:
         return int(self.id.rsplit(":", 1)[1])
 
+    @property
+    def hlc_key(self) -> tuple[int, int, str]:
+        return parse_hlc(self.hlc)
+
     def to_json(self) -> str:
         d = {"id": self.id, "hlc": self.hlc, "uid": self.uid, "f": self.f, "v": self.v}
         if self.base:

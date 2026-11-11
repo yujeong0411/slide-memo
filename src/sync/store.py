@@ -8,15 +8,19 @@
   - 2.0.x로 되돌려 고침: 2.0.x는 head를 모르지만 memos 표가 달라져 있으니 켤 때 잡힌다
   - 고치다가 앱이 꺼짐: 다음 reconcile에서 다시 비교하므로 잃지 않는다
 reconcile은 한 트랜잭션이다. 중간에 실패하면 op·head·시계가 전부 취소된다.
-ponytail: 매번 모든 메모를 훑는다(메모 수천 개, 본문 수 MB까지는 수 ms~수십 ms). 느려지면 updated_at·dirty 표시로 범위를 줄인다.
+
+다른 PC의 op는 apply_remote()가 받는다. head를 바꾸고 memos 표를 head로 다시 계산해 쓰므로,
+적용 뒤 reconcile은 아무것도 만들지 않는다 (주고받기가 되풀이되지 않는다).
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime
 
+from database import DEFAULT_COLOR, VERSION_KEEP
 from sync.core import (
-    HLC, MemoState, Op, SETTING_PREFIX, SYNCED_SETTINGS, materialize, wall_ms,
+    HLC, MemoState, Op, SETTING_PREFIX, SYNCED_SETTINGS, decide, hlc_wall, materialize, wall_ms,
 )
 
 _SCHEMA = """
@@ -27,6 +31,8 @@ CREATE TABLE IF NOT EXISTS sync_head (uid TEXT NOT NULL, f TEXT NOT NULL, op TEX
 CREATE TABLE IF NOT EXISTS sync_outbox (seq INTEGER PRIMARY KEY, op TEXT NOT NULL, uploaded INTEGER NOT NULL DEFAULT 0);
 -- body op의 base 사슬 (동시 수정 판정용, core.is_ancestor)
 CREATE TABLE IF NOT EXISTS sync_body_chain (op_id TEXT PRIMARY KEY, base TEXT);
+-- 다른 PC마다 어디까지 적용했는지. 한 PC의 op는 순번대로 오므로 이것만으로 중복을 거른다.
+CREATE TABLE IF NOT EXISTS sync_cursor (device TEXT PRIMARY KEY, applied_seq INTEGER NOT NULL, version TEXT);
 """
 
 
@@ -38,8 +44,12 @@ def local_iso_to_ms(text: str | None) -> int:
         return wall_ms()
 
 
+def ms_to_local_iso(ms: int) -> str:
+    return datetime.fromtimestamp(ms / 1000).isoformat(timespec="seconds")
+
+
 def memo_fields(row) -> dict[str, object]:
-    """memos 한 줄 → 동기화 필드 값. created·trash는 아래에서 따로 다룬다."""
+    """memos 한 줄 → 동기화 필드 값. created·trash는 따로 다룬다."""
     return {
         "body": {"title": row["title"], "content": row["content"]},
         "color": row["color"],
@@ -53,7 +63,7 @@ def _effective(state: MemoState | None) -> dict[str, object]:
     s = state or MemoState("")
     return {
         "body": {"title": s.title, "content": s.content},
-        "color": s.color,
+        "color": s.color or DEFAULT_COLOR,
         "font": {"family": s.font_family, "size": s.font_size},
         "pin": s.pinned,
     }
@@ -74,6 +84,13 @@ class SyncStore:
             "INSERT INTO sync_state (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, str(value)),
         )
+
+    def get_json(self, key: str, default):
+        raw = self._get(key)
+        return json.loads(raw) if raw else default
+
+    def set_json(self, key: str, value) -> None:
+        self._set(key, json.dumps(value))
 
     @property
     def device(self) -> str | None:
@@ -102,9 +119,18 @@ class SyncStore:
                 self._reset()
 
     def _reset(self) -> None:
-        for table in ("sync_head", "sync_outbox", "sync_body_chain"):
+        """기록을 비운다. device도 새로 만든다 — 같은 device로 순번을 1부터 다시 쓰면, 옛 계정 Drive에
+        남은 같은 순번의 파일 때문에 다른 PC가 새 op를 '이미 받음'으로 걸러 버린다."""
+        for table in ("sync_head", "sync_outbox", "sync_body_chain", "sync_cursor"):
             self.conn.execute(f"DELETE FROM {table}")
-        self.conn.execute("DELETE FROM sync_state WHERE key IN ('seq', 'hlc_l', 'hlc_c')")
+        self.conn.execute("DELETE FROM sync_state WHERE key NOT IN ('account', 'connected')")
+
+    def _clock(self) -> HLC:
+        return HLC(self.device, self.wall, int(self._get("hlc_l", "0")), int(self._get("hlc_c", "0")))
+
+    def _save_clock(self, clock: HLC) -> None:
+        self._set("hlc_l", clock.l)
+        self._set("hlc_c", clock.c)
 
     # ----- head -----
     def heads(self) -> dict[str, dict[str, Op]]:
@@ -112,6 +138,16 @@ class SyncStore:
         for uid, f, op in self.conn.execute("SELECT uid, f, op FROM sync_head"):
             out.setdefault(uid, {})[f] = Op.from_json(op)
         return out
+
+    def heads_of(self, uid: str) -> dict[str, Op]:
+        return {f: Op.from_json(op) for f, op in self.conn.execute(
+            "SELECT f, op FROM sync_head WHERE uid = ?", (uid,))}
+
+    def _put_head(self, op: Op, line: str | None = None) -> None:
+        self.conn.execute(
+            "INSERT INTO sync_head (uid, f, op) VALUES (?, ?, ?) "
+            "ON CONFLICT(uid, f) DO UPDATE SET op = excluded.op", (op.uid, op.f, line or op.to_json()),
+        )
 
     def pending(self) -> list[Op]:
         return [Op.from_json(r[0]) for r in self.conn.execute(
@@ -123,7 +159,7 @@ class SyncStore:
         if not self.connected:
             return []
         with self.conn:  # 한 트랜잭션: 중간에 실패하면 전부 취소
-            clock = HLC(self.device, self.wall, int(self._get("hlc_l", "0")), int(self._get("hlc_c", "0")))
+            clock = self._clock()
             seq = int(self._get("seq", "0"))
             heads = self.heads()
             made: list[Op] = []
@@ -165,17 +201,113 @@ class SyncStore:
                 if row is not None and (head is None or head.v != row[0]):
                     emit(uid, "value", row[0])
             self._set("seq", seq)
-            self._set("hlc_l", clock.l)
-            self._set("hlc_c", clock.c)
+            self._save_clock(clock)
             return made
 
     def _record(self, op: Op) -> None:
         line = op.to_json()
         self.conn.execute("INSERT INTO sync_outbox (seq, op) VALUES (?, ?)", (op.seq, line))
-        self.conn.execute(
-            "INSERT INTO sync_head (uid, f, op) VALUES (?, ?, ?) "
-            "ON CONFLICT(uid, f) DO UPDATE SET op = excluded.op", (op.uid, op.f, line),
-        )
+        self._put_head(op, line)
         if op.f == "body":
             self.conn.execute("INSERT OR REPLACE INTO sync_body_chain (op_id, base) VALUES (?, ?)",
                               (op.id, op.base))
+
+    # ----- 다른 PC의 op 받기 -----
+    def cursor(self, device: str) -> tuple[int, str | None]:
+        row = self.conn.execute(
+            "SELECT applied_seq, version FROM sync_cursor WHERE device = ?", (device,)).fetchone()
+        return (row[0], row[1]) if row else (0, None)
+
+    def set_cursor(self, device: str, applied_seq: int, version: str | None) -> None:
+        self.conn.execute(
+            "INSERT INTO sync_cursor (device, applied_seq, version) VALUES (?, ?, ?) "
+            "ON CONFLICT(device) DO UPDATE SET applied_seq = excluded.applied_seq, version = excluded.version",
+            (device, applied_seq, version),
+        )
+
+    def apply_remote(self, ops: list[Op]) -> list[tuple[str, bool]]:
+        """다른 PC의 op들을 적용한다. 호출하는 쪽이 트랜잭션을 연다(커서와 함께 커밋).
+        HLC 순으로 적용하고 body 사슬을 먼저 모두 넣는다 — 오래 꺼져 있던 PC가 여러 PC의 op를
+        한꺼번에 받을 때, 아직 안 넣은 다른 PC의 op를 거쳐 이어 쓴 것을 동시 수정으로 오판하지 않게.
+        충돌로 진 내용은 이 PC의 이전 버전에 넣고, (uid, 진 쪽이 이 PC의 내용인가)를 돌려준다."""
+        ops = sorted(ops, key=lambda o: o.hlc_key)
+        for op in ops:
+            if op.f == "body":
+                self.conn.execute("INSERT OR IGNORE INTO sync_body_chain (op_id, base) VALUES (?, ?)",
+                                  (op.id, op.base))
+        chain = dict(self.conn.execute("SELECT op_id, base FROM sync_body_chain").fetchall())
+        clock = self._clock()
+        conflicts: list[tuple[str, bool]] = []
+        touched: list[str] = []
+        losers: dict[str, list[Op]] = {}
+        for op in ops:
+            clock.observe(op.hlc)
+            d = decide(self.heads_of(op.uid).get(op.f), op, chain)
+            if d.apply:
+                self._put_head(op)
+            if d.loser is not None:
+                losers.setdefault(op.uid, []).append(d.loser)
+                conflicts.append((op.uid, d.loser.device == self.device))
+            if op.uid not in touched:
+                touched.append(op.uid)
+        self._save_clock(clock)
+        for uid in touched:
+            self.write_memo(uid)
+        for uid, lost in losers.items():
+            row = self.conn.execute("SELECT id FROM memos WHERE uid = ?", (uid,)).fetchone()
+            if row is not None:
+                for op in lost:
+                    self._add_version(row[0], op.v)
+        return conflicts
+
+    def refresh_pending_purges(self) -> None:
+        """자동 비우기는 이 PC 시계로 날짜가 차야 적용된다. 시간이 지나면 다시 계산한다."""
+        for (uid,) in self.conn.execute("SELECT uid FROM sync_head WHERE f = 'autopurge'").fetchall():
+            self.write_memo(uid)
+
+    def write_memo(self, uid: str) -> None:
+        """head로 계산한 모습을 memos 표에 쓴다 (없으면 만들고, 지워졌으면 지운다)."""
+        heads = self.heads_of(uid)
+        row = self.conn.execute("SELECT id FROM memos WHERE uid = ?", (uid,)).fetchone()
+        if uid.startswith(SETTING_PREFIX):
+            if "value" in heads:
+                self.conn.execute(
+                    "INSERT INTO settings (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (uid[len(SETTING_PREFIX):], heads["value"].v),
+                )
+            return
+        st = materialize(uid, heads, self.wall())
+        if st is None:
+            if row is not None:
+                self.conn.execute("DELETE FROM memos WHERE id = ?", (row[0],))  # 이전 버전은 CASCADE
+            return
+        now = self.wall()
+        edited = [hlc_wall(heads[f].hlc) for f in ("body", "color", "font") if f in heads]
+        values = (
+            st.title, st.content, st.color or DEFAULT_COLOR, int(st.pinned),
+            ms_to_local_iso(st.trashed_at) if st.trashed_at is not None else None,
+            st.font_family, st.font_size,
+            ms_to_local_iso(st.created_at or now), ms_to_local_iso(max(edited) if edited else now),
+        )
+        if row is None:
+            self.conn.execute(
+                "INSERT INTO memos (title, content, color, is_pinned, deleted_at, font_family, font_size,"
+                " created_at, updated_at, uid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", values + (uid,))
+        else:
+            self.conn.execute(
+                "UPDATE memos SET title = ?, content = ?, color = ?, is_pinned = ?, deleted_at = ?,"
+                " font_family = ?, font_size = ?, created_at = ?, updated_at = ? WHERE id = ?",
+                values + (row[0],))
+
+    def _add_version(self, memo_id: int, v) -> None:
+        """충돌로 진 내용을 이전 버전에 남긴다 (database.snapshot과 같은 보관 개수)."""
+        self.conn.execute(
+            "INSERT INTO memo_versions (memo_id, title, content, created_at) VALUES (?, ?, ?, ?)",
+            (memo_id, v["title"], v["content"], ms_to_local_iso(self.wall())),
+        )
+        self.conn.execute(
+            "DELETE FROM memo_versions WHERE memo_id = ? AND id NOT IN"
+            " (SELECT id FROM memo_versions WHERE memo_id = ? ORDER BY id DESC LIMIT ?)",
+            (memo_id, memo_id, VERSION_KEEP),
+        )

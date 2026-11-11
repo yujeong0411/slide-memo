@@ -38,7 +38,7 @@ def check_matches_db(db, store):
     rows = db.conn.execute("SELECT * FROM memos").fetchall()
     for r in rows:
         st = materialize(r["uid"], heads[r["uid"]], T0)
-        assert (st.title, st.content, st.color, st.pinned, st.font_family, st.font_size) == (
+        assert (st.title, st.content, st.color or database.DEFAULT_COLOR, st.pinned, st.font_family, st.font_size) == (
             r["title"], r["content"], r["color"], bool(r["is_pinned"]), r["font_family"], r["font_size"]
         ), r["title"]
         assert (st.trashed_at is not None) == (r["deleted_at"] is not None), r["title"]
@@ -66,7 +66,8 @@ first = store.reconcile()
 assert {o.uid for o in first} == {a.uid, b.uid, c.uid, "settings:user_slots"}
 for m in (a, b, c):
     got = {o.f for o in first if o.uid == m.uid}
-    assert {"created", "body", "color"} <= got, (m.title, got)
+    assert {"created", "body"} <= got, (m.title, got)
+assert "color" in {o.f for o in first if o.uid == a.uid} and "color" not in {o.f for o in first if o.uid == b.uid}, "기본 색이면 색 기록이 없다"
 assert ("trash" in {o.f for o in first if o.uid == b.uid}) and ("pin" in {o.f for o in first if o.uid == c.uid})
 assert all(o.base is None for o in first), "처음 올리는 기록은 이전 기록이 없다"
 check_matches_db(db, store)
@@ -83,7 +84,7 @@ db.delete(c.id)
 ops = store.reconcile()
 assert fields(ops) == sorted([
     (a.uid, "body"), (a.uid, "pin"), (b.uid, "trash"),
-    (d.uid, "created"), (d.uid, "body"), (d.uid, "color"), (c.uid, "purge"),
+    (d.uid, "created"), (d.uid, "body"), (c.uid, "purge"),
 ]), fields(ops)
 for o in ops:
     prev = before.get(o.uid, {}).get(o.f)
@@ -98,7 +99,7 @@ db.soft_delete(d.id)
 assert store.reconcile() == [], "끊겨 있을 때는 기록하지 않는다"
 store.connect("me@example.com")
 ops = store.reconcile()
-assert fields(ops) == sorted([(a.uid, "body"), (d.uid, "trash"), (e.uid, "created"), (e.uid, "body"), (e.uid, "color")])
+assert fields(ops) == sorted([(a.uid, "body"), (d.uid, "trash"), (e.uid, "created"), (e.uid, "body")])
 check_matches_db(db, store)
 
 # 다른 계정으로 연결하면 그 계정 Drive에는 아무것도 없으니 전부 새로 올린다
