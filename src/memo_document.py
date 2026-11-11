@@ -315,17 +315,12 @@ too_big_images: set[str] = set()  # 다른 PC가 너무 커서 못 올린 그림
 
 
 def _image_names(doc: QTextDocument) -> list[str]:
-    names = []
-    block = doc.begin()
-    while block.isValid():
-        it = block.begin()
-        while not it.atEnd():
-            fragment = it.fragment()
-            if fragment.isValid() and fragment.charFormat().isImageFormat():
-                names.append(fragment.charFormat().toImageFormat().name())
-            it += 1
-        block = block.next()
-    return names
+    """문서 HTML의 <img src>. 문서의 글 조각을 하나씩 훑지 않는다 — 앱이 켜져 있는 동안 메모 문서마다
+    훑으면 창을 정리할 때 드물게 비정상 종료됐다(test_versions.py, 약 10%)."""
+    import html
+    import re
+
+    return [html.unescape(m) for m in re.findall(r'<img\b[^>]*?\bsrc="([^"]+)"', doc.toHtml(), re.IGNORECASE)]
 
 
 def placeholder_image(text: str, width: int = 440, height: int = 96) -> QImage:
