@@ -4449,12 +4449,21 @@ APP_VERSION = "2.0.0"
 _GITHUB_REPO = links.UPDATE_REPO  # 배포 저장소 (links.py)
 
 
-def _ver_tuple(v: str) -> tuple[int, ...]:
-    """'v1.2.0' → (1, 2, 0). 형식이 깨졌으면 빈 튜플(= 가장 낮은 버전)."""
-    try:
-        return tuple(int(x) for x in v.strip().lstrip("v").split("."))
-    except ValueError:
+_VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.]+))?$")
+
+
+def _ver_tuple(v: str) -> tuple:
+    """버전 비교 열쇠. 2.1.0 > 2.1.0-beta.2 > 2.1.0-beta.1 > 2.0.0 (SemVer 순서).
+    정식 버전은 끝에 (1,), 미리보기(-beta.1 등)는 (0, 조각들…)을 붙여 같은 숫자의 정식보다 낮게 둔다.
+    형식이 깨졌으면 빈 튜플(= 가장 낮은 버전)."""
+    m = _VERSION_RE.match((v or "").strip())
+    if not m:
         return ()
+    core = tuple(int(x) for x in m.group(1, 2, 3))
+    if m.group(4) is None:
+        return core + ((1,),)
+    pre = tuple((0, int(p), "") if p.isdigit() else (1, 0, p) for p in m.group(4).split("."))
+    return core + ((0,) + pre,)
 
 
 class UpdateChecker(QThread):

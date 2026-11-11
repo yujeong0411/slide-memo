@@ -81,6 +81,20 @@ assert opened[-1] == links.SETUP_URL == f"https://github.com/{NEW}/releases/late
 assert check("2.0.0", OLD) == ["2.1.0"], "지금 저장소에는 2.1.0이 마지막으로 남아 있어야 한다"
 assert check("2.1.0", NEW) == ["2.1.1"]
 
+# ----- 미리보기 버전 (혼자 쓰는 2.1.0-beta.1) -----
+V = M._ver_tuple
+order = ["1.4.1", "2.0.0", "2.1.0-alpha", "2.1.0-beta.1", "2.1.0-beta.2", "2.1.0-beta.10", "2.1.0-rc.1", "2.1.0", "2.1.1"]
+assert sorted(order, key=V) == order, sorted(order, key=V)
+assert V("v2.1.0-beta.1") == V("2.1.0-beta.1") and V("깨진 값") == () and V("2.1") == ()
+latest[NEW] = "2.0.0"
+assert check("2.1.0-beta.1", NEW) == [], "베타에서 2.0.0으로 '업데이트'하라고 하면 안 된다"
+latest[NEW] = "2.1.0"
+assert check("2.1.0-beta.1", NEW) == ["2.1.0"], "정식 2.1.0이 나오면 알린다"
+latest[NEW] = "2.1.0-beta.2"
+assert check("2.1.0-beta.1", NEW) == ["2.1.0-beta.2"]
+# 새 기능 안내: 베타를 본 뒤에 다시 켜도 같은 안내가 또 뜨지 않는다
+assert M._whats_new_since("2.1.0-beta.1") == [] and M._whats_new_since("1.4.1") != []
+
 # 응답이 망가져도 조용히 넘어간다 (업데이트 확인이 앱을 멈추지 않는다)
 latest[NEW] = ""
 assert check("2.1.0", NEW) == []
