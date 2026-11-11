@@ -72,7 +72,12 @@ def _answer(label):
 fresh_db = MemoDatabase(Path(tempfile.mkdtemp()) / "new.db")
 fresh_win = m.SlideMemoWindow(fresh_db)
 _answer("가이드 보기")
+_welcome_texts = []
+_exec = QMessageBox.exec
+QMessageBox.exec = lambda self: (_welcome_texts.append(self.informativeText() + self.text()), _exec(self))[1]
 m._show_welcome(fresh_win, fresh_db)
+QMessageBox.exec = _exec
+assert any("바 5단계 · 메모 4단계" in t for t in _welcome_texts), _welcome_texts
 assert fresh_win.guide_running(), "가이드 보기를 눌렀는데 시작되지 않았다"
 assert fresh_db.get_setting_int(m.GUIDE_BAR_KEY, 0) == 0, "아직 끝나지도 않았는데 완료 처리됐다"
 fresh_win._finish_guide()

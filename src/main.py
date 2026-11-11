@@ -4364,12 +4364,14 @@ def _whats_new_since(seen: str) -> list[tuple[str, list[str]]]:
 def _show_welcome(window: "SlideMemoWindow", db: MemoDatabase) -> None:
     """신규 설치 첫 실행 안내. 튜토리얼을 예고 없이 시작하지 않고 먼저 물어본다.
     (업그레이드 사용자는 이 팝업 대신 '새로운 기능'을 본다)"""
+    bar_steps = len(window._guide_script("bar"))  # 단계 수는 가이드 목록을 따라간다
+    body_steps = len(window._guide_script("body"))
     box = message_box(
         window,
         "화면 가장자리에 붙어 있는 메모장이에요",
         "· 탭을 누르면 메모가 펼쳐지고, <b>Esc</b>로 접혀요.<br>"
         "· 나머지 사용법을 <b>말풍선으로 짧게</b> 안내해 드릴까요?"
-        " (바 4단계 · 메모 4단계, 언제든 건너뛸 수 있어요)<br>"
+        f" (바 {bar_steps}단계 · 메모 {body_steps}단계, 언제든 건너뛸 수 있어요)<br>"
         "· 나중에 보려면 <b>설정 → 사용법 다시 보기</b>를 누르세요.",
     )
     add_box_button(box, "나중에", QMessageBox.ButtonRole.RejectRole)
