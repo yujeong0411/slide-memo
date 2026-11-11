@@ -160,9 +160,16 @@ class _ToolTipManager(QObject):
     )
 
     def __init__(self, parent: QObject) -> None:
-        super().__init__(parent)
-        self.tip = _AppToolTip()
+        super().__init__(parent)  # QApplication이 부모라 Python 쪽에서 먼저 사라지지 않는다
+        self.tip = _AppToolTip()  # 최상위 창이라 QObject 부모는 못 두고, 오래 사는 이 관리자가 쥔다
         self.owner: QWidget | None = None
+        self.disposed = False
+
+    def dispose(self) -> None:
+        """종료 정리: 툴팁 창을 숨기고 지운다. 시간을 재는 타이머는 Qt 쪽에 있어 따로 없다."""
+        self.disposed = True
+        self.hide_tip()
+        self.tip.deleteLater()
 
     def hide_tip(self) -> None:
         self.owner = None
@@ -208,12 +215,12 @@ def install_tooltips(app: QApplication) -> _ToolTipManager:
     if _tooltips is None:
         _tooltips = _ToolTipManager(app)
         app.installEventFilter(_tooltips)
-        app.aboutToQuit.connect(lambda: app.removeEventFilter(_tooltips))
+        A.release_on_quit(_tooltips, after=lambda manager: manager.dispose())
     return _tooltips
 
 
 def tooltip_visible() -> bool:
-    return _tooltips is not None and _tooltips.tip.isVisible()
+    return _tooltips is not None and not _tooltips.disposed and _tooltips.tip.isVisible()
 
 
 class ThemedMenu(QMenu):

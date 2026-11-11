@@ -1763,6 +1763,11 @@ class SlideMemoWindow(QWidget):
         self._quitting = False
         # 가이드(말풍선) 상태
         self._guide: GuideBubble | None = None
+        # 가이드 예약은 이 타이머 하나로만 한다. 여러 번 예약해도 한 번만 시작된다
+        self._guide_timer = QTimer(self)
+        self._guide_timer.setSingleShot(True)
+        self._guide_timer.timeout.connect(self._start_pending_guide)
+        self._pending_guide = "bar"
         self._guide_steps_queue: list[tuple[str, object]] = []
         self._guide_index = 0
         self._guide_which = "bar"
@@ -1809,7 +1814,13 @@ class SlideMemoWindow(QWidget):
         # 폰트 캐시가 미리 트리거된다.
         self._warm_up_body()
         QApplication.instance().installEventFilter(self)
+        theme_apply.release_on_quit(self, before=lambda win: win._stop_timers())
         self._register_hotkey()  # Ctrl+Shift+Z 전역 숨기기/복귀
+
+    def _stop_timers(self) -> None:
+        for timer in (self._edge_timer, self.autosave_timer, self._guide_timer, self._recording_timer):
+            if timer is not None:
+                timer.stop()
 
     def _warm_up_body(self) -> None:
         try:
@@ -2449,10 +2460,21 @@ class SlideMemoWindow(QWidget):
             return
         if not self.db.get_setting_int(GUIDE_BAR_KEY, 0):
             return  # 1단계부터 끝나고 나서
-        QTimer.singleShot(500, self._start_body_guide)
+        self._schedule_guide("body", 500)
 
-    def _start_body_guide(self) -> None:
-        self.start_guide("body")
+    def _schedule_guide(self, which: str, delay_ms: int) -> None:
+        self._pending_guide = which
+        self._guide_timer.start(delay_ms)
+
+    def _start_pending_guide(self) -> None:
+        which = self._pending_guide
+        if which == "body" and (
+            self.trash_mode or self.guide_running()
+            or self.db.get_setting_int(GUIDE_BODY_KEY, 0)
+            or not self.db.get_setting_int(GUIDE_BAR_KEY, 0)
+        ):
+            return  # 기다리는 사이에 조건이 바뀌었다
+        self.start_guide(which)
 
     def _on_fade_done(self) -> None:
         # 접힘 fade-out 종료 → setMask로 tab_column만 노출. 윈도우 폭은 그대로
@@ -2468,10 +2490,7 @@ class SlideMemoWindow(QWidget):
         """설정의 '가이드 다시 보기'. 1단계부터, 2단계는 다음 펼침 때 이어진다."""
         self.db.set_setting_int(GUIDE_BAR_KEY, 0)
         self.db.set_setting_int(GUIDE_BODY_KEY, 0)
-        QTimer.singleShot(200, self._start_bar_guide)
-
-    def _start_bar_guide(self) -> None:
-        self.start_guide("bar")
+        self._schedule_guide("bar", 200)
 
     def _open_settings(self) -> None:
         from settings_dialog import SettingsDialog
@@ -2918,6 +2937,15 @@ class SlideMemoWindow(QWidget):
         return bool(self._guide_steps_queue)
 
     def start_guide(self, which: str = "bar") -> None:
+        """한 번에 말풍선 하나: 예약을 지우고, 떠 있던 말풍선을 모두 닫고 시작한다."""
+        self._guide_timer.stop()
+        for widget in QApplication.topLevelWidgets():
+            # 이 창의 것만 닫는다. 다른 창의 말풍선을 지우면 그 창이 지워진 객체를 건드려 앱이 중단된다
+            if isinstance(widget, GuideBubble) and widget.parent() is self and widget is not self._guide:
+                widget.hide()
+                widget.deleteLater()
+        if self._guide is not None:
+            self._guide.hide()
         self._guide_which = which
         self._guide_steps_queue = self._guide_script(which)
         self._guide_index = 0
@@ -2947,6 +2975,7 @@ class SlideMemoWindow(QWidget):
 
     def _finish_guide(self) -> None:
         """끝까지 봤든 건너뛰었든 다시 뜨지 않는다 (설정에서 다시 볼 수 있음)."""
+        self._guide_timer.stop()
         if self._guide is not None:
             self._guide.hide()
         self.db.set_setting_int(
@@ -4508,7 +4537,10 @@ def main() -> int:
     _checker.start()
     window._update_checker = _checker  # GC 방지
 
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        theme_apply.release_watchers()  # 앱 객체가 정리되기 전에 앱 전체 감시자부터 뗀다
 
 
 if __name__ == "__main__":

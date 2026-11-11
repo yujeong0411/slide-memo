@@ -1,8 +1,10 @@
 """화면 모드 적용: 팔레트 → app.qss → 아이콘 색. SlideMemo-design.md 6.2."""
 from __future__ import annotations
 
+import atexit
 import re
 import sys
+import weakref
 from pathlib import Path
 from string import Template
 
@@ -152,6 +154,51 @@ class _AppStyle(QProxyStyle):
         return super().styleHint(hint, option, widget, return_data)
 
 
+_RELEASES: list = []
+
+
+def release_watchers() -> None:
+    """등록된 감시자를 모두 지금 뗀다. main()이 끝날 때 한 번 부른다."""
+    for release in list(_RELEASES):
+        release()
+
+
+def release_on_quit(watcher: QObject, before=None, after=None) -> None:
+    """앱 전체 감시자(installEventFilter)를 종료 때 먼저 뗀다.
+
+    떼지 않으면 Python이 종료하며 모듈을 치우는 중에도 Qt가 이벤트를 보내고,
+    감시자 안에서 난 예외 때문에 PyQt가 프로세스를 중단한다(0xC0000409).
+    순서: before(타이머 멈춤) → 감시 해제 → after(창 숨기고 지우기).
+    정상 종료(aboutToQuit), main()의 끝(release_watchers), 이벤트 루프 없이 끝나는 경우(atexit) 중
+    먼저 오는 쪽에서 한 번만 한다. main()이 끝나며 앱 객체가 정리될 때 감시자가 남아 있으면
+    이미 지워진 창을 건드려 같은 중단이 난다.
+    감시자는 약한 참조로만 들고 있어 수명을 늘리지 않는다."""
+    ref = weakref.ref(watcher)
+    done: list[bool] = []
+
+    def release() -> None:
+        obj = ref()
+        if done or obj is None:
+            return
+        done.append(True)
+        try:
+            if before is not None:
+                before(obj)
+            app = QApplication.instance()
+            if app is not None:
+                app.removeEventFilter(obj)
+            if after is not None:
+                after(obj)
+        except RuntimeError:  # Qt 쪽 객체가 이미 지워졌다
+            pass
+
+    app = QApplication.instance()
+    if app is not None:
+        app.aboutToQuit.connect(release)
+    atexit.register(release)
+    _RELEASES.append(release)
+
+
 class _WindowPolisher(QObject):
     """Qt가 직접 만드는 창에 글꼴을 준다. 클래스별 시스템 글꼴은 테마 변경 때 되돌아가므로
     뜰 때마다 지정한다."""
@@ -240,6 +287,7 @@ def apply_theme(app: QApplication, mode: str) -> None:
         app.setStyle(_AppStyle("Fusion"))
         app._window_polisher = _WindowPolisher(app)
         app.installEventFilter(app._window_polisher)
+        release_on_quit(app._window_polisher)
     app.setFont(base_font("body"))
     app.setPalette(_palette(t))
     app.setStyleSheet(Template(_qss_source("app.qss")).substitute(_qss_values(mode, t)))
