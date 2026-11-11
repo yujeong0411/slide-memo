@@ -7,6 +7,10 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# AI 연결 도구(LiteLLM)가 불러올 때 GitHub에서 모델 가격표를 받지 않고 설치본 안의 것을 쓰게 한다.
+# 앱을 켤 때 인터넷 접속은 업데이트 확인 하나뿐이어야 한다 (개인정보처리방침).
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 from PyQt6.QtCore import (
     Qt,
     QEasingCurve,
@@ -4227,8 +4231,6 @@ def load_tray_icon() -> QIcon:
 
 
 def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSystemTrayIcon:
-    from settings_dialog import SettingsDialog
-
     tray = QSystemTrayIcon(icon or load_tray_icon(), window)
     tray.setToolTip("Slide Memo")
 
@@ -4255,6 +4257,8 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
     settings_act = menu.add_item("설정", "settings.svg")
 
     def _open_settings_from_tray() -> None:
+        from settings_dialog import SettingsDialog  # AI 설정(ai_provider)은 창을 열 때만 불러온다
+
         dlg = SettingsDialog(window.db, window)
         dlg.exec()
         window.apply_side_settings()

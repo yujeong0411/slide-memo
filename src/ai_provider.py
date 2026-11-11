@@ -1,6 +1,7 @@
 """AI 제공자 추상화 레이어 (litellm + keyring)."""
 from __future__ import annotations
 
+import os
 import time
 from typing import Any
 
@@ -11,10 +12,18 @@ logging.getLogger("litellm").setLevel(logging.ERROR)
 
 import keyring
 import keyring.errors
-import litellm
 
-litellm.suppress_debug_info = True
-litellm.set_verbose = False
+
+def _litellm():
+    """LiteLLM은 무겁고, 불러올 때 인터넷(GitHub)에서 모델 가격표를 받으려 한다.
+    AI 기능을 처음 쓸 때만 불러오고, 가격표는 설치본 안의 것을 쓴다."""
+    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+    import litellm
+
+    litellm.suppress_debug_info = True
+    litellm.set_verbose = False
+    return litellm
+
 
 KEYRING_SERVICE = "memo_slide_ai"
 
@@ -125,13 +134,14 @@ class AIProvider:
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
-        response = litellm.completion(**kwargs)
+        response = _litellm().completion(**kwargs)
         text = response.choices[0].message.content or ""
         tokens = getattr(getattr(response, "usage", None), "total_tokens", 0) or 0
         return text, int(tokens)
 
     def test_connection(self) -> tuple[bool, str]:
         """(성공 여부, 메시지) 반환. 실제 짧은 호출로 확인."""
+        litellm = _litellm()
         start = time.time()
         try:
             text, _ = self.call("You are a test assistant.", "Say OK", max_tokens=10)

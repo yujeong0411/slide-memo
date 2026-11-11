@@ -7,10 +7,10 @@ import time
 logging.getLogger("LiteLLM").setLevel(logging.ERROR)
 logging.getLogger("litellm").setLevel(logging.ERROR)
 
-import litellm
 from PyQt6.QtCore import QThread, pyqtSignal
 
-from ai_provider import AIProvider, load_api_key, PROVIDERS
+# ai_provider·litellm은 AI 기능을 실제로 쓸 때(AIWorker.run)만 불러온다.
+# 이 파일은 앱을 켤 때 AI 단추 줄을 만들려고 불러오기 때문이다.
 
 # 각 기능: label, system, user_template({{text}} 치환), needs_selection, max_tokens
 AI_FEATURES: dict[str, dict] = {
@@ -98,6 +98,9 @@ class AIWorker(QThread):
             self.errored.emit(self._feature_key, f"알 수 없는 기능: {self._feature_key}")
             return
 
+        from ai_provider import AIProvider, _litellm, load_api_key
+
+        litellm = _litellm()
         api_key = load_api_key(self._provider)
         ai = AIProvider(self._provider, self._model, api_key)
 
