@@ -4315,6 +4315,17 @@ WHATS_NEW_KEY = "seen_whatsnew_version"
 # 업데이트 후 첫 실행에 보여줄 변경사항. 새 버전마다 맨 위에 한 덩어리씩 쌓는다.
 # (팝업으로 따로 안내한 색 팔레트 개편(1.1.1)은 _show_palette_notice가 담당)
 WHATS_NEW: list[tuple[str, list[str]]] = [
+    ("1.5.0", [
+        "화면을 차분하고 깔끔하게 새로 다듬었어요.",
+        "어두운 화면을 쓸 수 있어요. 설정의 화면 모드에서 밝게, 어둡게, 시스템 설정 따르기 중에 골라요.",
+        "메모 색이 종이 톤 8가지로 바뀌었어요. 쓰던 메모는 가장 가까운 색으로 옮겼고,"
+        " 제목 옆 색 단추에서 언제든 바꾸거나 직접 만들 수 있어요.",
+        "바를 숨기면 화면 가장자리에 로고 단추가 남아요. 누르면 다시 나와요.",
+        "고정한 메모에는 책갈피가 달려요.",
+        "검색한 글자가 본문에서 강조돼요.",
+        "휴지통의 메모를 보다가 접으면 열려 있던 메모가 덮어써지던 문제를 고쳤어요.",
+        "메모를 펼칠 때 뜨던 클립보드 붙여넣기 안내는 없앴어요. 새 메모를 만든 뒤 Ctrl+V로 붙여 넣으면 돼요.",
+    ]),
     ("1.4.1", [
         "<b>메모 색을 단색으로도</b> 지정할 수 있습니다 — 색 점 옆 <b>＋</b>에서"
         " 색을 1개만 고르면 단색, 2개 이상이면 그라데이션입니다.",
@@ -4409,6 +4420,8 @@ def _show_palette_notice(window: "SlideMemoWindow", db: MemoDatabase, is_upgrade
     if not db.get_setting_int(PAPER_NOTICE_KEY, 0):
         return
     db.set_setting_int(PAPER_NOTICE_KEY, 0)  # 먼저 저장 — 다시 뜨지 않게
+    if is_upgrade and _whats_new_since(db.get_setting_str(WHATS_NEW_KEY, "")):
+        return  # 바로 뒤에 뜰 업데이트 안내의 메모 색 줄이 대신한다 — 창을 연달아 두 번 띄우지 않는다
     box = message_box(
         window,
         "메모 색이 차분한 종이 톤으로 바뀌었어요.",
