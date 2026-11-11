@@ -83,7 +83,7 @@ OpenAI Whisper API로 말을 글로 바꿔요. 마이크 권한과 OpenAI 키가
 
 - 설치 위치: `%LOCALAPPDATA%\Programs\SlideMemo\` (관리자 권한 필요 없음)
 - 시작 메뉴와 바탕화면 바로가기를 만들어요
-- 제거: 설정 → 앱 → 설치된 앱 → "Slide Memo" → 제거
+- 제거: 설정 → 앱 → 설치된 앱 → "SlideMemo" → 제거
 - 2.0.0으로 올리면 메모 색이 바뀌어서 1.x로 되돌릴 수 없어요. 되돌리려면 업데이트 때 만든 백업을 써요. (`~/.memo_slide/memos.db.bak`)
 
 ### B. 소스에서 실행 (개발자)

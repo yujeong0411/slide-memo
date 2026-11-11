@@ -1,4 +1,4 @@
-﻿"""Slide Memo - Windows 데스크탑용 슬라이드 메모장."""
+﻿"""SlideMemo - Windows 데스크탑용 슬라이드 메모장."""
 from __future__ import annotations
 
 import os
@@ -1987,7 +1987,7 @@ class SlideMemoWindow(QWidget):
     def _setup_window(self) -> None:
         self.setWindowFlags(self._window_flags_for_mode())
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setWindowTitle("Slide Memo")
+        self.setWindowTitle("SlideMemo")
         # 폭이 tab_width~사용자 드래그 폭 사이로 변경 가능 (접힘=tab_width, 펼침=user_width).
         # 화면 안에 항상 전체가 들어오도록 폭 자체가 슬라이드함.
         self.setMinimumWidth(self.tab_width)
@@ -3278,7 +3278,7 @@ class SlideMemoWindow(QWidget):
         # 알릴 수 있다. 숨김은 드문 의도적 동작이라 매번 띄운다.
         if tray is not None:
             tray.showMessage(
-                "Slide Memo를 숨겼어요",
+                "SlideMemo를 숨겼어요",
                 f"{HIDE_HOTKEY_LABEL} 또는 트레이 아이콘 클릭으로 다시 꺼냅니다.",
                 tray.icon(),
                 5000,
@@ -4359,7 +4359,7 @@ def load_tray_icon() -> QIcon:
 
 def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSystemTrayIcon:
     tray = QSystemTrayIcon(icon or load_tray_icon(), window)
-    tray.setToolTip("Slide Memo")
+    tray.setToolTip("SlideMemo")
 
     menu = ThemedMenu()
     toggle_act = menu.add_item("열기 / 접기")
@@ -4678,7 +4678,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     install_tooltips(app)
     app.setQuitOnLastWindowClosed(False)
-    app.setApplicationName("Slide Memo")
+    app.setApplicationName("SlideMemo")
     _install_translator(app)
     _register_fonts()
     db = MemoDatabase()  # 시작 화면부터 화면 모드를 따르도록 먼저 연다

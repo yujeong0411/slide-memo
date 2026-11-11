@@ -382,7 +382,7 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(w)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(8)
-        layout.addWidget(QLabel("<b>Slide Memo</b>"))
+        layout.addWidget(QLabel("<b>SlideMemo</b>"))
         from main import APP_VERSION
         layout.addWidget(QLabel(f"버전: {APP_VERSION}"))
         layout.addWidget(role_label("PyQt6로 만든 Windows 슬라이드 메모장", "description"))
