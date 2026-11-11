@@ -34,6 +34,8 @@ def walk(which: str) -> None:
     total = len(win._guide_steps_queue)
     for step in range(total):
         assert bubbles() == 1, (which, step, bubbles())
+        label = win._guide.text_lbl  # 설명 글이 위아래로 잘리지 않는다
+        assert label.height() >= label.heightForWidth(label.width()), (which, step, label.height(), label.heightForWidth(label.width()))
         assert win._guide_index == step, "중간에 처음으로 되돌아갔다"
         before = win._guide
         win._guide.next_btn.click()

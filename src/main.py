@@ -1574,11 +1574,16 @@ class GuideBubble(QWidget):
         lay = QVBoxLayout(self.card)
         lay.setContentsMargins(16, 12, 16, 12)
         lay.setSpacing(8)
+        # 글 칸 폭을 카드 안쪽 폭으로 못박는다. 정하지 않으면 새 창에서 높이를 잴 때
+        # 폭을 넓게 잡아 줄 수를 적게 세고, 긴 설명이 위아래로 잘린다
+        inner = self.CARD_WIDTH - 32
         self.title_lbl = role_label("", "guideTitle")
         self.title_lbl.setWordWrap(True)
+        self.title_lbl.setFixedWidth(inner)
         lay.addWidget(self.title_lbl)
         self.text_lbl = role_label("", "description")
         self.text_lbl.setWordWrap(True)
+        self.text_lbl.setFixedWidth(inner)
         lay.addWidget(self.text_lbl)
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
@@ -1608,8 +1613,9 @@ class GuideBubble(QWidget):
         self.step_lbl.setText(f"{index}/{total}")
         self.next_btn.setText("완료" if index == total else "다음")
         self._on_next, self._on_skip = on_next, on_skip
-        self.adjustSize()
+        self.ensurePolished()  # 새 창은 글자 크기(스타일)를 먼저 적용해야 높이가 맞다
         self.layout().activate()
+        self.adjustSize()
         self._place_beside(anchor)
         self.show()
         self.raise_()
