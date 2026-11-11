@@ -15,7 +15,7 @@ from database import MemoDatabase
 
 app = QApplication([])
 db = MemoDatabase(Path(tempfile.mkdtemp()) / "t.db")
-db.set_setting_str("app_font_family", "Consolas")
+db.set_setting_str("app_font_family", "Pretendard")
 db.set_setting_int("app_font_size", 14)
 for i in range(15):
     db.create(title=f"x{i}", content="x")
@@ -29,10 +29,10 @@ app.processEvents()
 # 챙기지 않으면 서식 없는 새 메모가 앱 기본 폰트(더 작고 다른 글꼴)로 찍힌다.
 win.create_new_memo()
 doc_font = win.editor.document().defaultFont()
-assert doc_font.family() == "Consolas", doc_font.family()
+assert doc_font.family() == "Pretendard", doc_font.family()
 assert doc_font.pointSize() == 14, doc_font.pointSize()
 typed = win.editor.textCursor().charFormat().font()
-assert (typed.family(), typed.pointSize()) == ("Consolas", 14), typed.family()
+assert (typed.family(), typed.pointSize()) == ("Pretendard", 14), typed.family()
 
 # ----- 새 메모 탭이 보이도록 스크롤 -----
 # 고정 메모가 위를 차지하면 새 메모 탭은 목록 중간에 생긴다. 위젯 좌표로 스크롤하면

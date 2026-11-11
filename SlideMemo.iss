@@ -3,7 +3,7 @@
 ; 결과:  installer\SlideMemo-Setup.exe
 
 #define MyAppName "Slide Memo"
-#define MyAppVersion "1.4.1"
+#define MyAppVersion "2.0.0"
 #define MyAppPublisher "nursecoder"
 #define MyAppExeName "SlideMemo.exe"
 
@@ -24,7 +24,7 @@ ShowLanguageDialog=no
 CloseApplications=force
 OutputDir=installer
 OutputBaseFilename=SlideMemo-Setup
-SetupIconFile=logo.ico
+SetupIconFile=assets\icons\SlideMemo.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2
 SolidCompression=yes

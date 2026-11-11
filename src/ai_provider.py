@@ -137,7 +137,7 @@ class AIProvider:
             text, _ = self.call("You are a test assistant.", "Say OK", max_tokens=10)
             elapsed = time.time() - start
             if text.strip():
-                return True, f"✓ 연결 성공 ({elapsed:.1f}초)"
+                return True, f"연결됐어요. ({elapsed:.1f}초)"
             return False, "✗ 응답이 비어 있습니다"
         except litellm.AuthenticationError:
             return False, "✗ 인증 실패: API 키를 확인하세요"

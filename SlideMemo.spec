@@ -1,7 +1,32 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
 
+import re
+
 from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.win32.versioninfo import (
+    FixedFileInfo, StringFileInfo, StringStruct, StringTable, VarFileInfo, VarStruct, VSVersionInfo,
+)
+
+# exe 파일 속성(자세히)에 보일 버전. pyproject.toml 하나만 고치면 따라온다
+_VERSION = re.search(r'^version\s*=\s*"(\d+)\.(\d+)\.(\d+)"', open('pyproject.toml', encoding='utf-8').read(), re.M).groups()
+_VERSION_TUPLE = tuple(int(x) for x in _VERSION) + (0,)
+_VERSION_TEXT = '.'.join(_VERSION)
+VERSION_INFO = VSVersionInfo(
+    ffi=FixedFileInfo(filevers=_VERSION_TUPLE, prodvers=_VERSION_TUPLE),
+    kids=[
+        StringFileInfo([StringTable('041204B0', [
+            StringStruct('FileDescription', 'SlideMemo'),
+            StringStruct('FileVersion', _VERSION_TEXT),
+            StringStruct('InternalName', 'SlideMemo'),
+            StringStruct('OriginalFilename', 'SlideMemo.exe'),
+            StringStruct('ProductName', 'SlideMemo'),
+            StringStruct('ProductVersion', _VERSION_TEXT),
+            StringStruct('LegalCopyright', '© 2026 nursecoder. MIT License.'),
+        ])]),
+        VarFileInfo([VarStruct('Translation', [0x0412, 1200])]),
+    ],
+)
 
 litellm_datas, litellm_binaries, litellm_hiddenimports = collect_all('litellm')
 tiktoken_datas, tiktoken_binaries, tiktoken_hiddenimports = collect_all('tiktoken')
@@ -31,14 +56,16 @@ def _keep_data(entry):
     # Qt 자체 번역 파일(.qm). 이 앱은 QTranslator/tr()을 쓰지 않고 한국어를
     # 파이썬 문자열로 직접 넣는다. -6.4MB
     dest = entry[0].replace('\\', '/')
-    return not dest.startswith('PyQt6/Qt6/translations/')
+    if dest.endswith('.map'):  # litellm 웹 화면에 딸린 sourcemap. 배포하지 않는다
+        return False
+    return not dest.startswith('PyQt6/Qt6/translations/') or dest.endswith('/qtbase_ko.qm')
 
 
 a = Analysis(
     ['src/main.py'],
     pathex=['src'],
     binaries=litellm_binaries + tiktoken_binaries + tiktoken_ext_binaries,
-    datas=[('logo.ico', '.'), ('logo.png', '.'), ('assets', 'assets')] + litellm_datas + tiktoken_datas + tiktoken_ext_datas,
+    datas=[('assets', 'assets'), ('src/theme/*.qss', 'theme')] + litellm_datas + tiktoken_datas + tiktoken_ext_datas,
     hiddenimports=['keyring.backends', 'keyring.backends.Windows', 'tiktoken_ext', 'tiktoken_ext.openai_public'] + litellm_hiddenimports + tiktoken_hiddenimports + tiktoken_ext_hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -70,7 +97,8 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['logo.ico'],
+    icon=['assets/icons/SlideMemo.ico'],
+    version=VERSION_INFO,
 )
 coll = COLLECT(
     exe,

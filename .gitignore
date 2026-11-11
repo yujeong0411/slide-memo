@@ -17,10 +17,23 @@ venv/
 *.db
 .memo_slide/
 
+# 단계별 UI 캡처 (커밋하지 않음)
+docs/ui-audit-after/
+
 # IDE
 .idea/
 .vscode/
 *.swp
+
+# 개편 시안·개편 전 캡처는 저장소에 두지 않는다 (기준은 docs/ui-design/SlideMemo-design.md)
+docs/ui-design/mockup/
+docs/ui-audit/
+
+# 블로그용 페이지와 그림은 저장소에 두지 않는다
+guide.ts
+slide-memo.ts
+slide-memo.mdx
+blog-images/
 
 # OS
 .DS_Store

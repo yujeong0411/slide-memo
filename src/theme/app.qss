@@ -1,0 +1,374 @@
+/* 앱 껍데기: 설정, 대화창, 메뉴, 툴팁. 값은 tokens.py에서 온다.
+   메인 창 안쪽 부품이 영향받지 않게 입력·단추 규칙은 QDialog 아래로 한정한다. */
+
+QLabel#appToolTip { background: transparent; color: $white; }
+
+/* ----- 메뉴 (ThemedMenu가 그리고, 여기서는 크기만 정한다. 입력 칸 기본 메뉴는 그대로 쓴다) ----- */
+QMenu {
+    background: $bg_raised;
+    color: $fg;
+    border: 1px solid $line;
+    padding: 4px;
+}
+QMenu::item {
+    padding: 5px 12px 5px 32px;
+    border-radius: ${r_control}px;
+    background: transparent;
+}
+QMenu::item:selected { background: $overlay_hover; }
+QMenu::item:disabled { color: $fg_disabled; }
+QMenu::separator { height: 9px; }
+
+/* ----- 바 ----- */
+#mainContainer, #tabColumn, #tabScroll, #tabsContainer { background: transparent; border: none; }
+
+QFrame#barGroup { background: $bg_canvas; border: 1px solid $line; }
+QFrame#barGroup[side="right"] {
+    border-right: none;
+    border-top-left-radius: ${r_surface}px;
+    border-bottom-left-radius: ${r_surface}px;
+}
+QFrame#barGroup[side="left"] {
+    border-left: none;
+    border-top-right-radius: ${r_surface}px;
+    border-bottom-right-radius: ${r_surface}px;
+}
+QPushButton#tabArrow { background: $bg_canvas; border: 1px solid $line; padding: 0; }
+QPushButton#tabArrow[side="right"] { border-right: none; }
+QPushButton#tabArrow[side="left"] { border-left: none; }
+QPushButton#tabArrow:hover { background: $secondary_hover; }
+QPushButton#tabArrow:focus { border-color: $focus; }
+QPushButton#barBtn {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: ${r_control}px;
+    padding: 0;
+}
+QPushButton#barBtn:hover { background: $overlay_hover; }
+QPushButton#barBtn:pressed { background: $overlay_press; }
+QPushButton#barBtn:focus { border-color: $focus; }
+QLabel#trashBadge {
+    background: $bg_muted;
+    color: $fg_secondary;
+    font-size: ${label_px}px;
+    font-weight: 500;
+    border: 2px solid $bg_canvas;
+    min-height: 16px;
+    max-height: 16px;
+    min-width: 8px;
+    border-radius: 10px;
+    padding: 0 4px;
+}
+
+/* ----- 떠 있는 카드: 배너, 녹음 줄, AI 진행 ----- */
+QFrame#floatCard {
+    background: $bg_raised;
+    border: 1px solid $line;
+    border-radius: ${r_control}px;
+}
+QFrame#floatCard QLabel { color: $fg_secondary; background: transparent; }
+QLabel#recDot { background: $danger; border-radius: 4px; }
+QFrame#toast { background: $contrast; border: none; border-radius: ${r_control}px; }
+QFrame#toast QLabel { color: $white; background: transparent; }
+QPushButton#toastAction {
+    background: transparent;
+    color: $white;
+    border: 1px solid transparent;
+    text-decoration: underline;
+    font-weight: 500;
+    padding: 0;
+}
+QPushButton#textBtn {
+    background: transparent;
+    color: $accent_text;
+    border: 1px solid transparent;
+    border-radius: ${r_control}px;
+    text-decoration: underline;
+    font-weight: 500;
+    padding: 2px 4px;
+}
+QPushButton#textBtn:hover { background: $overlay_hover; }
+QPushButton#textBtn:focus { border-color: $focus; }
+QProgressBar#splashBar { background: $bg_muted; border: none; border-radius: 2px; }
+QProgressBar#splashBar::chunk { background: $accent; border-radius: 2px; }
+
+/* ----- 작은 단추(sm): 팝업, 말풍선, 카드 안 ----- */
+QFrame#popupCard QPushButton[variant], QFrame#floatCard QPushButton[variant] {
+    border: 1px solid transparent;
+    border-radius: ${r_control}px;
+    min-height: ${sm_inner}px;
+    max-height: ${sm_inner}px;
+    padding: 0 ${sm_pad}px;
+    font-weight: 500;
+}
+QFrame#popupCard QPushButton[variant="primary"] { background: $accent; color: $on_accent; }
+QFrame#popupCard QPushButton[variant="primary"]:hover { background: $primary_hover; }
+QFrame#popupCard QPushButton[variant="primary"]:pressed { background: $accent_press; }
+QFrame#popupCard QPushButton[variant="ghost"], QFrame#floatCard QPushButton[variant="ghost"] {
+    background: transparent;
+    color: $fg_secondary;
+}
+QFrame#popupCard QPushButton[variant="ghost"]:hover, QFrame#floatCard QPushButton[variant="ghost"]:hover { background: $overlay_hover; }
+QFrame#floatCard QPushButton[variant="secondary"] { background: $secondary_bg; color: $fg; border-color: $secondary_border; }
+QFrame#floatCard QPushButton[variant="secondary"]:hover { background: $secondary_hover; }
+QFrame#popupCard QPushButton[variant="iconSm"] {
+    background: transparent;
+    min-width: ${sm_inner}px;
+    max-width: ${sm_inner}px;
+    padding: 0;
+}
+QFrame#popupCard QPushButton[variant="iconSm"]:hover { background: $overlay_hover; }
+QFrame#popupCard QPushButton:focus, QFrame#floatCard QPushButton:focus { border-color: $focus; }
+
+/* ----- 자체 팝업 ----- */
+QFrame#popupCard {
+    background: $bg_raised;
+    border: 1px solid $line;
+    border-radius: ${r_control}px;
+}
+QFrame#popupCard QLabel { color: $fg; background: transparent; }
+QFrame#popupCard QLabel[role="group"] {
+    font-size: ${label_px}px;
+    font-weight: 500;
+    color: $fg_secondary;
+}
+QFrame#popupCard QLabel[role="description"] { color: $fg_secondary; }
+QFrame#popupCard QLabel[role="popupTitle"] { font-weight: 500; }
+QFrame#popupCard QLabel[role="weekday"] { font-size: ${caption_px}px; color: $fg_hint; min-height: 32px; min-width: 32px; }
+QFrame#popupCard QLabel[role="step"] { font-size: ${caption_px}px; color: $fg_hint; }
+QFrame#popupCard QLabel[role="guideTitle"] { font-weight: 500; color: $fg; }
+QPushButton#popupItem {
+    background: transparent;
+    color: $fg;
+    border: 1px solid transparent;
+    border-radius: ${r_control}px;
+    min-height: ${md_inner}px;
+    max-height: ${md_inner}px;
+    padding: 0 12px 0 8px;
+    text-align: left;
+}
+QPushButton#popupItem:hover { background: $overlay_hover; }
+QPushButton#popupItem:pressed { background: $overlay_press; }
+QPushButton#popupItem:focus { border-color: $focus; }
+QPushButton#chip {
+    background: transparent;
+    color: $fg;
+    border: 1px solid $line_strong;
+    border-radius: 12px;
+    min-height: ${sm_inner}px;
+    max-height: ${sm_inner}px;
+    padding: 0 ${md_pad}px;
+}
+QPushButton#chip:hover { background: $overlay_hover; }
+QPushButton#chip:focus { border-color: $focus; }
+QPushButton#chip[selected="true"] { background: $chip_selected; color: $on_accent; border-color: transparent; }
+QPushButton#dayCell {
+    background: transparent;
+    color: $fg;
+    border: 1px solid transparent;
+    border-radius: ${r_control}px;
+    min-width: 30px;
+    max-width: 30px;
+    min-height: ${md_inner}px;
+    max-height: ${md_inner}px;
+    padding: 0;
+}
+QPushButton#dayCell:hover { background: $overlay_hover; }
+QPushButton#dayCell:focus { border-color: $focus; }
+QPushButton#dayCell[today="true"] { border-color: $line_strong; }
+QPushButton#dayCell[selected="true"] { background: $accent_weak; color: $accent_strong; }
+
+/* ----- 대화창 ----- */
+QDialog, QMessageBox { background: $bg_canvas; color: $fg; }
+
+QDialog QLabel[role="dialogTitle"] {
+    font-size: ${title_px}px;
+    font-weight: 700;
+    color: $fg;
+}
+QDialog QLabel[role="group"] {
+    font-size: ${label_px}px;
+    font-weight: 500;
+    color: $fg_secondary;
+}
+QDialog QLabel[role="description"] { color: $fg_secondary; }
+QDialog QLabel[role="hint"] { font-size: ${caption_px}px; color: $fg_hint; }
+QDialog QLabel[role="value"] { font-size: ${caption_px}px; color: $fg_secondary; }
+QDialog QLabel[state="error"] { color: $danger; }
+QDialog QLabel[role="badge"] {
+    background: $accent_weak;
+    color: $accent_strong;
+    font-size: ${label_px}px;
+    font-weight: 500;
+    min-height: 20px;
+    max-height: 20px;
+    border-radius: 10px;
+    padding: 0 8px;
+}
+QDialog QFrame[role="line"] { background: $line; border: none; }
+
+QMessageBox QLabel#qt_msgbox_label {
+    font-size: ${title_px}px;
+    font-weight: 700;
+    color: $fg;
+    min-width: 400px;
+}
+QMessageBox QLabel#qt_msgbox_informativelabel { color: $fg_secondary; }
+
+/* ----- 단추. 테두리 1px을 늘 깔아 두어 포커스 때 색만 바뀐다 ----- */
+QDialog QPushButton {
+    background: $secondary_bg;
+    color: $fg;
+    border: 1px solid $secondary_border;
+    border-radius: ${r_control}px;
+    min-height: ${md_inner}px;
+    max-height: ${md_inner}px;
+    padding: 0 ${md_pad}px;
+    font-weight: 500;
+}
+QDialog QPushButton:hover { background: $secondary_hover; }
+QDialog QPushButton:pressed { background: $secondary_press; }
+QDialog QPushButton:focus { border-color: $focus; }
+QDialog QPushButton:disabled { color: $fg_disabled; }
+
+QDialog QPushButton[variant="primary"] {
+    background: $accent;
+    color: $on_accent;
+    border-color: transparent;
+}
+QDialog QPushButton[variant="primary"]:hover { background: $primary_hover; }
+QDialog QPushButton[variant="primary"]:pressed { background: $accent_press; }
+QDialog QPushButton[variant="primary"]:focus { border-color: $focus; }
+QDialog QPushButton[variant="primary"]:disabled { background: $bg_muted; color: $fg_disabled; }
+
+QDialog QPushButton[variant="danger"] {
+    background: $danger_fill;
+    color: $white;
+    border-color: transparent;
+}
+QDialog QPushButton[variant="danger"]:hover { background: $danger_hover; }
+QDialog QPushButton[variant="danger"]:pressed { background: $danger_press; }
+QDialog QPushButton[variant="danger"]:focus { border-color: $focus; }
+
+QDialog QPushButton[variant="icon"] {
+    background: transparent;
+    color: $fg_secondary;
+    border-color: transparent;
+    min-width: ${md_inner}px;
+    max-width: ${md_inner}px;
+    padding: 0;
+}
+QDialog QPushButton[variant="icon"]:hover { background: $overlay_hover; }
+QDialog QPushButton[variant="icon"]:pressed { background: $overlay_press; }
+QDialog QPushButton[variant="icon"]:focus { border-color: $focus; }
+
+/* ----- 입력 ----- */
+QDialog QLineEdit, QDialog QSpinBox, QDialog QComboBox, QFrame#popupCard QComboBox {
+    background: $bg_canvas;
+    color: $fg;
+    border: 1px solid $line_control;
+    border-radius: ${r_control}px;
+    min-height: ${md_inner}px;
+    max-height: ${md_inner}px;
+    padding: 0 ${md_pad}px;
+    selection-background-color: $selection_bg;
+    selection-color: $selection_fg;
+}
+QDialog QComboBox, QFrame#popupCard QComboBox { combobox-popup: 0; }
+QDialog QLineEdit:focus, QDialog QSpinBox:focus, QDialog QComboBox:focus, QFrame#popupCard QComboBox:focus { border-color: $accent; }
+QDialog QLineEdit:disabled, QDialog QSpinBox:disabled, QDialog QComboBox:disabled {
+    color: $fg_disabled;
+    border-color: $line_strong;
+}
+
+QDialog QComboBox::drop-down, QFrame#popupCard QComboBox::drop-down { border: none; width: 28px; }
+QDialog QComboBox::down-arrow, QFrame#popupCard QComboBox::down-arrow { image: url("$icon_chevron_down"); width: 16px; height: 16px; }
+QComboBox QAbstractItemView {
+    background: $bg_raised;
+    color: $fg;
+    border: 1px solid $line;
+    border-radius: ${r_control}px;
+    padding: 4px;
+    outline: 0;
+}
+
+QDialog QSpinBox::up-button, QDialog QSpinBox::down-button {
+    background: transparent;
+    border: none;
+    width: 20px;
+}
+QDialog QSpinBox::up-arrow { image: url("$icon_chevron_up"); width: 12px; height: 12px; }
+QDialog QSpinBox::down-arrow { image: url("$icon_chevron_down"); width: 12px; height: 12px; }
+
+QDialog QTextBrowser, QDialog QListWidget {
+    background: $bg_canvas;
+    color: $fg;
+    border: 1px solid $line;
+    border-radius: ${r_control}px;
+    padding: 8px;
+    outline: 0;
+    selection-background-color: $selection_bg;
+    selection-color: $selection_fg;
+}
+QDialog QListWidget::item { min-height: 32px; border-radius: ${r_control}px; padding: 0 8px; }
+QDialog QListWidget::item:hover { background: $overlay_hover; }
+QDialog QListWidget::item:selected { background: $accent_weak; color: $accent_strong; }
+
+/* ----- 체크박스 ----- */
+QDialog QCheckBox { spacing: 8px; color: $fg; }
+QDialog QCheckBox:disabled { color: $fg_disabled; }
+QDialog QCheckBox::indicator {
+    width: 14px;
+    height: 14px;
+    background: $bg_canvas;
+    border: 1px solid $line_control;
+    border-radius: ${r_small}px;
+}
+QDialog QCheckBox::indicator:checked {
+    image: url("$icon_check");
+    background: $accent;
+    border-color: $accent;
+}
+QDialog QCheckBox:focus::indicator { border-color: $focus; }
+QDialog QCheckBox::indicator:disabled { background: $bg_muted; border-color: $line_strong; }
+
+/* ----- 슬라이더 ----- */
+QDialog QSlider::groove:horizontal { height: 4px; border-radius: 2px; background: $line_strong; }
+QDialog QSlider::sub-page:horizontal { background: $accent; border-radius: 2px; }
+QDialog QSlider::add-page:horizontal { background: $line_strong; border-radius: 2px; }
+QDialog QSlider::handle:horizontal {
+    width: 14px;
+    height: 14px;
+    margin: -6px 0;
+    background: $white;
+    border: 1px solid $line_control;
+    border-radius: 8px;
+}
+QDialog QSlider:focus::handle:horizontal { border-color: $focus; }
+QDialog QSlider::sub-page:horizontal:disabled { background: $fg_disabled; }
+
+/* ----- 탭 ----- */
+QDialog QTabWidget::pane { border: none; border-top: 1px solid $line; }
+QDialog QTabWidget::tab-bar { left: 24px; }
+QDialog QTabBar { qproperty-drawBase: 0; }
+QDialog QTabBar::tab {
+    background: transparent;
+    color: $fg_secondary;
+    height: 30px;
+    padding: 0 4px;
+    margin-right: 8px;
+    font-weight: 500;
+    border: none;
+    border-bottom: 2px solid transparent;
+}
+QDialog QTabBar::tab:hover { color: $fg; }
+QDialog QTabBar::tab:selected { color: $accent_text; border-bottom-color: $accent; }
+QDialog QTabBar::tab:selected:focus { color: $fg; border-bottom-color: $focus; }
+
+/* ----- 스크롤 ----- */
+QDialog QScrollArea { background: transparent; border: none; }
+QDialog QScrollArea > QWidget > QWidget { background: transparent; }
+QDialog QScrollBar:vertical { background: transparent; width: 6px; margin: 0; }
+QDialog QScrollBar::handle:vertical { background: $scroll; border-radius: 3px; min-height: 20px; }
+QDialog QScrollBar::add-line:vertical, QDialog QScrollBar::sub-line:vertical { height: 0; }
+QDialog QScrollBar::add-page:vertical, QDialog QScrollBar::sub-page:vertical { background: transparent; }

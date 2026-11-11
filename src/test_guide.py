@@ -28,7 +28,7 @@ win.show()
 # ----- 1단계: 바 사용법 -----
 win.start_guide("bar")
 total = len(win._guide_script("bar"))
-assert total == 4, total  # 한 자리에서 4개를 넘기지 않는다
+assert total == 5, total  # 한 자리에서 5개를 넘기지 않는다
 assert win._guide.isVisible(), "말풍선이 안 떴다"
 assert win._guide.step_lbl.text() == f"1/{total}"
 # 말풍선이 떠 있는 동안엔 바가 topmost를 재점령하면 안 된다 (툴팁과 같은 이유)
@@ -72,7 +72,15 @@ def _answer(label):
 fresh_db = MemoDatabase(Path(tempfile.mkdtemp()) / "new.db")
 fresh_win = m.SlideMemoWindow(fresh_db)
 _answer("가이드 보기")
+_welcome_texts = []
+_defaults = []
+_exec = QMessageBox.exec
+QMessageBox.exec = lambda self: (_welcome_texts.append(self.informativeText() + self.text()), _defaults.append(self.defaultButton().text()), _exec(self))[2]
 m._show_welcome(fresh_win, fresh_db)
+QMessageBox.exec = _exec
+assert _defaults == ["가이드 보기"], _defaults
+assert any(m.WELCOME_LINES[1] in t and m.WELCOME_HINT in t and m.WELCOME_TITLE in t for t in _welcome_texts), _welcome_texts
+assert all("<b>" not in t and "·" not in t for t in _welcome_texts), "글머리표·굵은 글씨 없이"
 assert fresh_win.guide_running(), "가이드 보기를 눌렀는데 시작되지 않았다"
 assert fresh_db.get_setting_int(m.GUIDE_BAR_KEY, 0) == 0, "아직 끝나지도 않았는데 완료 처리됐다"
 fresh_win._finish_guide()

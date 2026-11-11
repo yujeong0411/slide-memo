@@ -8,6 +8,8 @@ import main as m
 
 assert m._ver_tuple("v1.2.0") == (1, 2, 0)
 assert m._ver_tuple("1.10.0") > m._ver_tuple("1.9.0")
+assert m._ver_tuple("2.0.0") > m._ver_tuple("1.4.1")  # 업데이트 확인도 이 비교를 쓴다
+assert m._ver_tuple("10.0.0") > m._ver_tuple("2.0.0")
 assert m._ver_tuple("") == () and m._ver_tuple("dev") == ()  # 깨진 값도 죽지 않는다
 
 # 안내 기록이 없는 사용자(= 안내 기능 이전 버전에서 올라옴)에게는 전부 보여준다
@@ -41,4 +43,33 @@ assert not _db.is_fresh_install(), "휴지통에 있어도 쓰던 사람이다"
 _db.set_setting_int("window_width", 400)
 assert not _db.is_fresh_install(), "설정이 남아 있으면 쓰던 사람이다"
 
-print("whatsnew OK")
+# ----- 처음 켤 때 안내 창은 하나만 -----
+# 1.4.1에서 올라온 사용자: 메모 색 안내 대신 업데이트 안내 한 번
+from PyQt6.QtWidgets import QApplication, QMessageBox
+
+app = QApplication([])
+shown: list[str] = []
+QMessageBox.exec = lambda self: (shown.append(self.text()), 0)[1]
+
+_up = MemoDatabase(Path(tempfile.mkdtemp()) / "up.db")
+_up.create(title="쓰던 메모")
+_up.set_setting_str(m.WHATS_NEW_KEY, "1.4.1")
+_up.set_setting_int(m.PAPER_NOTICE_KEY, 1)  # 색을 옮긴 상태
+_win = m.SlideMemoWindow(_up)
+_win._force_topmost = lambda: None
+m._show_palette_notice(_win, _up, True)
+m._show_whats_new(_win, _up, True)
+assert len(shown) == 1 and "2.0.0" in shown[0], shown
+assert _up.get_setting_int(m.PAPER_NOTICE_KEY, 1) == 0, "다음에 켤 때 색 안내가 다시 뜨면 안 된다"
+
+# 새로 설치: 둘 다 뜨지 않는다
+shown.clear()
+_new = MemoDatabase(Path(tempfile.mkdtemp()) / "new.db")
+_new_win = m.SlideMemoWindow(_new)
+_new_win._force_topmost = lambda: None
+m._show_palette_notice(_new_win, _new, False)
+m._show_whats_new(_new_win, _new, False)
+assert shown == [], shown
+
+print("whatsnew OK", flush=True)
+os._exit(0)
