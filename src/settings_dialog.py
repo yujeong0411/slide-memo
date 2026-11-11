@@ -1,4 +1,4 @@
-"""설정 창 (일반 / AI / 정보 탭)."""
+"""설정 창 (일반 / AI / 동기화 / 정보 탭)."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -113,7 +113,7 @@ def _eye_button(edit: QLineEdit) -> QPushButton:
 
 
 class SettingsDialog(QDialog):
-    def __init__(self, db: MemoDatabase, parent: QWidget | None = None) -> None:
+    def __init__(self, db: MemoDatabase, parent: QWidget | None = None, *, tab: str = "") -> None:
         super().__init__(parent)
         self.db = db
         self._test_worker: _TestWorker | None = None
@@ -130,9 +130,15 @@ class SettingsDialog(QDialog):
         tabs = QTabWidget()
         tabs.addTab(self._build_general_tab(), "일반")
         tabs.addTab(self._build_ai_tab(), "AI")
+        from sync.settings_tab import SyncTab  # 동기화 탭은 따로 둔다 (설계 6장)
+
+        self._sync_tab = SyncTab(db, getattr(parent, "sync", None))
+        tabs.addTab(self._sync_tab, "동기화")
         tabs.addTab(self._build_info_tab(), "정보")
-        for index, asset in enumerate(("sliders-horizontal.svg", "sparkles.svg", "info.svg")):
+        for index, asset in enumerate(("sliders-horizontal.svg", "sparkles.svg", "refresh-cw.svg", "info.svg")):
             tabs.setTabIcon(index, QIcon(A.tinted_pixmap(asset, A.current()["fg_secondary"], 16)))
+        if tab == "sync":
+            tabs.setCurrentWidget(self._sync_tab)
         root.addWidget(tabs)
 
         root.addWidget(line())
@@ -577,6 +583,7 @@ class SettingsDialog(QDialog):
 
     # ── 저장 ─────────────────────────────────────────────────────
     def _save_and_accept(self) -> None:
+        self._sync_tab.save()
         provider = self._provider_combo.currentData()
         model = (
             self._model_combo.currentData()

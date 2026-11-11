@@ -106,6 +106,7 @@ from database import (
     MemoVersion,
     normalize_color,
 )
+import links
 import memo_document
 from memo_color import MemoColorButton, MemoColorDialog, MemoColorPopup
 from memo_popups import (
@@ -1782,6 +1783,9 @@ class SlideMemoWindow(QWidget):
     def __init__(self, db: MemoDatabase) -> None:
         super().__init__()
         self.db = db
+        self.sync = None  # SyncController (main()이 붙인다. 시험에서는 없다)
+        self._too_big_local: list[str] = []
+        self._too_big_told: set[int] = set()
         self.current_memo: Memo | None = None
         self.is_expanded = False
         self.trash_mode = False
@@ -1883,6 +1887,7 @@ class SlideMemoWindow(QWidget):
         for button, asset in self._bar_icons:
             self._set_bar_icon(button, asset)
         self._set_bar_icon(self.hide_btn, self.hide_icon_asset())
+        self.sync_warn_btn.setIcon(QIcon(tinted_pixmap("triangle-alert.svg", t["danger"], BAR_ICON)))
         self._rec_stop_btn.setIcon(QIcon(tinted_pixmap("square.svg", t["fg"], 16)))
         self.drag_grip.update()
 
@@ -2297,6 +2302,9 @@ class SlideMemoWindow(QWidget):
         self._trash_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         theme_apply.set_tabular(self._trash_badge)
         self._trash_badge.hide()
+        # 동기화에 문제가 있을 때만 보이는 경고 단추 (디자인 md 4.1). 누르면 설정의 동기화 탭
+        self.sync_warn_btn = bar_button("", "", lambda: self._open_settings(tab="sync"))
+        self.sync_warn_btn.hide()
         # 휴지통 모드 전용 (평소엔 숨김). 본문 상단이 아니라 컬럼에 두어
         # 본문은 일반 모드와 같은 검색/정렬 화면을 유지한다.
         self.col_empty_btn = bar_button("brush-cleaning.svg", "휴지통 비우기", self._empty_trash)
@@ -2520,9 +2528,9 @@ class SlideMemoWindow(QWidget):
         self.db.set_setting_int(GUIDE_BODY_KEY, 0)
         self._schedule_guide("bar", 200)
 
-    def _open_settings(self) -> None:
+    def _open_settings(self, tab: str = "") -> None:
         from settings_dialog import SettingsDialog
-        dlg = SettingsDialog(self.db, self)
+        dlg = SettingsDialog(self.db, self, tab=tab)
         dlg.exec()
         self.apply_side_settings()
         self.apply_tab_geometry_settings()
@@ -3231,6 +3239,8 @@ class SlideMemoWindow(QWidget):
         self.raise_()
         self.activateWindow()
         self._maybe_start_body_guide()
+        if self.sync is not None:
+            self.sync.on_expand()
 
     def collapse(self, *, exit_trash: bool = True) -> None:
         hide_tooltip()
@@ -3423,6 +3433,8 @@ class SlideMemoWindow(QWidget):
         n = self.db.count_trashed()
         self.trash_btn.setToolTip(f"휴지통 (메모 {n}개)" if n else "휴지통 (비어 있음)")
         self.trash_btn.setVisible(not self.trash_mode)
+        if hasattr(self, "sync_warn_btn"):
+            self._update_sync_warning()
         if n > 0:
             self._trash_badge.setText(str(n) if n < 100 else "99+")
             self._trash_badge.adjustSize()
@@ -3524,9 +3536,10 @@ class SlideMemoWindow(QWidget):
             f"메모 {n}개를 지워요. 비운 메모는 되돌릴 수 없습니다.", "비우기", danger=True,
         ):
             return
-        for memo in self.db.list_trashed_memos():
-            _delete_memo_images(memo.content)
-            self.db.delete(memo.id)
+        trashed = self.db.list_trashed_memos()
+        self.db.delete_many([m.id for m in trashed])  # 한 트랜잭션 (수백 개도 금방)
+        for memo in trashed:
+            self._purge_images(memo.content)
         self._trash_preview_id = None
         self._exit_trash_mode()
         self._show_toast(f"휴지통을 비웠어요. ({n}개)")
@@ -3556,7 +3569,7 @@ class SlideMemoWindow(QWidget):
                     neighbor = trashed[idx - 1]
                 elif len(trashed) > 1:
                     neighbor = trashed[1]
-            _delete_memo_images(memo.content)
+            self._purge_images(memo.content)
             self.db.delete(memo_id)
             self._trash_preview_id = None
             self._after_trash_change()
@@ -3674,7 +3687,7 @@ class SlideMemoWindow(QWidget):
                     neighbor = trashed[idx - 1]
                 elif len(trashed) > 1:
                     neighbor = trashed[1]
-            _delete_memo_images(memo.content)
+            self._purge_images(memo.content)
             self.db.delete(memo_id)
             if self._trash_preview_id == memo_id:
                 self._trash_preview_id = None
@@ -3746,6 +3759,106 @@ class SlideMemoWindow(QWidget):
         memo_document.fill_missing_images(doc)  # 다른 PC에서 아직 못 받은 그림은 자리 표시로
         doc.clearUndoRedoStacks()
 
+    # ----- 동기화 (docs/sync-design.md 5·6장) -----
+    def attach_sync(self, controller) -> None:
+        self.sync = controller
+        controller.about_to_sync.connect(self._save_before_sync)
+        controller.cycle_finished.connect(self._after_sync)
+        controller.status_changed.connect(self._update_sync_warning)
+        self._update_sync_warning()
+
+    def _save_before_sync(self) -> None:
+        if not self._quitting:
+            self.save_now()
+
+    def _sync_connected(self) -> bool:
+        return self.sync is not None and self.sync.connected
+
+    def _purge_images(self, html: str) -> None:
+        """영구 삭제한 메모의 그림. 연결된 PC에서는 다른 메모(다른 PC 메모 포함)가 같은 그림 파일을
+        쓸 수 있어 바로 지우지 않고 180일 정리에 맡긴다 (설계 3.5)."""
+        if not self._sync_connected():
+            _delete_memo_images(html)
+
+    def _update_sync_warning(self) -> None:
+        problem = self.sync.problem() if self.sync is not None else None
+        self.sync_warn_btn.setVisible(problem is not None and not self.trash_mode)
+        self.sync_warn_btn.setToolTip(problem[1] if problem else "")
+
+    def _after_sync(self, result: dict) -> None:
+        if result.get("error") or result.get("skipped") or self._quitting:
+            return
+        memo_document.too_big_images = set(result.get("too_big_remote", []))
+        self._too_big_local = list(result.get("too_big_local_paths", []))
+        touched = set(result.get("touched", []))
+        if touched:
+            ids = {r[0] for r in self.db.conn.execute(
+                f"SELECT id FROM memos WHERE uid IN ({','.join('?' * len(touched))})", sorted(touched))}
+            self._reload_after_sync(ids)
+        if result.get("arrived"):
+            self.images_arrived([Path(p) for p in result["arrived"]])
+        self._show_sync_conflicts(result.get("conflicts", []))
+        if result.get("notice"):
+            notify(self, "이 PC는 오랫동안 동기화하지 않았어요",
+                   f"다른 PC에 없는 메모 {result['notice']}개를 휴지통으로 옮겨 뒀어요. 필요하면 되살리면 돼요.")
+
+    def _reload_after_sync(self, ids: set[int]) -> None:
+        """다른 PC에서 바뀐 메모를 다시 그린다. 캐시된 문서는 버려야 옛 내용으로 덮어쓰지 않는다."""
+        cur = self.current_memo
+        for memo_id in ids:
+            if cur is None or memo_id != cur.id:
+                doc = self._doc_cache.pop(memo_id, None)
+                if doc is not None:
+                    doc.deleteLater()
+        if cur is not None and cur.id in ids and not self.trash_mode:
+            try:
+                fresh = self.db.get(cur.id)
+            except KeyError:
+                fresh = None  # 다른 PC에서 영구 삭제됐다
+            if fresh is None or fresh.deleted_at is not None:
+                self.current_memo = None
+                active = self.db.list_all(sort=self._current_sort_key())
+                self._load_memo(active[0] if active else self.db.create())
+            elif (fresh.title, fresh.content, fresh.color, fresh.font_family, fresh.font_size) != (
+                cur.title, cur.content, cur.color, cur.font_family, cur.font_size
+            ):
+                edited = (self.title_input.text() != cur.title
+                          or memo_document.saved_html(self.editor.document()) != cur.content)
+                if edited:
+                    # 동기화하는 사이에 이 PC에서도 고쳤다: 받은 내용을 이전 버전에 남기고 이 PC 내용을 지킨다
+                    self.db.snapshot(cur.id, force=True)
+                    self.current_memo = fresh
+                    self.save_now()
+                    self._show_toast("다른 PC에서 고친 내용은 이전 버전에 남겼어요.",
+                                     lambda mid=cur.id: self._show_versions(mid), "보기")
+                else:
+                    pos = self.editor.textCursor().position()
+                    old = self._doc_cache.pop(cur.id, None)
+                    self._load_memo(fresh)
+                    if old is not None:
+                        old.deleteLater()
+                    cursor = self.editor.textCursor()
+                    cursor.setPosition(min(pos, max(0, self.editor.document().characterCount() - 1)))
+                    self.editor.setTextCursor(cursor)
+        self._refresh_memo_tabs()
+        self._update_tabs_selected()
+        self._update_trash_btn()
+
+    def _show_sync_conflicts(self, conflicts) -> None:
+        """충돌 토스트 (설계 6.3). 여러 개면 한 번만, 개수를 적는다."""
+        if not conflicts:
+            return
+        uids = list(dict.fromkeys(uid for uid, _ in conflicts))
+        row = self.db.conn.execute("SELECT id FROM memos WHERE uid = ?", (uids[0],)).fetchone()
+        open_versions = (lambda mid=row[0]: self._show_versions(mid)) if row else None
+        if len(uids) > 1:
+            msg = f"다른 PC와 겹친 메모가 {len(uids)}개 있어요. 진 내용은 이전 버전에 남겼어요."
+        elif any(mine for _, mine in conflicts):
+            msg = "다른 PC에서 같은 메모를 고쳤어요. 이 PC에서 쓴 내용은 이전 버전에 남겼어요."
+        else:
+            msg = "다른 PC에서 고친 내용은 이전 버전에 남겼어요."
+        self._show_toast(msg, open_versions, "보기")
+
     def images_arrived(self, paths) -> None:
         """동기화로 그림이 도착했다. 열려 있거나 캐시된 메모 문서의 자리 표시를 바꿔 끼운다."""
         for doc in self._doc_cache.values():
@@ -3791,6 +3904,11 @@ class SlideMemoWindow(QWidget):
         self.current_memo.content = memo_document.saved_html(self.editor.document())
         self._apply_memo_theme(memo.color)
         self._refresh_search_marks()
+        if self._too_big_local and memo.id not in self._too_big_told and any(
+            Path(p).as_posix() in memo.content for p in self._too_big_local
+        ):
+            self._too_big_told.add(memo.id)
+            QTimer.singleShot(0, lambda: self._show_toast("그림 하나가 너무 커서 다른 PC로 보내지 못했어요."))
         # 메모 탭의 회전 텍스트도 그 메모의 family를 따라가도록 클래스 변수 갱신
         MemoTabButton.app_font_family = family
         self._update_pin_btn()
@@ -4167,6 +4285,8 @@ class SlideMemoWindow(QWidget):
             print(f"[close] 종료 중 저장 실패: {e}")
             notify(self, "마지막 내용을 저장하지 못했어요", str(e), warning=True)
         finally:
+            if self.sync is not None:
+                self.sync.shutdown()
             self.db.close()
         event.accept()
         QApplication.instance().quit()
@@ -4261,6 +4381,21 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
     side_act = menu.add_item("반대쪽 가장자리로 옮기기", "arrow-left-right.svg")
     side_act.triggered.connect(window.toggle_side)
     menu.addSeparator()
+    sync_now_act = menu.add_item("지금 동기화", "refresh-cw.svg")
+    sync_now_act.triggered.connect(lambda: window.sync is not None and window.sync.sync_now())
+    sync_last_act = menu.add_item("마지막 동기화: 아직 없어요")
+    sync_last_act.setEnabled(False)
+
+    def _update_sync_items() -> None:
+        from sync.settings_tab import relative_time
+
+        on = window._sync_connected()
+        sync_now_act.setVisible(on)
+        sync_last_act.setVisible(on)
+        if on:
+            sync_last_act.setText(f"마지막 동기화: {relative_time(window.sync.last_ok_ms())}")
+
+    menu.aboutToShow.connect(_update_sync_items)
     settings_act = menu.add_item("설정", "settings.svg")
 
     def _open_settings_from_tray() -> None:
@@ -4268,6 +4403,7 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
 
         dlg = SettingsDialog(window.db, window)
         dlg.exec()
+        window._update_sync_warning()
         window.apply_side_settings()
         window.apply_tab_geometry_settings()
         window.apply_display_mode_settings()
@@ -4310,7 +4446,7 @@ def _set_windows_app_user_model_id() -> None:
 
 
 APP_VERSION = "2.0.0"
-_GITHUB_REPO = "yujeong0411/slide-memo"
+_GITHUB_REPO = links.UPDATE_REPO  # 배포 저장소 (links.py)
 
 
 def _ver_tuple(v: str) -> tuple[int, ...]:
@@ -4570,9 +4706,13 @@ def main() -> int:
     if app_icon is not None:
         app.setWindowIcon(app_icon)
 
-    # 30일 지난 휴지통 항목 자동 영구삭제 (+ 첨부 이미지 정리)
-    for removed in db.cleanup_old_trash(days=30):
-        _delete_memo_images(removed.content)
+    # 30일 지난 휴지통 항목 자동 영구삭제 (+ 첨부 이미지 정리).
+    # 동기화를 연결한 PC는 동기화된 '휴지통에 들어간 시각' 기준으로 작업 줄이 지운다 (설계 3.4)
+    from sync.runner import SyncController, is_connected
+
+    if not is_connected(db.conn):
+        for removed in db.cleanup_old_trash(days=30):
+            _delete_memo_images(removed.content)
     _cleanup_old_recordings(days=30)
     # 활성 메모가 하나도 없으면 빈 메모 1개를 자동 생성 (첫 실행 / 모두 삭제 직후 모두 포함)
     # 메모 개수만 보면 "다 지운 사용자"가 신규 설치로 오인돼 업데이트 안내를
@@ -4586,6 +4726,8 @@ def main() -> int:
     if app_icon is not None:
         window.setWindowIcon(app_icon)
     window.show()
+
+    window.attach_sync(SyncController(db, is_visible=window.isVisible, parent=window))
 
     tray = make_tray_icon(window)
     tray.show()

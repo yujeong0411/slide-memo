@@ -252,5 +252,32 @@ for pc in (A, B, C, D):
     assert pc.store.pending() == []
 for pc in (A, B, C, D):
     pc.db.close()
+# ===== 5. 연결된 PC의 휴지통 자동 비우기 (동기화된 휴지통 시각 기준) =====
+d5 = tmp / "drive5"
+import time  # noqa: E402
+now_ms = int(time.time() * 1000)  # 휴지통 시각은 DB의 deleted_at(실제 시계)에서 온다
+A, B = PC("A5", d5, now_ms), PC("B5", d5, now_ms)
+x = A.db.create("30일 뒤 지워질 메모", "<p>x</p>")
+y = A.db.create("그 사이 되살릴 메모", "<p>y</p>")
+settle(A, B)
+A.db.soft_delete(A.memo(x.uid).id)
+A.db.soft_delete(A.memo(y.uid).id)
+settle(A, B)
+for pc in (A, B):
+    pc.later(20)
+B.db.restore(B.memo(y.uid).id)          # 20일째 B에서 되살림
+settle(A, B)
+for pc in (A, B):
+    pc.later(9)                          # 29일째: 아직
+settle(A, B)
+assert A.memo(x.uid) is not None and B.memo(x.uid) is not None
+for pc in (A, B):
+    pc.later(2)                          # 31일째
+settle(A, B)
+assert A.memo(x.uid) is None and B.memo(x.uid) is None, "30일 지난 휴지통 메모는 두 PC에서 지워진다"
+assert A.memo(y.uid) is not None and A.memo(y.uid).deleted_at is None, "되살린 메모는 지우지 않는다"
+same(A, B)
+for pc in (A, B):
+    pc.db.close()
 shutil.rmtree(tmp, ignore_errors=True)
 print("sync compact OK", flush=True)

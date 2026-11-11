@@ -398,6 +398,11 @@ class MemoDatabase:
         self.conn.execute("DELETE FROM memos WHERE id = ?", (memo_id,))
         self.conn.commit()
 
+    def delete_many(self, memo_ids: list[int]) -> None:
+        """여러 메모를 한 번에 완전 삭제 (휴지통 비우기). 한 트랜잭션이라 수백 개도 금방 끝난다."""
+        with self.conn:
+            self.conn.executemany("DELETE FROM memos WHERE id = ?", [(i,) for i in memo_ids])
+
     def soft_delete(self, memo_id: int) -> None:
         """휴지통으로 이동 (deleted_at 기록)."""
         self.conn.execute(

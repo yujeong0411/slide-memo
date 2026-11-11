@@ -54,6 +54,7 @@ class Syncer:
         conflicts = self.pull(files)
         if returning in ("stale", "removed"):
             self._handle_return(returning)
+        st.auto_purge()
         self.push()
         if st.forget_deleted():
             with st.conn:

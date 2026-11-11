@@ -91,16 +91,28 @@ if ($buildAnswer -eq "y" -or $buildAnswer -eq "Y") {
 }
 
 # ── GitHub Release 생성 + 인스톨러 첨부 ──────────────────────────────────
-Write-Host ""
-if ((Test-Path $installer) -and ($buildAnswer -eq "y" -or $buildAnswer -eq "Y")) {
-    & $gh release create "v$NewVersion" --title "Slide Memo v$NewVersion" --generate-notes $installer
-    Write-Host ""
-    Write-Host "완료! GitHub Release v$NewVersion + 인스톨러 업로드됨."
+# 설치 파일은 배포 저장소(slide-memo-releases)에 올린다 (앱의 업데이트 확인 주소, src/links.py).
+# 2.1.0만 지금 저장소에도 올린다 — 2.0.0 설치본은 지금 저장소를 보기 때문이다 (다리). RELEASE.md 참고
+$releaseRepo = "yujeong0411/slide-memo-releases"
+$bridgeRepo = "yujeong0411/slide-memo"
+$repos = @($releaseRepo)
+if ($NewVersion -eq "2.1.0") { $repos += $bridgeRepo }
+if (Test-Path "release_notes.md") {
+    $notes = @("--notes-file", "release_notes.md")
 } else {
-    & $gh release create "v$NewVersion" --title "Slide Memo v$NewVersion" --generate-notes
-    Write-Host ""
-    Write-Host "완료! GitHub Release v$NewVersion 생성됨."
-    if (Test-Path $installer) {
-        Write-Host "인스톨러 첨부하려면: & `"$gh`" release upload v$NewVersion $installer"
+    $notes = @("--notes", "Slide Memo v$NewVersion")
+}
+$withInstaller = (Test-Path $installer) -and ($buildAnswer -eq "y" -or $buildAnswer -eq "Y")
+Write-Host ""
+foreach ($repo in $repos) {
+    if ($withInstaller) {
+        & $gh release create "v$NewVersion" -R $repo --title "Slide Memo v$NewVersion" @notes $installer
+        Write-Host "완료! $repo 에 Release v$NewVersion + 인스톨러 업로드됨."
+    } else {
+        & $gh release create "v$NewVersion" -R $repo --title "Slide Memo v$NewVersion" @notes
+        Write-Host "완료! $repo 에 Release v$NewVersion 생성됨."
+        if (Test-Path $installer) {
+            Write-Host "인스톨러 첨부하려면: & `"$gh`" release upload v$NewVersion -R $repo $installer"
+        }
     }
 }

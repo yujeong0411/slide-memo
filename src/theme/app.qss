@@ -262,6 +262,28 @@ QDialog QPushButton[variant="icon"]:hover { background: $overlay_hover; }
 QDialog QPushButton[variant="icon"]:pressed { background: $overlay_press; }
 QDialog QPushButton[variant="icon"]:focus { border-color: $focus; }
 
+/* ghost(4.8): 투명 면 + fg_secondary. 동기화 탭의 "목록에서 빼기" */
+QDialog QPushButton[variant="ghost"] {
+    background: transparent;
+    color: $fg_secondary;
+    border-color: transparent;
+}
+QDialog QPushButton[variant="ghost"]:hover { background: $overlay_hover; }
+QDialog QPushButton[variant="ghost"]:pressed { background: $overlay_press; }
+QDialog QPushButton[variant="ghost"]:focus { border-color: $focus; }
+
+/* text(4.8): 투명 면 + accent_text 밑줄. 동기화 탭의 "개인정보처리방침" */
+QDialog QPushButton[variant="text"] {
+    background: transparent;
+    color: $accent_text;
+    border-color: transparent;
+    text-decoration: underline;
+    padding: 0 4px;
+}
+QDialog QPushButton[variant="text"]:hover { background: $overlay_hover; }
+QDialog QPushButton[variant="text"]:pressed { background: $overlay_press; }
+QDialog QPushButton[variant="text"]:focus { border-color: $focus; }
+
 /* ----- 입력 ----- */
 QDialog QLineEdit, QDialog QSpinBox, QDialog QComboBox, QFrame#popupCard QComboBox {
     background: $bg_canvas;

@@ -23,8 +23,8 @@ import database
 from database import DEFAULT_COLOR, VERSION_KEEP
 from sync import images
 from sync.core import (
-    AUTOPURGE_HIDE_DAYS, DAY_MS, HLC, PURGE_KEEP_DAYS, MemoState, Op, SETTING_PREFIX, SYNCED_SETTINGS,
-    decide, hlc_wall, materialize, wall_ms,
+    AUTOPURGE_HIDE_DAYS, DAY_MS, HLC, PURGE_KEEP_DAYS, TRASH_DAYS, MemoState, Op, SETTING_PREFIX,
+    SYNCED_SETTINGS, auto_purge_due, decide, hlc_wall, materialize, wall_ms,
 )
 
 _SCHEMA = """
@@ -82,6 +82,7 @@ def _effective(state: MemoState | None) -> dict[str, object]:
 class SyncStore:
     def __init__(self, conn, wall=wall_ms) -> None:
         self.conn, self.wall = conn, wall
+        self.touched: set[str] = set()
         self.conn.executescript(_SCHEMA)
 
     # ----- 상태 -----
@@ -285,6 +286,7 @@ class SyncStore:
 
     def write_memo(self, uid: str) -> None:
         """head로 계산한 모습을 memos 표에 쓴다 (없으면 만들고, 지워졌으면 지운다)."""
+        self.touched.add(uid)  # 화면이 다시 그릴 메모 (runner가 읽는다)
         heads = self.heads_of(uid)
         row = self.conn.execute("SELECT id FROM memos WHERE uid = ?", (uid,)).fetchone()
         if uid.startswith(SETTING_PREFIX):
@@ -461,6 +463,7 @@ class SyncStore:
         if not uids:
             return
         now_iso = ms_to_local_iso(self.wall())
+        self.touched |= uids
         with self.conn:
             for uid in uids:
                 self.conn.execute(
@@ -512,4 +515,36 @@ class SyncStore:
                     self._record(Op(f"{self.device}:{seq}", op.hlc, uid, f, op.v, op.base))
                     n += 1
             self._set("seq", seq)
+        return n
+
+    # ----- 휴지통 자동 비우기 (설계 3.4) -----
+    def auto_purge(self) -> int:
+        """동기화된 '휴지통에 들어간 시각' 기준 30일, 그 사이 되살림·수정이 없는 메모를 지운다(autopurge op).
+        이 PC에만 둔 메모(local_only)는 기록이 없으니 이 PC 휴지통 시각으로 30일 뒤 그냥 지운다.
+        그림 파일은 지우지 않는다 (180일 정리에 맡긴다). 지운 개수를 돌려준다."""
+        if not self.connected:
+            return 0
+        now = self.wall()
+        n = 0
+        with self.conn:
+            clock = self._clock()
+            seq = int(self._get("seq", "0"))
+            for uid, h in self.heads().items():
+                if uid.startswith(SETTING_PREFIX):
+                    continue
+                trash = auto_purge_due(h, now)
+                if trash is None:
+                    continue
+                seq += 1
+                self._record(Op(f"{self.device}:{seq}", clock.now(), uid, "autopurge", None, trash.id))
+                self.write_memo(uid)
+                n += 1
+            self._set("seq", seq)
+            self._save_clock(clock)
+            local_only = set(self.get_json("local_only", []))
+            cutoff = ms_to_local_iso(now - TRASH_DAYS * DAY_MS)
+            for uid in list(local_only):
+                if self.conn.execute("DELETE FROM memos WHERE uid = ? AND deleted_at IS NOT NULL AND deleted_at <= ?",
+                                     (uid, cutoff)).rowcount:
+                    n += 1
         return n
