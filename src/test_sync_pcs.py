@@ -197,7 +197,13 @@ assert B.memo(m1.uid).content == "<p>올리다 꺼짐</p>"
 # 2) 올리기: 다 올렸는데 '올림' 표시 전에 꺼짐 → 다시 올려도 두 번 적용되지 않는다
 A.db.update(A.memo(m1.uid).id, content="<p>표시 전에 꺼짐</p>")
 real_set = A.store.set_json
-A.store.set_json = lambda *a: (_ for _ in ()).throw(OSError("시험: 표시 전에 꺼짐"))
+def fail_on_mark(key, value):
+    if key == "segments":  # '올림' 표시와 같은 트랜잭션
+        raise OSError("시험: 표시 전에 꺼짐")
+    real_set(key, value)
+
+
+A.store.set_json = fail_on_mark
 try:
     A.syncer.push()
     raise AssertionError("실패해야 함")

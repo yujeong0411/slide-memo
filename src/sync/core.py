@@ -15,6 +15,8 @@ from typing import Callable
 
 DAY_MS = 86_400_000
 TRASH_DAYS = 30           # 휴지통 자동 비우기
+PURGE_KEEP_DAYS = 180     # 영구 삭제 기록 보관 (지나면 기록에서 그 메모를 잊는다)
+AUTOPURGE_HIDE_DAYS = 7   # 자동 비우기한 메모 내용을 되살림에 대비해 남겨 두는 기간
 CLOCK_SLACK_DAYS = 1      # 받는 PC가 봐주는 시계 차이 (자동 비우기를 29일째부터 받아들임)
 FAR_AHEAD_MS = DAY_MS     # 이보다 앞선 시계를 받으면 경고만 남긴다
 

@@ -23,7 +23,8 @@ import database
 from database import DEFAULT_COLOR, VERSION_KEEP
 from sync import images
 from sync.core import (
-    HLC, MemoState, Op, SETTING_PREFIX, SYNCED_SETTINGS, decide, hlc_wall, materialize, wall_ms,
+    AUTOPURGE_HIDE_DAYS, DAY_MS, HLC, PURGE_KEEP_DAYS, MemoState, Op, SETTING_PREFIX, SYNCED_SETTINGS,
+    decide, hlc_wall, materialize, wall_ms,
 )
 
 _SCHEMA = """
@@ -40,6 +41,9 @@ CREATE TABLE IF NOT EXISTS sync_cursor (device TEXT PRIMARY KEY, applied_seq INT
 CREATE TABLE IF NOT EXISTS sync_image (path TEXT PRIMARY KEY, sha TEXT NOT NULL, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_sync_image_sha ON sync_image(sha);
 """
+
+
+_EMPTY_BODY = {"title": "", "content": ""}
 
 
 def local_iso_to_ms(text: str | None) -> int:
@@ -181,8 +185,13 @@ class SyncStore:
 
             now = self.wall()
             seen: set[str] = set()
+            local_only = set(self.get_json("local_only", []))
             for row in self.conn.execute("SELECT * FROM memos").fetchall():
                 uid = row["uid"]
+                if uid in local_only:
+                    if row["deleted_at"] is not None:
+                        continue  # 오래 꺼져 있던 PC에만 남은 메모: 휴지통에 있는 동안은 올리지 않는다
+                    local_only.discard(uid)  # 되살렸다 → 새 메모처럼 전부 올린다 (기록이 없으므로)
                 seen.add(uid)
                 h = heads.get(uid, {})
                 state = materialize(uid, h, now) if h else None
@@ -209,6 +218,8 @@ class SyncStore:
                     emit(uid, "value", row[0])
             self._set("seq", seq)
             self._save_clock(clock)
+            alive = {r[0] for r in self.conn.execute("SELECT uid FROM memos")}
+            self.set_json("local_only", sorted(local_only & alive))
             return made
 
     def _record(self, op: Op) -> None:
@@ -375,3 +386,130 @@ class SyncStore:
             if materialize(uid, h, now) is not None:
                 out |= images.shas_in(h["body"].v["content"])
         return out
+
+    # ----- 지운 메모 잊기 (설계 2.3) -----
+    def forget_deleted(self) -> bool:
+        """영구 삭제된 메모의 내용을 기록에서 지운다.
+        - 직접 영구 삭제: 바로 본문을 비운다 (id·시계는 남겨 판정에 쓴다)
+        - 자동 비우기: 되살림에 대비해 AUTOPURGE_HIDE_DAYS 뒤에 비운다
+        - 둘 다 PURGE_KEEP_DAYS가 지나면 그 메모의 기록을 통째로 잊는다 (이 PC가 쓴 기록도)
+        이 PC가 올린 기록이 바뀌었으면 True (Drive의 기록도 압축으로 바꿔야 한다)."""
+        now = self.wall()
+        changed = False
+        with self.conn:
+            for uid, h in self.heads().items():
+                if uid.startswith(SETTING_PREFIX) or materialize(uid, h, now) is not None:
+                    continue
+                dels = [h[f] for f in ("purge", "autopurge") if f in h]
+                if not dels:
+                    continue
+                age = now - max(hlc_wall(o.hlc) for o in dels)
+                if age >= PURGE_KEEP_DAYS * DAY_MS:
+                    self.conn.execute("DELETE FROM sync_head WHERE uid = ?", (uid,))
+                    changed |= self._drop_outbox(uid)
+                    continue
+                if "purge" not in h and age < AUTOPURGE_HIDE_DAYS * DAY_MS:
+                    continue
+                body = h.get("body")
+                if body is not None and body.v != _EMPTY_BODY:
+                    self._put_head(Op(body.id, body.hlc, uid, "body", dict(_EMPTY_BODY), body.base))
+                changed |= self._strip_outbox_body(uid)
+        return changed
+
+    def _outbox_rows(self, uid: str | None = None):
+        for seq, line, uploaded in self.conn.execute("SELECT seq, op, uploaded FROM sync_outbox").fetchall():
+            op = Op.from_json(line)
+            if uid is None or op.uid == uid:
+                yield seq, op, uploaded
+
+    def _drop_outbox(self, uid: str) -> bool:
+        rows = [seq for seq, op, uploaded in self._outbox_rows(uid) if uploaded]
+        for seq in rows:
+            self.conn.execute("DELETE FROM sync_outbox WHERE seq = ?", (seq,))
+        return bool(rows)
+
+    def _strip_outbox_body(self, uid: str) -> bool:
+        changed = False
+        for seq, op, _ in list(self._outbox_rows(uid)):
+            if op.f == "body" and op.v != _EMPTY_BODY:
+                bare = Op(op.id, op.hlc, uid, "body", dict(_EMPTY_BODY), op.base)
+                self.conn.execute("UPDATE sync_outbox SET op = ? WHERE seq = ?", (bare.to_json(), seq))
+                changed = True
+        return changed
+
+    def prune_outbox(self) -> None:
+        """올린 op는 (메모, 필드)마다 최신 하나만 남긴다 (압축본에 들어갈 것만)."""
+        latest: dict[tuple[str, str], int] = {}
+        rows = list(self._outbox_rows())
+        for seq, op, uploaded in rows:
+            key = (op.uid, op.f)
+            if key not in latest or seq > latest[key]:
+                latest[key] = seq
+        for seq, op, uploaded in rows:
+            if uploaded and latest[(op.uid, op.f)] != seq:
+                self.conn.execute("DELETE FROM sync_outbox WHERE seq = ?", (seq,))
+
+    # ----- 오래 꺼져 있던 PC (설계 3.6) -----
+    def alive_uids(self) -> set[str]:
+        """이 PC에 있는 메모(휴지통 포함). 이 PC에만 남겨 둔 메모(local_only)는 빼고."""
+        local_only = set(self.get_json("local_only", []))
+        return {r[0] for r in self.conn.execute("SELECT uid FROM memos")} - local_only
+
+    def set_aside(self, uids: set[str]) -> None:
+        """다른 PC에 없는 메모를 이 PC 휴지통으로 옮기고 동기화에서 뺀다. 지우지는 않는다.
+        되살리면 새 메모처럼 다시 올라간다 (reconcile)."""
+        if not uids:
+            return
+        now_iso = ms_to_local_iso(self.wall())
+        with self.conn:
+            for uid in uids:
+                self.conn.execute(
+                    "UPDATE memos SET deleted_at = COALESCE(deleted_at, ?) WHERE uid = ?", (now_iso, uid))
+                self.conn.execute("DELETE FROM sync_head WHERE uid = ?", (uid,))
+                for seq, op, uploaded in list(self._outbox_rows(uid)):
+                    if not uploaded:
+                        self.conn.execute("DELETE FROM sync_outbox WHERE seq = ?", (seq,))
+            self.set_json("local_only", sorted(set(self.get_json("local_only", [])) | uids))
+
+    def rebase_device(self) -> None:
+        """다른 PC가 이 PC를 목록에서 뺐다 (Drive에 이 PC 파일이 없다). 새 device ID로 바꾸고,
+        아직 못 올린 op만 새 ID·새 순번으로 다시 매겨 올린다. 이미 올렸던 op는 뺀 PC가 넘겨받았다."""
+        old = self.device
+        new = uuid.uuid4().hex[:12]
+        with self.conn:
+            pending = [(seq, op) for seq, op, uploaded in self._outbox_rows() if not uploaded]
+            pending.sort()
+            renamed: dict[str, str] = {}
+            self.conn.execute("DELETE FROM sync_outbox")
+            for i, (_, op) in enumerate(pending, 1):
+                nid = f"{new}:{i}"
+                renamed[op.id] = nid
+                nop = Op(nid, op.hlc, op.uid, op.f, op.v, renamed.get(op.base, op.base))
+                self.conn.execute("INSERT INTO sync_outbox (seq, op) VALUES (?, ?)", (i, nop.to_json()))
+                head = self.heads_of(op.uid).get(op.f)
+                if head is not None and head.id == op.id:
+                    self._put_head(nop)
+                if op.f == "body":
+                    self.conn.execute("INSERT OR REPLACE INTO sync_body_chain (op_id, base) VALUES (?, ?)",
+                                      (nid, nop.base))
+            for key in ("segments", "snap", "alive_sent", "dev_written_at"):
+                self.conn.execute("DELETE FROM sync_state WHERE key = ?", (key,))
+            self._set("device", new)
+            self._set("seq", len(pending))
+            self._set("former_device", old)
+
+    def adopt(self, dev: str) -> int:
+        """목록에서 빼는 PC가 쓴 최신 값(head)을 이 PC 기록으로 넘겨받는다. 시계(HLC)와 base는 원래 op
+        그대로라, 원래 op를 이미 받은 PC에는 같은 값이라 아무 일도 없고, 못 받은 PC에는 이어 쓰기가 된다."""
+        with self.conn:
+            seq = int(self._get("seq", "0"))
+            n = 0
+            for uid, h in self.heads().items():
+                for f, op in h.items():
+                    if op.device != dev:
+                        continue
+                    seq += 1
+                    self._record(Op(f"{self.device}:{seq}", op.hlc, uid, f, op.v, op.base))
+                    n += 1
+            self._set("seq", seq)
+        return n
