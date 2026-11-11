@@ -35,8 +35,10 @@ def walk(which: str) -> None:
     for step in range(total):
         assert bubbles() == 1, (which, step, bubbles())
         assert win._guide_index == step, "중간에 처음으로 되돌아갔다"
+        before = win._guide
         win._guide.next_btn.click()
         QTest.qWait(30)
+        assert step + 1 == total or win._guide is not before, "단계마다 말풍선 창을 새로 만든다 (이전 그림이 남지 않게)"
         assert bubbles() <= 1
     QTest.qWait(700)  # 늦게 도착한 예약이 다시 시작하지 않는지
     assert bubbles() == 0 and not win.guide_running(), (which, bubbles())

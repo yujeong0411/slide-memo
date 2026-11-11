@@ -2984,8 +2984,12 @@ class SlideMemoWindow(QWidget):
             self._guide_index += 1
             self._show_guide_step()
             return
-        if self._guide is None:
-            self._guide = GuideBubble(self)
+        # 단계마다 말풍선 창을 새로 만든다. 같은 창을 숨겼다 다시 띄우면 바뀐 글자가 늦게 반영돼
+        # 이전 단계 그림이 남거나(1/5가 두 번), '다음'이 그림보다 몇 px 어긋나는 일이 있었다
+        if self._guide is not None:
+            self._guide.hide()
+            self._guide.deleteLater()
+        self._guide = GuideBubble(self)
         self._guide.show_step(
             title, text, anchor,
             self._guide_index + 1, len(self._guide_steps_queue),
