@@ -4265,7 +4265,7 @@ def _set_windows_app_user_model_id() -> None:
         pass  # 구버전 Windows 등 — 아이콘이 기본값으로 떨어지더라도 앱은 정상 동작
 
 
-APP_VERSION = "1.5.0"
+APP_VERSION = "2.0.0"
 _GITHUB_REPO = "yujeong0411/slide-memo"
 
 
@@ -4315,7 +4315,7 @@ WHATS_NEW_KEY = "seen_whatsnew_version"
 # 업데이트 후 첫 실행에 보여줄 변경사항. 새 버전마다 맨 위에 한 덩어리씩 쌓는다.
 # (팝업으로 따로 안내한 색 팔레트 개편(1.1.1)은 _show_palette_notice가 담당)
 WHATS_NEW: list[tuple[str, list[str]]] = [
-    ("1.5.0", [
+    ("2.0.0", [
         "화면을 차분하고 깔끔하게 새로 다듬었어요.",
         "어두운 화면을 쓸 수 있어요. 설정의 화면 모드에서 밝게, 어둡게, 시스템 설정 따르기 중에 골라요.",
         "메모 색이 종이 톤 8가지로 바뀌었어요. 쓰던 메모는 가장 가까운 색으로 옮겼고,"

@@ -8,6 +8,8 @@ import main as m
 
 assert m._ver_tuple("v1.2.0") == (1, 2, 0)
 assert m._ver_tuple("1.10.0") > m._ver_tuple("1.9.0")
+assert m._ver_tuple("2.0.0") > m._ver_tuple("1.4.1")  # 업데이트 확인도 이 비교를 쓴다
+assert m._ver_tuple("10.0.0") > m._ver_tuple("2.0.0")
 assert m._ver_tuple("") == () and m._ver_tuple("dev") == ()  # 깨진 값도 죽지 않는다
 
 # 안내 기록이 없는 사용자(= 안내 기능 이전 버전에서 올라옴)에게는 전부 보여준다
@@ -57,7 +59,7 @@ _win = m.SlideMemoWindow(_up)
 _win._force_topmost = lambda: None
 m._show_palette_notice(_win, _up, True)
 m._show_whats_new(_win, _up, True)
-assert len(shown) == 1 and "1.5.0" in shown[0], shown
+assert len(shown) == 1 and "2.0.0" in shown[0], shown
 assert _up.get_setting_int(m.PAPER_NOTICE_KEY, 1) == 0, "다음에 켤 때 색 안내가 다시 뜨면 안 된다"
 
 # 새로 설치: 둘 다 뜨지 않는다

@@ -488,7 +488,7 @@ def capture(win, db, tray, env):
         S("5a_dlg_ai_preview", "AI 결과 미리보기", "main.py:3421 _show_ai_preview")
         win._show_ai_preview("summarize", "가짜 요약 결과입니다.\n이번 주 할 일은 디자인 시안 검토와 회의 자료 정리입니다.")
         S("5b_dlg_update", "새 버전 발견 시", "main.py:5040 UpdateDialog")
-        M.UpdateDialog("1.4.1", "1.5.0", win).exec()
+        M.UpdateDialog("1.4.1", "2.0.0", win).exec()
         mime = QMimeData()
         img = QImage(40, 40, QImage.Format.Format_RGB32)
         img.fill(QColor("#ffffff"))

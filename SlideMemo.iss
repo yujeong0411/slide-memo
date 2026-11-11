@@ -3,7 +3,7 @@
 ; 결과:  installer\SlideMemo-Setup.exe
 
 #define MyAppName "Slide Memo"
-#define MyAppVersion "1.5.0"
+#define MyAppVersion "2.0.0"
 #define MyAppPublisher "nursecoder"
 #define MyAppExeName "SlideMemo.exe"
 
