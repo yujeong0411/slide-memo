@@ -32,6 +32,12 @@ litellm_datas, litellm_binaries, litellm_hiddenimports = collect_all('litellm')
 tiktoken_datas, tiktoken_binaries, tiktoken_hiddenimports = collect_all('tiktoken')
 tiktoken_ext_datas, tiktoken_ext_binaries, tiktoken_ext_hiddenimports = collect_all('tiktoken_ext')
 
+# Google 동기화용 OAuth 클라이언트 JSON (docs/sync-design.md 10장). 저장소에 커밋하지 않고(.gitignore의 secrets/)
+# 빌드할 때만 넣는다. 이 spec은 배포용 빌드이므로 파일이 없으면 멈춘다 (개발 실행은 spec을 쓰지 않는다).
+OAUTH_CLIENT = os.path.join('secrets', 'google_oauth_client.json')
+if not os.path.isfile(OAUTH_CLIENT):
+    raise SystemExit(f'배포용 빌드를 멈춰요: {OAUTH_CLIENT}가 없어요. 동기화가 빠진 설치본이 나가지 않게 하려는 거예요.')
+
 # 번들에서 빼는 것들 (근거는 아래 주석 — 되돌리려면 해당 줄만 지우면 된다)
 EXCLUDE_MODULES = [
     'PIL',        # 어디서도 import하지 않음 (pillow는 dev 전용인데 번들에 딸려 들어옴) -12.7MB
@@ -65,7 +71,7 @@ a = Analysis(
     ['src/main.py'],
     pathex=['src'],
     binaries=litellm_binaries + tiktoken_binaries + tiktoken_ext_binaries,
-    datas=[('assets', 'assets'), ('src/theme/*.qss', 'theme')] + litellm_datas + tiktoken_datas + tiktoken_ext_datas,
+    datas=[('assets', 'assets'), ('src/theme/*.qss', 'theme'), (OAUTH_CLIENT, 'secrets')] + litellm_datas + tiktoken_datas + tiktoken_ext_datas,
     hiddenimports=['keyring.backends', 'keyring.backends.Windows', 'tiktoken_ext', 'tiktoken_ext.openai_public'] + litellm_hiddenimports + tiktoken_hiddenimports + tiktoken_ext_hiddenimports,
     hookspath=[],
     hooksconfig={},
