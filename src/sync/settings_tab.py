@@ -58,7 +58,20 @@ class _Ask(AppDialog):
         if self.check is not None:
             self.body.addSpacing(4)
             self.body.addWidget(self.check)
-        self.add_actions(action, cancel)
+        # 오른쪽 끝이 주된 동작, 바로 왼쪽이 취소 (4.7)
+        self.cancel_btn = self.add_button(cancel)
+        self.cancel_btn.clicked.connect(self.reject)
+        self.action_btn = self.add_button(action, "primary")
+        self.action_btn.clicked.connect(self.accept)
+        self.action_btn.setDefault(True)
+
+    def set_danger(self, danger: bool) -> None:
+        """되돌릴 수 없게 되면 빨간 위험 단추로 바꾸고 기본 포커스를 취소에 둔다 (4.7)."""
+        self.action_btn.setProperty("variant", "danger" if danger else "primary")
+        A.repolish(self.action_btn)
+        self.action_btn.setDefault(not danger)
+        self.cancel_btn.setDefault(danger)
+        (self.cancel_btn if danger else self.action_btn).setFocus()
 
 
 class SyncTab(QWidget):
@@ -220,7 +233,8 @@ class SyncTab(QWidget):
         previous = self.db.get_setting_str(oauth.ACCOUNT_EMAIL_KEY, "")
         if oauth.is_other_account(previous, g.email):
             ask = _Ask("다른 계정이에요",
-                       f"전에는 {previous}(으)로 연결했어요. {g.email}(으)로 연결하면 다른 PC의 메모와 따로 보관돼요.",
+                       f"전에 연결한 계정: {previous}\n지금 고른 계정: {g.email}\n\n"
+                       "다른 계정으로 연결하면 다른 PC의 메모와 따로 보관돼요.",
                        "이 계정으로 연결", "취소", self)
             if not ask.exec():
                 self.ctl.run_job("revoke", g.refresh_token)
@@ -242,7 +256,7 @@ class SyncTab(QWidget):
         if result.get("others") and mine:
             ask = _Ask("합칠까요?",
                        f"Drive에 다른 PC의 메모가 있어요. 이 PC의 메모 {mine}개와 합칠게요. "
-                       "같은 메모가 두 개 보이면 하나를 지우면 돼요. 합치기 전에 이 PC의 메모를 백업해 둘게요.",
+                       "다른 PC의 메모와 이 PC의 메모를 함께 보여 줘요. 합치기 전에 이 PC의 메모를 백업해 둘게요.",
                        "합치기", "나중에", self)
             if not ask.exec():
                 self.ctl.run_job("revoke", g.refresh_token)  # 연결을 끝내지 않고 토큰도 남기지 않는다
@@ -264,6 +278,7 @@ class SyncTab(QWidget):
     def _disconnect(self) -> None:
         ask = _Ask("동기화를 끊을까요?", "이 PC의 메모는 그대로 남아요. Drive에 올린 메모는 남겨 둬요.",
                    "끊기", "취소", self, check="Drive에 올린 메모도 지우기 (다른 PC도 더 이상 받을 수 없어요)")
+        ask.check.toggled.connect(ask.set_danger)  # Drive 메모까지 지우면 되돌릴 수 없다
         if ask.exec():
             self._status("연결을 끊는 중이에요")
             self.ctl.run_job("disconnect", bool(ask.check.isChecked()))

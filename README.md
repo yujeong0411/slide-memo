@@ -1,4 +1,4 @@
-# Slide Memo
+# SlideMemo
 
 ## 1. 슬라이드 메모 소개
 

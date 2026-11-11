@@ -100,16 +100,16 @@ if ($NewVersion -eq "2.1.0") { $repos += $bridgeRepo }
 if (Test-Path "release_notes.md") {
     $notes = @("--notes-file", "release_notes.md")
 } else {
-    $notes = @("--notes", "Slide Memo v$NewVersion")
+    $notes = @("--notes", "SlideMemo v$NewVersion")
 }
 $withInstaller = (Test-Path $installer) -and ($buildAnswer -eq "y" -or $buildAnswer -eq "Y")
 Write-Host ""
 foreach ($repo in $repos) {
     if ($withInstaller) {
-        & $gh release create "v$NewVersion" -R $repo --title "Slide Memo v$NewVersion" @notes $installer
+        & $gh release create "v$NewVersion" -R $repo --title "SlideMemo v$NewVersion" @notes $installer
         Write-Host "완료! $repo 에 Release v$NewVersion + 인스톨러 업로드됨."
     } else {
-        & $gh release create "v$NewVersion" -R $repo --title "Slide Memo v$NewVersion" @notes
+        & $gh release create "v$NewVersion" -R $repo --title "SlideMemo v$NewVersion" @notes
         Write-Host "완료! $repo 에 Release v$NewVersion 생성됨."
         if (Test-Path $installer) {
             Write-Host "인스톨러 첨부하려면: & `"$gh`" release upload v$NewVersion -R $repo $installer"

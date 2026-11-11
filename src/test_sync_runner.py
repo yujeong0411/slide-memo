@@ -151,6 +151,18 @@ dlg2 = SettingsDialog(db, None, tab="sync")   # 컨트롤러가 없거나 OAuth 
 assert "이 빌드에서는 동기화를 쓸 수 없어요" in [w.text() for w in dlg2._sync_tab.findChildren(QLabel)]
 dlg2.reject()
 
+# 연결 끊기 확인 창: Drive 메모도 지우기를 체크했을 때만 빨간 위험 단추, 기본 포커스는 취소
+from sync.settings_tab import _Ask  # noqa: E402
+
+ask = _Ask("동기화를 끊을까요?", "설명", "끊기", "취소", None, check="Drive에 올린 메모도 지우기")
+ask.check.toggled.connect(ask.set_danger)
+assert ask.action_btn.property("variant") == "primary" and ask.action_btn.isDefault()
+ask.check.setChecked(True)
+assert ask.action_btn.property("variant") == "danger" and ask.cancel_btn.isDefault() and not ask.action_btn.isDefault()
+ask.check.setChecked(False)
+assert ask.action_btn.property("variant") == "primary" and ask.action_btn.isDefault()
+ask.reject()
+
 # ----- 휴지통 비우기: 한 번에 묶어 저장, 연결된 PC는 그림을 바로 지우지 않는다 -----
 pic = database.IMAGES_DIR / "img_test.png"
 pic.parent.mkdir(parents=True, exist_ok=True)
