@@ -131,6 +131,8 @@ from theme.widgets import (
     make_button,
     message_box,
     notify,
+    add_tooltip_blocker,
+    hide_tooltip,
     install_tooltips,
     role_label,
     tip,
@@ -1597,6 +1599,10 @@ class GuideBubble(QWidget):
         self.tail = _GuideTail(self)
 
     def show_step(self, title, text, anchor, index, total, on_next, on_skip) -> None:
+        # 반투명 창을 보이는 채로 바꾸고 옮기면, 새 글자가 이전 자리에 한 번 그려진 뒤
+        # 그 그림이 잔상으로 남는다(누를 수 없는 말풍선이 하나 더 보임). 숨긴 뒤에 바꾼다.
+        self.hide()
+        self._anchor = anchor
         self.title_lbl.setText(title)
         self.text_lbl.setText(text)
         self.step_lbl.setText(f"{index}/{total}")
@@ -1604,6 +1610,16 @@ class GuideBubble(QWidget):
         self._on_next, self._on_skip = on_next, on_skip
         self.adjustSize()
         self.layout().activate()
+        self._place_beside(anchor)
+        self.show()
+        self.raise_()
+
+    def follow(self) -> None:
+        """바가 움직였을 때 가리키던 대상 옆으로 다시 붙는다. 잔상이 남지 않게 숨겼다 띄운다."""
+        anchor = getattr(self, "_anchor", None)
+        if anchor is None or not self.isVisible():
+            return
+        self.hide()
         self._place_beside(anchor)
         self.show()
         self.raise_()
@@ -1622,11 +1638,11 @@ class GuideBubble(QWidget):
         else:
             col = self._win.tab_column
             ref = QRect(col.mapToGlobal(QPoint(0, 0)), col.size())
-        gap = 8
+        # 창의 투명 여백(MARGIN)이 곧 카드와 바 사이 간격이다. 여백이 바를 덮으면 그 자리를 못 누른다
         if self._win.side == "right":
-            x = ref.left() - self.width() - gap
+            x = ref.left() - self.width()
         else:
-            x = ref.right() + gap
+            x = ref.right() + 1
         x = max(scr.x() + 8, min(x, scr.x() + scr.width() - self.width() - 8))
         y = g.center().y() - self.height() // 2
         y = max(scr.y() + 8, min(y, scr.y() + scr.height() - self.height() - 8))
@@ -1763,6 +1779,8 @@ class SlideMemoWindow(QWidget):
         self._quitting = False
         # 가이드(말풍선) 상태
         self._guide: GuideBubble | None = None
+        # 말풍선과 툴팁은 같은 자리(바 바로 옆)에 뜬다. 가이드 중에는 툴팁을 띄우지 않는다
+        add_tooltip_blocker(lambda: self._guide is not None and self._guide.isVisible())
         # 가이드 예약은 이 타이머 하나로만 한다. 여러 번 예약해도 한 번만 시작된다
         self._guide_timer = QTimer(self)
         self._guide_timer.setSingleShot(True)
@@ -2943,6 +2961,7 @@ class SlideMemoWindow(QWidget):
     def start_guide(self, which: str = "bar") -> None:
         """한 번에 말풍선 하나: 예약을 지우고, 떠 있던 말풍선을 모두 닫고 시작한다."""
         self._guide_timer.stop()
+        hide_tooltip()
         for widget in QApplication.topLevelWidgets():
             # 이 창의 것만 닫는다. 다른 창의 말풍선을 지우면 그 창이 지워진 객체를 건드려 앱이 중단된다
             if isinstance(widget, GuideBubble) and widget.parent() is self and widget is not self._guide:
@@ -3036,6 +3055,8 @@ class SlideMemoWindow(QWidget):
         )
 
     def _save_user_size(self) -> None:
+        if self._guide is not None:
+            self._guide.follow()
         g = self.geometry()
         # 접힌 상태에선 폭이 tab_width라 user_width를 덮어쓰면 안 됨
         # (접힌 채 세로 이동 그립을 드래그한 경우)
@@ -3171,6 +3192,7 @@ class SlideMemoWindow(QWidget):
             self._show_edge_button()
 
     def expand(self) -> None:
+        hide_tooltip()
         if not self.isVisible():
             self.show_bar()  # 잠깐 숨김 중에 호출돼도 임시 트레이까지 원상 복구
         if self.is_expanded:
@@ -3197,6 +3219,7 @@ class SlideMemoWindow(QWidget):
         self._maybe_start_body_guide()
 
     def collapse(self, *, exit_trash: bool = True) -> None:
+        hide_tooltip()
         if not self.is_expanded:
             return
         self.save_now()

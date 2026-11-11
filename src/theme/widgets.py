@@ -84,7 +84,8 @@ class _AppToolTip(QWidget):
             None,
             Qt.WindowType.ToolTip
             | Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.NoDropShadowWindowHint,
+            | Qt.WindowType.NoDropShadowWindowHint
+            | Qt.WindowType.WindowTransparentForInput,  # 그림자 여백까지 클릭이 아래로 통과한다
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
@@ -187,8 +188,12 @@ class _ToolTipManager(QObject):
                 self.hide_tip()
                 return True
             text, beside = answer
+        if any(blocked() for blocked in _tooltip_blockers):
+            self.hide_tip()
+            return True
         if self.owner is not widget:
             widget.destroyed.connect(self.hide_tip)
+            self.tip.hide()  # 다른 자리로 옮길 때는 숨긴 뒤에 (잔상 방지)
         self.owner = widget
         self.tip.set_text(text)
         self.tip.place(widget, beside)
@@ -208,6 +213,16 @@ class _ToolTipManager(QObject):
 
 
 _tooltips: _ToolTipManager | None = None
+_tooltip_blockers: list = []  # True를 돌려주면 툴팁을 띄우지 않는다 (예: 가이드 말풍선이 떠 있을 때)
+
+
+def add_tooltip_blocker(blocked) -> None:
+    _tooltip_blockers.append(blocked)
+
+
+def hide_tooltip() -> None:
+    if _tooltips is not None and not _tooltips.disposed:
+        _tooltips.hide_tip()
 
 
 def install_tooltips(app: QApplication) -> _ToolTipManager:
@@ -216,6 +231,10 @@ def install_tooltips(app: QApplication) -> _ToolTipManager:
         _tooltips = _ToolTipManager(app)
         app.installEventFilter(_tooltips)
         A.release_on_quit(_tooltips, after=lambda manager: manager.dispose())
+        # 앱이 활성 창이 아니게 되면 툴팁을 남겨 두지 않는다
+        app.applicationStateChanged.connect(
+            lambda state: state != Qt.ApplicationState.ApplicationActive and hide_tooltip()
+        )
     return _tooltips
 
 
