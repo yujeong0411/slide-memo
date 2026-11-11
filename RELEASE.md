@@ -13,7 +13,7 @@
 PowerShell에서 프로젝트 폴더로 이동 후 실행:
 
 ```powershell
-cd C:\Users\choiy\Desktop\SlideMemo
+cd <프로젝트 폴더>
 .\bump_version.ps1
 ```
 

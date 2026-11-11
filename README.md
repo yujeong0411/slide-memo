@@ -267,7 +267,7 @@ OneDrive의 하드 링크 제한 때문이에요. `uv cache clean` 뒤에 다시
 © 2026 최유정 (Choi Yujeong/nursecoder). MIT License.
 
 자세한 내용은 `LICENSE` 파일을 봐 주세요.
-문의: choiyujeong0411@gmail.com
+문의: nursecoder04@gmail.com
 
 ### 출처
 
