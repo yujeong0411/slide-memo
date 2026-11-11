@@ -41,3 +41,6 @@ Thumbs.db
 
 # Claude Code 개인 허용 설정 (사용자 경로가 들어간다)
 .claude/settings.local.json
+
+# Google OAuth 클라이언트 JSON 등 (빌드할 때만 설치본에 넣는다)
+secrets/
