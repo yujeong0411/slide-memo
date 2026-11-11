@@ -66,7 +66,7 @@ rows = db.conn.execute("SELECT uid FROM memos").fetchall()
 assert len(rows) == 4 and all(r["uid"] for r in rows) and len({r["uid"] for r in rows}) == 4
 assert db.get_setting_str("user_slots") == '["#123456"]'
 try:
-    db.conn.execute("UPDATE memos SET uid = ? WHERE id = 2", (rows[0]["uid"],))
+    db.conn.execute("UPDATE memos SET uid = (SELECT uid FROM memos WHERE id = 1) WHERE id = 2")
     raise AssertionError("uid가 겹쳐도 저장됨")
 except sqlite3.IntegrityError:
     pass
