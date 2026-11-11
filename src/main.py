@@ -3743,7 +3743,14 @@ class SlideMemoWindow(QWidget):
         else:
             doc.setPlainText(content)
         memo_document.decorate(doc, theme_apply.current_mode())
+        memo_document.fill_missing_images(doc)  # 다른 PC에서 아직 못 받은 그림은 자리 표시로
         doc.clearUndoRedoStacks()
+
+    def images_arrived(self, paths) -> None:
+        """동기화로 그림이 도착했다. 열려 있거나 캐시된 메모 문서의 자리 표시를 바꿔 끼운다."""
+        for doc in self._doc_cache.values():
+            memo_document.refresh_images(doc, paths)
+        self.editor.viewport().update()
 
     def _show_scratch(self, content: str) -> None:
         """메모가 아닌 내용을 임시 문서에 띄운다. 캐시된 메모 문서를

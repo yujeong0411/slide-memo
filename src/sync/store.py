@@ -17,8 +17,11 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime
+from pathlib import Path
 
+import database
 from database import DEFAULT_COLOR, VERSION_KEEP
+from sync import images
 from sync.core import (
     HLC, MemoState, Op, SETTING_PREFIX, SYNCED_SETTINGS, decide, hlc_wall, materialize, wall_ms,
 )
@@ -33,6 +36,9 @@ CREATE TABLE IF NOT EXISTS sync_outbox (seq INTEGER PRIMARY KEY, op TEXT NOT NUL
 CREATE TABLE IF NOT EXISTS sync_body_chain (op_id TEXT PRIMARY KEY, base TEXT);
 -- 다른 PC마다 어디까지 적용했는지. 한 PC의 op는 순번대로 오므로 이것만으로 중복을 거른다.
 CREATE TABLE IF NOT EXISTS sync_cursor (device TEXT PRIMARY KEY, applied_seq INTEGER NOT NULL, version TEXT);
+-- 이 PC 그림 파일의 해시 (크기·수정 시각이 같으면 다시 읽지 않는다)
+CREATE TABLE IF NOT EXISTS sync_image (path TEXT PRIMARY KEY, sha TEXT NOT NULL, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_sync_image_sha ON sync_image(sha);
 """
 
 
@@ -183,6 +189,7 @@ class SyncStore:
                 if "created" not in h:
                     emit(uid, "created", {"at": local_iso_to_ms(row["created_at"])})
                 current, recorded = memo_fields(row), _effective(state)
+                current["body"]["content"] = self.portable(row["content"])
                 for f, v in current.items():
                     if v != recorded[f]:
                         emit(uid, f, v)
@@ -285,7 +292,7 @@ class SyncStore:
         now = self.wall()
         edited = [hlc_wall(heads[f].hlc) for f in ("body", "color", "font") if f in heads]
         values = (
-            st.title, st.content, st.color or DEFAULT_COLOR, int(st.pinned),
+            st.title, images.to_local(st.content, self.image_path_for), st.color or DEFAULT_COLOR, int(st.pinned),
             ms_to_local_iso(st.trashed_at) if st.trashed_at is not None else None,
             st.font_family, st.font_size,
             ms_to_local_iso(st.created_at or now), ms_to_local_iso(max(edited) if edited else now),
@@ -311,3 +318,60 @@ class SyncStore:
             " (SELECT id FROM memo_versions WHERE memo_id = ? ORDER BY id DESC LIMIT ?)",
             (memo_id, memo_id, VERSION_KEEP),
         )
+
+    # ----- 그림 (설계 3.5) -----
+    def portable(self, html: str) -> str:
+        return images.to_portable(html, database.IMAGES_DIR, self.image_sha)
+
+    def image_sha(self, path: Path) -> str | None:
+        """그림 파일의 해시. 받은 그림(<sha>.png)은 이름이 해시라 파일이 아직 없어도 안다."""
+        named = images.named_sha(path)
+        if named:
+            return named
+        try:
+            st = path.stat()
+        except OSError:
+            return None
+        key = str(path.resolve())
+        row = self.conn.execute("SELECT sha, size, mtime_ns FROM sync_image WHERE path = ?", (key,)).fetchone()
+        if row and row[1] == st.st_size and row[2] == st.st_mtime_ns:
+            return row[0]
+        sha = images.sha256_file(path)
+        self.remember_image(path, sha)
+        return sha
+
+    def remember_image(self, path: Path, sha: str) -> None:
+        st = path.stat()
+        self.conn.execute(
+            "INSERT OR REPLACE INTO sync_image (path, sha, size, mtime_ns) VALUES (?, ?, ?, ?)",
+            (str(path.resolve()), sha, st.st_size, st.st_mtime_ns))
+
+    def image_path_for(self, sha: str) -> Path:
+        """이 PC에 같은 그림이 이미 있으면 그 파일(원래 붙여 넣은 img_….png 포함), 없으면 받을 자리."""
+        for (path,) in self.conn.execute("SELECT path FROM sync_image WHERE sha = ?", (sha,)):
+            if Path(path).exists():
+                return Path(path)
+        return database.IMAGES_DIR / f"{sha}.png"
+
+    def local_image_refs(self, *, versions: bool = False) -> dict[str, Path]:
+        """이 PC의 메모(휴지통 포함, versions=True면 이전 버전도)가 쓰는 그림 {sha: 경로}."""
+        out: dict[str, Path] = {}
+        tables = ["SELECT content FROM memos"] + (["SELECT content FROM memo_versions"] if versions else [])
+        for sql in tables:
+            for (html,) in self.conn.execute(sql):
+                for p in images.local_paths_in(html, database.IMAGES_DIR):
+                    sha = self.image_sha(p)
+                    if sha:
+                        out.setdefault(sha, p)
+        return out
+
+    def head_image_refs(self) -> set[str]:
+        """기록상 지금 있는 메모(휴지통 포함, 모든 PC)의 본문이 쓰는 그림."""
+        now = self.wall()
+        out: set[str] = set()
+        for uid, h in self.heads().items():
+            if uid.startswith(SETTING_PREFIX) or "body" not in h:
+                continue
+            if materialize(uid, h, now) is not None:
+                out |= images.shas_in(h["body"].v["content"])
+        return out

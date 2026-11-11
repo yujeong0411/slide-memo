@@ -5,11 +5,13 @@
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import (
     QBrush,
     QColor,
     QFont,
+    QImage,
+    QPainter,
     QTextBlockFormat,
     QTextCharFormat,
     QTextCursor,
@@ -304,3 +306,76 @@ def link_format(href: str, mode: str) -> QTextCharFormat:
     fmt.setProperty(ORIGINAL_FG, "")
     fmt.setFontUnderline(True)
     return fmt
+
+
+# ----- 다른 PC에서 아직 못 받은 그림 (docs/sync-design.md 3.5) -----
+IMAGE_PENDING_TEXT = "그림을 받는 중이에요"
+IMAGE_TOO_BIG_TEXT = "다른 PC의 그림 하나가 너무 커서 받지 못했어요"
+too_big_images: set[str] = set()  # 다른 PC가 너무 커서 못 올린 그림 해시 (동기화가 채운다)
+
+
+def _image_names(doc: QTextDocument) -> list[str]:
+    names = []
+    block = doc.begin()
+    while block.isValid():
+        it = block.begin()
+        while not it.atEnd():
+            fragment = it.fragment()
+            if fragment.isValid() and fragment.charFormat().isImageFormat():
+                names.append(fragment.charFormat().toImageFormat().name())
+            it += 1
+        block = block.next()
+    return names
+
+
+def placeholder_image(text: str, width: int = 440, height: int = 96) -> QImage:
+    """그림 자리에 둘 회색 상자. 밝은·어두운 화면 모두에서 읽히게 반투명 회색만 쓴다."""
+    image = QImage(width, height, QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(Qt.GlobalColor.transparent)
+    p = QPainter(image)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing)
+    p.setPen(QColor(128, 128, 128, 140))
+    p.setBrush(QColor(128, 128, 128, 36))
+    p.drawRoundedRect(1, 1, width - 2, height - 2, 8, 8)
+    p.setPen(QColor(128, 128, 128))
+    p.drawText(image.rect(), Qt.AlignmentFlag.AlignCenter, text)
+    p.end()
+    return image
+
+
+def fill_missing_images(doc: QTextDocument) -> int:
+    """받을 자리(<images>/<sha>.png)인데 파일이 아직 없는 그림에 자리 표시를 넣는다.
+    본문은 먼저 보이고, 그림이 오면 refresh_images가 바꿔 끼운다. 저장되는 HTML은 그대로다."""
+    from sync import images
+
+    count = 0
+    for name in _image_names(doc):
+        path = images.src_to_path(name)
+        sha = images.named_sha(path)
+        if sha and not path.exists():
+            text = IMAGE_TOO_BIG_TEXT if sha in too_big_images else IMAGE_PENDING_TEXT
+            doc.addResource(QTextDocument.ResourceType.ImageResource, QUrl(name), placeholder_image(text))
+            count += 1
+    return count
+
+
+def refresh_images(doc: QTextDocument, arrived) -> bool:
+    """방금 받은 그림 파일로 자리 표시를 바꾼다. 열려 있는 메모도 깨지지 않고 그 자리에 그려진다."""
+    from sync import images
+
+    wanted = {str(p.resolve()) for p in arrived}
+    changed = False
+    for name in set(_image_names(doc)):
+        path = images.src_to_path(name)
+        try:
+            hit = str(path.resolve()) in wanted
+        except OSError:
+            continue
+        if hit:
+            image = QImage(str(path))
+            if not image.isNull():
+                doc.addResource(QTextDocument.ResourceType.ImageResource, QUrl(name), image)
+                changed = True
+    if changed:
+        doc.markContentsDirty(0, doc.characterCount())
+    return changed

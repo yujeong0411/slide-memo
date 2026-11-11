@@ -3,6 +3,7 @@
   list()  → {파일 이름: 버전 문자열}   (바뀌면 버전도 바뀐다)
   read(name) → bytes
   write(name, data)                   (파일을 통째로 바꾼다. 읽는 쪽이 반쯤 쓴 파일을 보지 않는다)
+  write_large(name, data)             (5MB 넘는 그림. Drive는 이어 올리기)
   delete(name)
 """
 from __future__ import annotations
@@ -33,6 +34,9 @@ class LocalFolderTransport:
         tmp = self.root / f"{name}.{os.getpid()}.tmp"
         tmp.write_bytes(data)
         os.replace(tmp, self.root / name)
+
+    # 큰 그림(5MB 초과)을 올리는 길. Drive는 이어 올리기(resumable upload)로 따로 구현한다 (6단계).
+    write_large = write
 
     def delete(self, name: str) -> None:
         (self.root / name).unlink(missing_ok=True)
