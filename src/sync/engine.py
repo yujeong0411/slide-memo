@@ -185,16 +185,22 @@ class Syncer:
                 segments = [s for s in info["segments"] if int(s["last"]) > applied]
                 remote_big[dev] = [x for x in info.get("too_big", []) if isinstance(x, str)]
                 seen_me[dev] = int((info.get("cursors") or {}).get(st.device, 0))
-            except (ValueError, KeyError, TypeError, AttributeError):
-                continue  # 망가진 dev 파일은 건너뛴다 (다음에 고쳐 올라오면 받는다)
+            except (ValueError, KeyError, TypeError, AttributeError, FileNotFoundError):
+                continue  # 망가지거나 방금 사라진 dev 파일은 건너뛴다 (다음에 다시 본다)
             top, complete = applied, True
             parts = ([f"snap_{dev}_{int(snap['n'])}.json"] if snap and int(snap["upto"]) > applied else []) \
                 + [f"log_{dev}_{int(s['n'])}.jsonl" for s in segments]
             for part in parts:
-                if part not in files:
+                try:
+                    if part not in files:
+                        raise FileNotFoundError(part)
+                    ops = self._read_ops(part, dev, applied)
+                except FileNotFoundError:  # 아직 안 보이거나 그 PC가 방금 압축했다
                     complete = False
-                    break  # 아직 안 보이면 여기까지만 (순번 구멍을 만들지 않는다)
-                ops = self._read_ops(part, dev, applied)
+                    break  # 여기까지만 (순번 구멍을 만들지 않는다), 다음에 dev 파일부터 다시
+                except ValueError:  # 압축본이 망가졌다
+                    complete = False
+                    break
                 new_ops += ops
                 top = max([top] + [o.seq for o in ops])
             cursors[dev] = (top, version if complete else None)  # 덜 읽었으면 다음에 다시 읽는다
@@ -234,7 +240,7 @@ class Syncer:
             if name.startswith("alive_") and name != f"alive_{st.device}.json":
                 try:
                     known |= set(json.loads(self.transport.read(name)))
-                except (ValueError, TypeError):
+                except (ValueError, TypeError, FileNotFoundError):
                     pass
         seen_upto = max(st.get_json("remote_cursors", {}).values(), default=0)
         if kind == "removed":  # 빼 준 PC가 올라와 있던 기록은 모두 넘겨받았다
@@ -277,7 +283,7 @@ class Syncer:
                 out.append({"device": info["device"], "name": str(info.get("name", "")),
                             "last_sync": int(info.get("last_sync", 0)),
                             "is_self": info["device"] == self.store.device})
-            except (ValueError, KeyError, TypeError):
+            except (ValueError, KeyError, TypeError, FileNotFoundError):
                 continue
         return sorted(out, key=lambda d: (not d["is_self"], -d["last_sync"]))
 
@@ -331,7 +337,10 @@ class Syncer:
                 sha = images.named_sha(path)
                 if sha is None or path.exists() or f"img_{sha}.png" not in files:
                     continue
-                data = self.transport.read(f"img_{sha}.png")
+                try:
+                    data = self.transport.read(f"img_{sha}.png")
+                except FileNotFoundError:
+                    continue  # 방금 지워졌다 (쓰는 PC가 다시 올린다)
                 if hashlib.sha256(data).hexdigest() != sha:
                     continue  # 손상된 파일은 쓰지 않는다
                 path.parent.mkdir(parents=True, exist_ok=True)
