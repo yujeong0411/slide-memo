@@ -51,16 +51,6 @@ def recent_conflicts(db, now: float | None = None) -> list[tuple[int, str, int]]
         if row is not None:
             out.append((row[0], row[1] or "제목 없음", int(i["at"])))
     return out
-
-
-def object_particle(name: str) -> str:
-    """'을/를' — 끝 글자에 받침이 있으면 '을'. 영문·숫자는 읽는 소리로 어림한다."""
-    last = (name or "").rstrip()[-1:] or "가"
-    if "가" <= last <= "힣":
-        return "을" if (ord(last) - 0xAC00) % 28 else "를"
-    if last.isdigit():
-        return "를" if last in "2459" else "을"
-    return "을" if last.lower() in "lmnr" else "를"
 _LABEL_WIDTH = 112
 
 
@@ -348,7 +338,9 @@ class SyncTab(QWidget):
 
     def _remove(self, dev: dict) -> None:
         name = dev["name"] or "이름 없는 PC"
-        ask = _Ask(f"{name}{object_particle(name)} 정리할까요?",
+        # 이름 뒤에 조사를 붙이지 않는다: 제목은 고정 문구, PC 이름은 아래 줄에 따로 (9장 44)
+        ask = _Ask("이 PC를 정리할까요?",
+                   f"PC 이름: {name}\n\n"
                    "더 이상 쓰지 않는 PC를 목록에서 정리해요. 그 PC가 마지막으로 고친 메모는 이 PC가 넘겨받아서 "
                    "잃지 않아요. 그 PC에서 동기화를 멈추려면 그 PC에서 '연결 끊기'를 눌러 주세요.",
                    "정리하기", "취소", self)
