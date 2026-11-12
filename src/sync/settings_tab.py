@@ -50,6 +50,20 @@ def recent_conflicts(db, now: float | None = None) -> list[tuple[int, str, int]]
         if row is not None:
             out.append((row[0], row[1] or "제목 없음", int(i["at"])))
     return out
+
+
+IDLE_CLEANUP_DAYS = 7  # 이만큼 넘게 동기화하지 않은 다른 PC에만 "쓰지 않는 PC로 정리"를 보인다
+
+
+def idle_days(d: dict, now: float | None = None) -> int:
+    """다른 PC가 하루 넘게 동기화하지 않았으면 그 날수(1~), 아니면 0. 이 PC와 시각이 없는 PC는 0.
+    다른 PC의 열쇠가 막혔는지는 여기서 알 수 없어서, 마지막 동기화 시각만 본다 (9장 46)."""
+    if d["is_self"] or not d["last_sync"]:
+        return 0
+    sec = (now or time.time()) - d["last_sync"] / 1000
+    return int(sec // 86400) if sec > 86400 else 0
+
+
 _LABEL_WIDTH = 112
 
 
@@ -238,7 +252,10 @@ class SyncTab(QWidget):
         _clear(self.devices_box)
         for d in devices:
             row = QHBoxLayout()
+            idle = idle_days(d)
             name = QLabel(d["name"] or "이름 없는 PC")
+            if idle:  # 하루 넘게 동기화하지 않은 다른 PC는 흐리게 (9장 46)
+                name.setProperty("role", "description")
             row.addWidget(name)
             if d["is_self"]:
                 row.addWidget(role_label("이 PC", "badge"))
@@ -246,11 +263,16 @@ class SyncTab(QWidget):
             A.set_tabular(when)
             row.addWidget(when)
             row.addStretch(1)
-            if not d["is_self"]:
+            if idle >= IDLE_CLEANUP_DAYS:  # 7일을 넘었다 (7일째부터)
                 out = make_button("쓰지 않는 PC로 정리", "ghost")
                 out.clicked.connect(lambda _c=False, dev=d: self._remove(dev))
                 row.addWidget(out)
             self.devices_box.addLayout(row)
+            if idle:
+                note = role_label(f"{idle}일 동안 동기화하지 않았어요. "
+                                  "그 PC에서 '다시 연결해 주세요'가 떠 있을 수 있어요.", "hint")
+                note.setWordWrap(True)
+                self.devices_box.addWidget(note)
         if not devices:
             self.devices_box.addWidget(role_label("아직 연결된 PC가 없어요", "hint"))
 

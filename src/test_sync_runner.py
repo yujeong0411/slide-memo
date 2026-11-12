@@ -187,7 +187,26 @@ assert pump(lambda: hasattr(tab, "devices_box") and tab.devices_box.count() >= 2
 labels = [w.text() for w in tab.findChildren(QLabel)]
 buttons = [b.text() for b in tab.findChildren(QPushButton)]
 assert "me@example.com" in labels and "이 PC" in labels and "다른 PC" in labels, labels
-assert {"지금 동기화", "연결 끊기", "쓰지 않는 PC로 정리"} <= set(buttons), buttons
+assert {"지금 동기화", "연결 끊기"} <= set(buttons), buttons
+assert "쓰지 않는 PC로 정리" not in buttons and not any("동기화하지 않았어요" in t for t in labels), "방금 동기화한 PC는 그대로"
+# 하루 넘게 동기화하지 않은 다른 PC: 흐리게 + 날짜 안내, 7일 넘으면 정리 단추. 이 PC 줄은 그대로 (9장 46)
+from sync.settings_tab import idle_days  # noqa: E402
+
+H, D = 3_600_000, 86_400_000
+now_ms = int(time.time() * 1000)
+assert idle_days({"is_self": False, "last_sync": now_ms - 23 * H}) == 0
+assert idle_days({"is_self": False, "last_sync": now_ms - 3 * D - H}) == 3
+assert idle_days({"is_self": True, "last_sync": now_ms - 30 * D}) == 0 and idle_days({"is_self": False, "last_sync": 0}) == 0
+tab._fill_devices([{"device": "me", "name": "이 컴퓨터", "last_sync": now_ms - 30 * D, "is_self": True},
+                   {"device": "b", "name": "삼일", "last_sync": now_ms - 3 * D - H, "is_self": False},
+                   {"device": "c", "name": "여드레", "last_sync": now_ms - 8 * D, "is_self": False}])
+rows = {w.text(): w for w in tab.findChildren(QLabel) if w.text() in ("이 컴퓨터", "삼일", "여드레")}
+assert rows["삼일"].property("role") == "description" and rows["여드레"].property("role") == "description"
+assert rows["이 컴퓨터"].property("role") is None, "이 PC 줄은 흐리게 하지 않는다"
+notes = [w.text() for w in tab.findChildren(QLabel) if "동기화하지 않았어요" in w.text()]
+assert notes == ["3일 동안 동기화하지 않았어요. 그 PC에서 '다시 연결해 주세요'가 떠 있을 수 있어요.",
+                 "8일 동안 동기화하지 않았어요. 그 PC에서 '다시 연결해 주세요'가 떠 있을 수 있어요."], notes
+assert [b.text() for b in tab.findChildren(QPushButton)].count("쓰지 않는 PC로 정리") == 1, "7일 넘은 PC에만"
 assert "최근에 겹친 메모" in labels and "처음 메모" in buttons, "최근 7일 겹친 메모 목록"
 # PC 이름은 Windows 컴퓨터 이름을 글자로만 보여 준다 (바꾸는 칸이 없다)
 from PyQt6.QtWidgets import QLineEdit  # noqa: E402
