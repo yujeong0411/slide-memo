@@ -299,7 +299,7 @@ class SyncTab(QWidget):
     def _after_probe(self, result: dict) -> None:
         g, self._grant = self._grant, None
         if g is None or self._dlg is None:
-            return  # 그 사이 취소했다 (토큰은 _cancel_connect가 철회)
+            return  # 그 사이 취소했다 (받은 토큰은 _cancel_connect가 버렸다)
         if "error" in result:
             self._give_up(g, oauth.OAuthError("network" if result["error"] == "network" else "failed"))
             return
@@ -372,7 +372,7 @@ class SyncTab(QWidget):
             dlg = getattr(self, "_dlg", None)
             if getattr(self, "_cancel_after_connect", False):
                 self._cancel_after_connect = False
-                self.ctl.run_job("disconnect", False)  # 첫 동기화 중에 취소했다: 끊고 토큰도 철회
+                self.ctl.run_job("disconnect", False)  # 첫 동기화 중에 취소했다: 이 PC의 연결만 끊는다 (철회 없음)
                 if dlg is not None:
                     dlg.fail(None)
             elif "error" in result:
