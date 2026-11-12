@@ -6,11 +6,12 @@ from datetime import datetime
 
 from PyQt6.QtCore import Qt, QUrl
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtWidgets import QCheckBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QCheckBox, QFormLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 import links
 from sync import oauth
-from sync.runner import PC_NAME_KEY, STATUS_TEXT, default_pc_name
+from sync import runner
+from sync.runner import STATUS_TEXT
 from theme import apply as A
 from theme.widgets import AppDialog, make_button, role_label
 
@@ -79,7 +80,6 @@ class SyncTab(QWidget):
         super().__init__(parent)
         self.db, self.ctl = db, controller
         self._grant: oauth.Grant | None = None
-        self._pc_name_edit: QLineEdit | None = None
         self.outer = QVBoxLayout(self)
         self.outer.setContentsMargins(24, 20, 24, 20)
         self.outer.setSpacing(12)
@@ -91,7 +91,6 @@ class SyncTab(QWidget):
     # ----- 그리기 -----
     def render(self) -> None:
         _clear(self.outer)
-        self._pc_name_edit = None
         self.status_lbl = role_label("", "hint")
         self.status_lbl.setWordWrap(True)
         self.status_lbl.hide()
@@ -137,9 +136,9 @@ class SyncTab(QWidget):
         holder.setLayout(last)
         last.setContentsMargins(0, 0, 0, 0)
         _row(form, "마지막 동기화", holder)
-        self._pc_name_edit = QLineEdit(self.db.get_setting_str(PC_NAME_KEY, "") or default_pc_name())
-        self._pc_name_edit.setMaxLength(40)
-        _row(form, "PC 이름", self._pc_name_edit)
+        # PC 이름은 Windows 컴퓨터 이름을 그대로 쓴다 (바꾸지 않는다, 9장 39)
+        self.pc_name_lbl = QLabel(runner.default_pc_name())
+        _row(form, "PC 이름", self.pc_name_lbl)
         self.outer.addLayout(form)
         self.outer.addWidget(self.status_lbl)
         self.reconnect_btn = make_button("다시 연결하기", "primary")
@@ -202,17 +201,6 @@ class SyncTab(QWidget):
             self.devices_box.addWidget(role_label("아직 연결된 PC가 없어요", "hint"))
 
     # ----- 동작 -----
-    def save(self) -> None:
-        """설정 창의 저장하기. PC 이름이 바뀌었으면 다른 PC에도 곧 보이게 한다."""
-        if self._pc_name_edit is None:
-            return
-        name = self._pc_name_edit.text().strip() or default_pc_name()
-        if name != (self.db.get_setting_str(PC_NAME_KEY, "") or default_pc_name()):
-            self.db.set_setting_str(PC_NAME_KEY, name)
-            self.db.conn.execute("UPDATE sync_state SET value = '0' WHERE key = 'dev_written_at'")
-            self.db.conn.commit()
-            self.ctl.sync_now()
-
     def _sync_now(self) -> None:
         self.sync_now_btn.setEnabled(False)
         self.ctl.sync_now()

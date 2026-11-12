@@ -40,7 +40,7 @@ from ai_provider import (
 from database import MemoDatabase
 from theme import apply as A
 from theme import tokens as T
-from theme.widgets import ThemedCombo, line, make_button, notify, role_label
+from theme.widgets import AppDialog, ThemedCombo, line, make_button, notify, role_label
 
 _KEY_HELP_URLS: dict[str, str] = {
     "anthropic": "https://console.anthropic.com/",
@@ -140,22 +140,82 @@ class SettingsDialog(QDialog):
         if tab == "sync":
             tabs.setCurrentWidget(self._sync_tab)
         root.addWidget(tabs)
+        self._tabs = tabs
 
+        # 일반·AI 탭은 [취소]·[저장하기], 바로 적용되는 동기화·정보 탭은 [닫기]만 (9장 38)
         root.addWidget(line())
         footer = QHBoxLayout()
         footer.setContentsMargins(24, 16, 24, 16)
         footer.setSpacing(8)
         footer.addStretch(1)
-        cancel = make_button("취소")
-        cancel.clicked.connect(self.reject)
-        footer.addWidget(cancel)
-        save = make_button("저장하기", "primary")
-        save.setDefault(True)
-        save.clicked.connect(self._save_and_accept)
-        footer.addWidget(save)
+        self._cancel_btn = make_button("취소")
+        self._cancel_btn.clicked.connect(self._discard)
+        footer.addWidget(self._cancel_btn)
+        self._save_btn = make_button("저장하기", "primary")
+        self._save_btn.clicked.connect(self._save_and_accept)
+        footer.addWidget(self._save_btn)
+        self._close_btn = make_button("닫기")
+        self._close_btn.clicked.connect(self.reject)
+        footer.addWidget(self._close_btn)
         root.addLayout(footer)
 
         self._load_settings()
+        self._initial = self._collect()
+        tabs.currentChanged.connect(self._update_footer)
+        self._update_footer()
+
+    # ── 아래 단추와 저장하지 않은 변경 ──────────────────────────────
+    _EDITABLE_TABS = (0, 1)  # 일반, AI
+
+    def _update_footer(self) -> None:
+        editable = self._tabs.currentIndex() in self._EDITABLE_TABS
+        self._cancel_btn.setVisible(editable)
+        self._save_btn.setVisible(editable)
+        self._close_btn.setVisible(not editable)
+        self._save_btn.setDefault(editable)
+        self._close_btn.setDefault(not editable)
+
+    def _collect(self) -> tuple:
+        """저장하기가 저장하는 값들 (일반·AI 탭). 열었을 때와 다르면 저장하지 않은 변경이 있다."""
+        return (
+            self._theme_combo.currentData(), self._side_combo.currentData(),
+            self._display_mode_combo.currentData(), self._tab_width_slider.value(),
+            self._memo_tab_height_slider.value(), self._opacity_slider.value(),
+            self._autostart_chk.isChecked(), self._ai_enabled_chk.isChecked(),
+            self._provider_combo.currentData(), self._model_combo.currentData(),
+            self._key_edit.text().strip(), self._preview_chk.isChecked(),
+            self._recording_enabled_chk.isChecked(), self._recording_keep_chk.isChecked(),
+            self._recording_max_spin.value(), self._whisper_key_edit.text().strip(),
+        )
+
+    def has_unsaved_changes(self) -> bool:
+        return self._collect() != self._initial
+
+    def _discard(self) -> None:
+        """[취소]: 이번에 바꾼 것을 버리고 닫는다 (묻지 않는다)."""
+        super().reject()
+
+    def reject(self) -> None:
+        """창 닫기·Esc·[닫기]. 저장하지 않은 변경이 있으면 먼저 묻는다."""
+        if not self.has_unsaved_changes():
+            super().reject()
+            return
+        ask = AppDialog("저장하지 않은 변경이 있어요", self)
+        text = role_label("일반·AI 탭에서 바꾼 설정을 아직 저장하지 않았어요.", "description")
+        text.setWordWrap(True)
+        ask.body.addWidget(text)
+        cancel = ask.add_button("취소")
+        cancel.clicked.connect(ask.reject)
+        discard = ask.add_button("저장하지 않고 닫기")
+        discard.clicked.connect(lambda: ask.done(2))
+        save = ask.add_button("저장하고 닫기", "primary")
+        save.clicked.connect(lambda: ask.done(1))
+        save.setDefault(True)
+        result = ask.exec()
+        if result == 1:
+            self._save_and_accept()
+        elif result == 2:
+            super().reject()
 
     def _combo(self) -> QComboBox:
         return ThemedCombo()
@@ -583,7 +643,6 @@ class SettingsDialog(QDialog):
 
     # ── 저장 ─────────────────────────────────────────────────────
     def _save_and_accept(self) -> None:
-        self._sync_tab.save()
         provider = self._provider_combo.currentData()
         model = (
             self._model_combo.currentData()

@@ -142,11 +142,54 @@ labels = [w.text() for w in tab.findChildren(QLabel)]
 buttons = [b.text() for b in tab.findChildren(QPushButton)]
 assert "me@example.com" in labels and "이 PC" in labels and "다른 PC" in labels, labels
 assert {"지금 동기화", "연결 끊기", "목록에서 빼기"} <= set(buttons), buttons
-tab._pc_name_edit.setText("회사 노트북")
-tab.save()
-assert db.get_setting_str(runner.PC_NAME_KEY) == "회사 노트북"
-assert pump(lambda: any(d["name"] == "회사 노트북" for d in other_sync.devices()), 10), "바꾼 PC 이름이 다른 PC에 보인다"
+# PC 이름은 Windows 컴퓨터 이름을 글자로만 보여 준다 (바꾸는 칸이 없다)
+from PyQt6.QtWidgets import QLineEdit  # noqa: E402
+
+assert tab.pc_name_lbl.text() == runner.default_pc_name() and not tab.findChildren(QLineEdit)
+assert any(not d["is_self"] and d["name"] == runner.default_pc_name() for d in other_sync.devices()), "다른 PC 목록에 이 PC가 컴퓨터 이름으로 보인다"
+
+# 동기화·정보 탭은 [닫기]만, 일반·AI 탭은 [취소]·[저장하기]
+dlg.show()
+assert dlg._close_btn.isVisible() and not dlg._save_btn.isVisible() and not dlg._cancel_btn.isVisible()
+dlg._tabs.setCurrentIndex(0)
+assert dlg._save_btn.isVisible() and dlg._cancel_btn.isVisible() and not dlg._close_btn.isVisible()
+dlg._tabs.setCurrentIndex(3)
+assert dlg._close_btn.isVisible()
+# 저장하지 않은 변경이 있으면 닫을 때 묻는다: [취소]면 그대로, [저장하지 않고 닫기]면 닫힘, [저장하고 닫기]면 저장
+from PyQt6.QtCore import QTimer  # noqa: E402
+
+from theme.widgets import AppDialog  # noqa: E402
+
+old_opacity = db.get_setting_int("window_opacity", 100)
+dlg._opacity_slider.setValue(70 if old_opacity != 70 else 80)
+assert dlg.has_unsaved_changes()
+
+
+def answer(text):
+    def press():
+        for w in app.topLevelWidgets():
+            if isinstance(w, AppDialog) and w.isVisible() and w.head_label.text() == "저장하지 않은 변경이 있어요":
+                next(b for b in w.findChildren(QPushButton) if b.text() == text).click()
+    QTimer.singleShot(200, press)
+
+
+answer("취소")
 dlg.reject()
+assert dlg.isVisible() and dlg.result() == 0, "취소하면 설정 창이 그대로"
+answer("저장하지 않고 닫기")
+dlg.reject()
+assert not dlg.isVisible() and db.get_setting_int("window_opacity", 100) == old_opacity, "저장하지 않음"
+dlg = SettingsDialog(db, win)
+dlg.show()
+dlg._opacity_slider.setValue(75)
+answer("저장하고 닫기")
+dlg.reject()
+assert not dlg.isVisible() and db.get_setting_int("window_opacity", 100) == 75, "저장하고 닫음"
+dlg = SettingsDialog(db, win)
+dlg._opacity_slider.setValue(90)
+dlg._discard()   # [취소]는 묻지 않고 버린다
+assert db.get_setting_int("window_opacity", 100) == 75
+db.set_setting_int("window_opacity", old_opacity)
 dlg2 = SettingsDialog(db, None, tab="sync")   # 컨트롤러가 없거나 OAuth 설정이 없는 빌드
 assert "이 빌드에서는 동기화를 쓸 수 없어요" in [w.text() for w in dlg2._sync_tab.findChildren(QLabel)]
 dlg2.reject()

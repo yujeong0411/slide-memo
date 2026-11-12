@@ -100,12 +100,13 @@ def run(name: str, reset: bool) -> int:
         db.set_setting_int("side", SIDES[name])
         db.set_setting_int("guide_bar_done", 1)
         db.set_setting_int("guide_body_done", 1)
-        db.set_setting_str("sync_pc_name", f"시험 {name}")
     db.close()
 
     from sync import core, engine, runner, store
 
     runner.OFFLINE_WARN_S = 60
+    # 두 시험 앱이 같은 컴퓨터라 Windows 이름이 같다. PC 목록에서 구분되게 이름만 바꾼다 (시험용)
+    runner.default_pc_name = lambda: f"시험 {name}"
     keep = 5 / 1440                       # 5분
     core.PURGE_KEEP_DAYS = store.PURGE_KEEP_DAYS = keep
     engine.STALE_DAYS = 3 / 1440          # 3분

@@ -18,7 +18,6 @@ from typing import Callable
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
-PC_NAME_KEY = "sync_pc_name"
 LAST_OK_KEY = "sync_last_ok"          # 마지막으로 성공한 동기화 (UTC ms, 이 PC 설정)
 PUSH_QUIET_S = 5
 PUSH_MAX_S = 30
@@ -39,6 +38,7 @@ STATUS_TEXT = {
 
 
 def default_pc_name() -> str:
+    """PC 목록에 보일 이름. Windows 컴퓨터 이름을 그대로 쓴다 (바꾸는 기능은 두지 않는다)."""
     return os.environ.get("COMPUTERNAME", "").strip() or "이 PC"
 
 
@@ -118,7 +118,7 @@ class _Worker(QObject):
 
         if self._syncer is None or self._syncer.store.device != self._device:
             self._syncer = Syncer(self.store, self.make_transport(self.store))
-        self._syncer.name = self.db.get_setting_str(PC_NAME_KEY, "") or default_pc_name()
+        self._syncer.name = default_pc_name()
         return self._syncer
 
     @property
