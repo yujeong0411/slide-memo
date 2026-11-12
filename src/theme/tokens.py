@@ -112,7 +112,9 @@ SHADOW: dict[str, tuple[int, int, float]] = {
 MOTION_FAST_MS = 150
 MOTION_BASE_MS = 240
 EASING_BEZIER = (0.4, 0.0, 0.2, 1.0)
-TOAST_MS = 4000
+TOAST_MS = 4000          # 알려 주는 토스트의 최소 시간 (4.2, 9장 43)
+TOAST_MS_PER_CHAR = 60   # 글자마다 더하는 시간
+TOAST_MAX_MS = 10000     # 최대 시간
 
 # 설정 창과 앱이 같은 값을 읽는다 (6.3의 5번)
 TAB_WIDTH_DEFAULT = 40

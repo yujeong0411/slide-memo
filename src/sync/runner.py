@@ -299,6 +299,7 @@ class SyncController(QObject):
         self._dirty_since = None
         self._last_cycle = time.monotonic()
         self._set_status("syncing" if self.status == "ok" else self.status)
+        self.status_changed.emit()  # 바의 동기화 아이콘이 돌기 시작한다
         self.worker.submit("cycle")
 
     def sync_now(self) -> None:

@@ -108,20 +108,66 @@ second = db.create("두 번째")
 win._show_sync_conflicts([(first.uid, True), (second.uid, False)])
 assert "겹친 메모가 2개" in win._toast_lbl.message.text()
 
-# ----- 경고 단추: 평소엔 없고, 문제가 있을 때만 -----
-assert not win.sync_warn_btn.isVisible()
-for status, visible in (("quota_full", True), ("reconnect", True), ("network", False)):
-    ctl.status = status
-    win._update_sync_warning()
-    assert win.sync_warn_btn.isVisible() == visible, status
-    if visible:
-        assert win.sync_warn_btn.toolTip() == runner.STATUS_TEXT[status]
-db.set_setting_str(runner.LAST_OK_KEY, str(int((time.time() - 7200) * 1000)))  # 2시간 동안 못 맞춤
-win._update_sync_warning()
-assert win.sync_warn_btn.isVisible() and "인터넷" in win.sync_warn_btn.toolTip()
+# 확인이 필요한 알림은 저절로 사라지지 않고 닫기(×)가 있다. 닫으면 다음 알림이 뜬다 (9장 43)
+assert win._toast_lbl.sticky and win._toast_lbl.close_btn.isVisible() and not win._toast_timer.isActive()
+assert win._toast_lbl.close_btn.toolTip() == "닫기"
+win._add_notice("too_big_local")  # 새 알림이 앞에 오고, 닫으면 남아 있던 알림이 다시 뜬다
+assert "그림 하나가 너무 커서" in win._toast_lbl.message.text()
+win._toast_lbl.close_btn.click()
+assert "겹친 메모가 2개" in win._toast_lbl.message.text() and win._toast_lbl.isVisible(), "닫으면 남은 알림"
+win._toast_lbl.close_btn.click()
+assert not win._toast_lbl.isVisible() and not win._notices
+from sync.settings_tab import recent_conflicts  # noqa: E402
+
+assert {t for _, t, _ in recent_conflicts(db)} >= {"처음 메모", "두 번째"}, "최근에 겹친 메모에 남는다"
+# 알려 주는 알림: 글자 수에 맞춰 최소 4초, 글자당 0.06초, 최대 10초
+from memo_popups import toast_duration_ms  # noqa: E402
+
+assert toast_duration_ms("") == 4000 and toast_duration_ms("짧음") == 4120 and toast_duration_ms("가" * 50) == 7000 and toast_duration_ms("가" * 500) == 10000
+win._show_toast("메모를 휴지통으로 옮겼어요.")
+assert not win._toast_lbl.sticky and win._toast_timer.isActive() and not win._toast_lbl.close_btn.isVisible()
+win._toast_lbl.hide()
+
+# ----- 바의 동기화 단추: 연결한 PC에서만, 평소 refresh-cw, 문제가 있으면 경고 (9장 42) -----
+from sync.settings_tab import relative_time  # noqa: E402
+
 ctl.status = "ok"
-win._update_sync_warning()
-assert not win.sync_warn_btn.isVisible()
+win._update_sync_button()
+assert win.sync_btn.isVisible() and win.sync_btn.toolTip().startswith("지금 동기화 · 마지막 동기화: ")
+order = [win.new_tab_btn, win.trash_btn, win.sync_btn, win.hide_btn]
+layout = win.bar_group.layout()
+assert sorted(order, key=layout.indexOf) == order, "새 메모 → 휴지통 → 동기화 → 숨기기"
+for status in ("quota_full", "reconnect"):
+    ctl.status = status
+    win._update_sync_button()
+    assert win.sync_btn.isVisible() and win.sync_btn.toolTip() == runner.STATUS_TEXT[status], status
+ctl.status = "network"  # 1시간 전에는 평소 아이콘, 툴팁에만 알린다
+win._update_sync_button()
+assert win.sync_btn.toolTip().startswith("지금 동기화") and "인터넷이 돌아오면 이어서 맞출게요" in win.sync_btn.toolTip()
+db.set_setting_str(runner.LAST_OK_KEY, str(int((time.time() - 7200) * 1000)))  # 2시간 동안 못 맞춤
+win._update_sync_button()
+assert win.sync_btn.toolTip() == runner.STATUS_TEXT["network"], "1시간이 넘으면 경고"
+ctl.status = "ok"
+db.set_setting_str(runner.LAST_OK_KEY, str(int(time.time() * 1000)))
+# 맞추는 중: 아이콘이 돌고, 다시 눌러도 겹쳐 돌지 않는다
+calls = []
+real_sync_now = ctl.sync_now
+ctl.sync_now = lambda: calls.append(1)
+ctl.running = True
+win._update_sync_button()
+assert win._sync_spin.isActive() and win._sync_spin.interval() * 360 // 12 <= 1200, "한 바퀴 1초쯤"
+win.sync_btn.click()
+assert calls == [], "맞추는 중에는 다시 실행하지 않는다"
+ctl.running = False
+win._update_sync_button()
+assert not win._sync_spin.isActive()
+win.sync_btn.click()
+assert calls == [1]
+ctl.sync_now = real_sync_now
+db.soft_delete(db.create("휴지통 시험").id)  # 빈 휴지통이면 안내 창이 떠서 멈춘다
+win._enter_trash_mode()
+assert not win.sync_btn.isVisible(), "휴지통에서는 숨긴다"
+win._exit_trash_mode()
 
 # ----- 트레이: 지금 동기화 + 마지막 동기화 -----
 tray = M.make_tray_icon(win)
@@ -141,7 +187,8 @@ assert pump(lambda: hasattr(tab, "devices_box") and tab.devices_box.count() >= 2
 labels = [w.text() for w in tab.findChildren(QLabel)]
 buttons = [b.text() for b in tab.findChildren(QPushButton)]
 assert "me@example.com" in labels and "이 PC" in labels and "다른 PC" in labels, labels
-assert {"지금 동기화", "연결 끊기", "목록에서 빼기"} <= set(buttons), buttons
+assert {"지금 동기화", "연결 끊기", "쓰지 않는 PC로 정리"} <= set(buttons), buttons
+assert "최근에 겹친 메모" in labels and "처음 메모" in buttons, "최근 7일 겹친 메모 목록"
 # PC 이름은 Windows 컴퓨터 이름을 글자로만 보여 준다 (바꾸는 칸이 없다)
 from PyQt6.QtWidgets import QLineEdit  # noqa: E402
 

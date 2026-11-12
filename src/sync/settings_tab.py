@@ -1,6 +1,7 @@
 """설정 창의 "동기화" 탭 (설계 6장, 디자인 md 4.6). 네트워크가 필요한 일은 SyncController의 작업 줄에 맡긴다."""
 from __future__ import annotations
 
+import json
 import time
 from datetime import datetime
 
@@ -16,6 +17,50 @@ from theme import apply as A
 from theme.widgets import AppDialog, make_button, role_label
 
 GOOGLE_CONNECTIONS_URL = "https://myaccount.google.com/connections"
+RECENT_CONFLICTS_KEY = "sync_recent_conflicts"  # 이 PC 설정: [{"uid", "at"(UTC ms)}] 최근 7일
+RECENT_CONFLICT_DAYS = 7
+
+
+def remember_conflicts(db, uids: list[str], now: float | None = None) -> None:
+    """겹친 메모를 동기화 탭의 "최근에 겹친 메모"에 남긴다 (같은 메모는 최근 시각 하나만, 7일 지나면 지움)."""
+    now_ms = int((now or time.time()) * 1000)
+    cutoff = now_ms - RECENT_CONFLICT_DAYS * 86_400_000
+    try:
+        items = json.loads(db.get_setting_str(RECENT_CONFLICTS_KEY, "[]") or "[]")
+    except ValueError:
+        items = []
+    kept = {i["uid"]: int(i["at"]) for i in items if isinstance(i, dict) and int(i.get("at", 0)) >= cutoff}
+    for uid in uids:
+        kept[uid] = now_ms
+    db.set_setting_str(RECENT_CONFLICTS_KEY, json.dumps(
+        [{"uid": u, "at": a} for u, a in sorted(kept.items(), key=lambda x: -x[1])]))
+
+
+def recent_conflicts(db, now: float | None = None) -> list[tuple[int, str, int]]:
+    """(메모 id, 제목, 시각 ms) 최근 것부터. 지워진 메모와 7일 지난 것은 뺀다."""
+    cutoff = int((now or time.time()) * 1000) - RECENT_CONFLICT_DAYS * 86_400_000
+    try:
+        items = json.loads(db.get_setting_str(RECENT_CONFLICTS_KEY, "[]") or "[]")
+    except ValueError:
+        return []
+    out = []
+    for i in items:
+        if not isinstance(i, dict) or int(i.get("at", 0)) < cutoff:
+            continue
+        row = db.conn.execute("SELECT id, title FROM memos WHERE uid = ?", (i.get("uid"),)).fetchone()
+        if row is not None:
+            out.append((row[0], row[1] or "제목 없음", int(i["at"])))
+    return out
+
+
+def object_particle(name: str) -> str:
+    """'을/를' — 끝 글자에 받침이 있으면 '을'. 영문·숫자는 읽는 소리로 어림한다."""
+    last = (name or "").rstrip()[-1:] or "가"
+    if "가" <= last <= "힣":
+        return "을" if (ord(last) - 0xAC00) % 28 else "를"
+    if last.isdigit():
+        return "를" if last in "2459" else "을"
+    return "을" if last.lower() in "lmnr" else "를"
 _LABEL_WIDTH = 112
 
 
@@ -76,9 +121,10 @@ class _Ask(AppDialog):
 
 
 class SyncTab(QWidget):
-    def __init__(self, db, controller, parent=None) -> None:
+    def __init__(self, db, controller, parent=None, *, open_versions=None) -> None:
         super().__init__(parent)
         self.db, self.ctl = db, controller
+        self.open_versions = open_versions  # 메모 id → 그 메모의 이전 버전 창 (최근에 겹친 메모)
         self._grant: oauth.Grant | None = None
         self._dlg = None
         self._connecting = False
@@ -155,6 +201,21 @@ class SyncTab(QWidget):
         self.devices_box.setSpacing(8)
         self.devices_box.addWidget(role_label("PC 목록을 읽는 중이에요", "hint"))
         self.outer.addLayout(self.devices_box)
+        recent = recent_conflicts(self.db)
+        if recent:  # 없으면 이 칸은 숨긴다 (9장 43)
+            self.outer.addSpacing(12)
+            self.outer.addWidget(role_label("최근에 겹친 메모", "group"))
+            for memo_id, title, at in recent:
+                row = QHBoxLayout()
+                link = make_button(title, "text")
+                link.setToolTip("이전 버전 보기")
+                link.clicked.connect(lambda _c=False, mid=memo_id: self.open_versions and self.open_versions(mid))
+                row.addWidget(link)
+                when = role_label(relative_time(at), "hint")
+                A.set_tabular(when)
+                row.addWidget(when)
+                row.addStretch(1)
+                self.outer.addLayout(row)
         self.outer.addSpacing(12)
         off = make_button("연결 끊기")
         off.clicked.connect(self._disconnect)
@@ -197,7 +258,7 @@ class SyncTab(QWidget):
             row.addWidget(when)
             row.addStretch(1)
             if not d["is_self"]:
-                out = make_button("목록에서 빼기", "ghost")
+                out = make_button("쓰지 않는 PC로 정리", "ghost")
                 out.clicked.connect(lambda _c=False, dev=d: self._remove(dev))
                 row.addWidget(out)
             self.devices_box.addLayout(row)
@@ -286,11 +347,13 @@ class SyncTab(QWidget):
             self._give_up(g)
 
     def _remove(self, dev: dict) -> None:
-        ask = _Ask("이 PC를 목록에서 뺄까요?",
-                   f"{dev['name'] or '이름 없는 PC'}의 기록을 이 PC가 넘겨받은 뒤 Drive에서 지워요. "
-                   "그 PC를 다시 켜면 새로 연결돼요.", "빼기", "취소", self)
+        name = dev["name"] or "이름 없는 PC"
+        ask = _Ask(f"{name}{object_particle(name)} 정리할까요?",
+                   "더 이상 쓰지 않는 PC를 목록에서 정리해요. 그 PC가 마지막으로 고친 메모는 이 PC가 넘겨받아서 "
+                   "잃지 않아요. 그 PC에서 동기화를 멈추려면 그 PC에서 '연결 끊기'를 눌러 주세요.",
+                   "정리하기", "취소", self)
         if ask.exec():
-            self._status("목록에서 빼는 중이에요")
+            self._status("정리하고 있어요")
             self.ctl.run_job("remove", dev["device"])
 
     def _disconnect(self) -> None:
@@ -332,7 +395,7 @@ class SyncTab(QWidget):
             if "error" in result or not result.get("removed"):
                 self._status("그 PC의 기록을 아직 다 받지 못했어요. 잠시 뒤 다시 해 주세요.", error=True)
             else:
-                self._status("목록에서 뺐어요.")
+                self._status("정리했어요.")
             self.ctl.run_job("devices")
         elif kind == "disconnect":
             if "error" in result:

@@ -1788,6 +1788,10 @@ class SlideMemoWindow(QWidget):
         self.sync = None  # SyncController (main()이 붙인다. 시험에서는 없다)
         self._too_big_local: list[str] = []
         self._too_big_told: set[int] = set()
+        # 확인이 필요한 알림 (9장 43): 종류마다 모아 두었다가 하나씩 띄운다. 저절로 사라지지 않는다
+        self._notices: dict[str, object] = {}
+        self._notice_kind: str | None = None
+        self._sync_angle = 0
         self.current_memo: Memo | None = None
         self.is_expanded = False
         self.trash_mode = False
@@ -1889,7 +1893,8 @@ class SlideMemoWindow(QWidget):
         for button, asset in self._bar_icons:
             self._set_bar_icon(button, asset)
         self._set_bar_icon(self.hide_btn, self.hide_icon_asset())
-        self.sync_warn_btn.setIcon(QIcon(tinted_pixmap("triangle-alert.svg", t["danger"], BAR_ICON)))
+        if hasattr(self, "sync_btn"):
+            self._update_sync_button()
         self._rec_stop_btn.setIcon(QIcon(tinted_pixmap("square.svg", t["fg"], 16)))
         self.drag_grip.update()
 
@@ -2212,6 +2217,8 @@ class SlideMemoWindow(QWidget):
         self._toast_lbl = Toast(self.body)
         self._toast_action = None  # 되돌리기를 누르면 실행할 동작
         self._toast_lbl.clicked.connect(self._on_toast_clicked)
+        self._toast_lbl.closed.connect(self._on_notice_closed)
+        self._toast_lbl.expired.connect(self._show_next_notice)
         self._toast_lbl.hide()
         self._toast_timer = self._toast_lbl.timer
 
@@ -2304,9 +2311,16 @@ class SlideMemoWindow(QWidget):
         self._trash_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         theme_apply.set_tabular(self._trash_badge)
         self._trash_badge.hide()
-        # 동기화에 문제가 있을 때만 보이는 경고 단추 (디자인 md 4.1). 누르면 설정의 동기화 탭
-        self.sync_warn_btn = bar_button("", "", lambda: self._open_settings(tab="sync"))
-        self.sync_warn_btn.hide()
+        # 동기화 단추 (디자인 md 4.1, 9장 42). 연결한 PC에서만 보인다. 맞추는 중에는 아이콘이 돌고,
+        # 문제가 있으면 경고 아이콘이 되어 누르면 설정의 동기화 탭이 열린다
+        self.sync_btn = bar_button("", "", self._on_sync_btn)
+        self.sync_btn.hide()
+        self._sync_spin = QTimer(self)
+        self._sync_spin.setInterval(33)  # 12도씩 30번 = 한 바퀴 1초
+        self._sync_spin.timeout.connect(self._spin_sync_icon)
+        self._sync_tip_timer = QTimer(self)
+        self._sync_tip_timer.setInterval(30_000)  # "마지막 동기화: 3분 전"을 새로 쓴다
+        self._sync_tip_timer.timeout.connect(self._update_sync_button)
         # 휴지통 모드 전용 (평소엔 숨김). 본문 상단이 아니라 컬럼에 두어
         # 본문은 일반 모드와 같은 검색/정렬 화면을 유지한다.
         self.col_empty_btn = bar_button("brush-cleaning.svg", "휴지통 비우기", self._empty_trash)
@@ -3037,13 +3051,70 @@ class SlideMemoWindow(QWidget):
             return
         self._toast_timer.stop()
         self._toast_lbl.hide()
+        if self._notice_kind is not None:  # [보기]를 눌렀다: 그 알림은 끝났다
+            self._notices.pop(self._notice_kind, None)
+            self._notice_kind = None
         action()
+        self._show_next_notice()
 
-    def _show_toast(self, msg: str, on_click=None, action: str = "되돌리기") -> None:
+    def _show_toast(self, msg: str, on_click=None, action: str = "되돌리기", *, sticky: bool = False) -> None:
         self._toast_action = on_click
+        if not sticky:
+            self._notice_kind = None  # 알려 주는 알림이 잠깐 덮는다. 끝나면 남은 알림을 다시 띄운다
         # 검색 칸과 정렬을 덮지 않게 서식바 바로 아래에 띄운다
         below_toolbar = self.format_toolbar.mapTo(self.body, QPoint(0, self.format_toolbar.height())).y()
-        self._toast_lbl.show_message(msg, action if on_click else "", below_toolbar + 8)
+        self._toast_lbl.show_message(msg, action if on_click else "", below_toolbar + 8, sticky=sticky)
+
+    # ----- 확인이 필요한 알림 (9장 43) -----
+    _NOTICE_ORDER = ("conflict", "return", "too_big_local", "too_big_remote")
+
+    def _add_notice(self, kind: str, value=True) -> None:
+        if kind == "conflict":
+            merged = dict(self._notices.get("conflict", {}))
+            merged.update(value)
+            value = merged
+        self._notices[kind] = value
+        self._show_next_notice(prefer=kind)
+
+    def _on_notice_closed(self) -> None:
+        if self._notice_kind is not None:
+            self._notices.pop(self._notice_kind, None)
+            self._notice_kind = None
+        self._show_next_notice()
+
+    def _show_next_notice(self, prefer: str | None = None) -> None:
+        """남은 알림 중 하나를 띄운다. 같은 종류는 하나로 합친다 (겹친 메모 3개 → 한 알림)."""
+        if self._quitting or not self._notices:
+            return
+        if self._toast_lbl.isVisible() and not self._toast_lbl.sticky:
+            return  # 알려 주는 알림이 떠 있으면 끝난 뒤에
+        kind = prefer if prefer in self._notices else next(k for k in self._NOTICE_ORDER if k in self._notices)
+        value = self._notices[kind]
+        self._notice_kind = kind
+        if kind == "conflict":
+            if len(value) == 1:
+                uid, mine = next(iter(value.items()))
+                msg = ("다른 PC에서 같은 메모를 고쳤어요. 이 PC에서 쓴 내용은 이전 버전에 남겼어요." if mine
+                       else "다른 PC에서 고친 내용은 이전 버전에 남겼어요.")
+                row = self.db.conn.execute("SELECT id FROM memos WHERE uid = ?", (uid,)).fetchone()
+                act = (lambda mid=row[0]: self._show_versions(mid)) if row else (lambda: self._open_settings(tab="sync"))
+            else:
+                msg = f"다른 PC와 겹친 메모가 {len(value)}개 있어요."
+                act = lambda: self._open_settings(tab="sync")  # 동기화 탭의 "최근에 겹친 메모"
+            self._show_toast(msg, act, "보기", sticky=True)
+        elif kind == "return":
+            self._show_toast(f"이 PC는 오랫동안 동기화하지 않았어요. 다른 PC에 없는 메모 {value}개를 휴지통으로 옮겨 뒀어요.",
+                             self._open_trash_from_notice, "보기", sticky=True)
+        elif kind == "too_big_local":
+            self._show_toast("그림 하나가 너무 커서 다른 PC로 보내지 못했어요.", None, sticky=True)
+        else:
+            self._show_toast("다른 PC의 그림 하나가 너무 커서 받지 못했어요.", None, sticky=True)
+
+    def _open_trash_from_notice(self) -> None:
+        if not self.is_expanded:
+            self.expand()
+        if not self.trash_mode:
+            self._enter_trash_mode()
 
     def _setup_autosave(self) -> None:
         self.autosave_timer = QTimer(self)
@@ -3435,8 +3506,8 @@ class SlideMemoWindow(QWidget):
         n = self.db.count_trashed()
         self.trash_btn.setToolTip(f"휴지통 (메모 {n}개)" if n else "휴지통 (비어 있음)")
         self.trash_btn.setVisible(not self.trash_mode)
-        if hasattr(self, "sync_warn_btn"):
-            self._update_sync_warning()
+        if hasattr(self, "sync_btn"):
+            self._update_sync_button()
         if n > 0:
             self._trash_badge.setText(str(n) if n < 100 else "99+")
             self._trash_badge.adjustSize()
@@ -3766,8 +3837,8 @@ class SlideMemoWindow(QWidget):
         self.sync = controller
         controller.about_to_sync.connect(self._save_before_sync)
         controller.cycle_finished.connect(self._after_sync)
-        controller.status_changed.connect(self._update_sync_warning)
-        self._update_sync_warning()
+        controller.status_changed.connect(self._update_sync_button)
+        self._update_sync_button()
 
     def _save_before_sync(self) -> None:
         if not self._quitting:
@@ -3782,10 +3853,61 @@ class SlideMemoWindow(QWidget):
         if not self._sync_connected():
             _delete_memo_images(html)
 
-    def _update_sync_warning(self) -> None:
-        problem = self.sync.problem() if self.sync is not None else None
-        self.sync_warn_btn.setVisible(problem is not None and not self.trash_mode)
-        self.sync_warn_btn.setToolTip(problem[1] if problem else "")
+    def _update_sync_button(self) -> None:
+        """바의 동기화 단추 (9장 42). 평소 refresh-cw(fg_secondary), 맞추는 중엔 돌고, 문제가 있으면
+        triangle-alert(danger). 인터넷 끊김은 1시간이 넘어야 경고, 그 전에는 툴팁에만 알린다."""
+        ctl = self.sync
+        shown = ctl is not None and ctl.connected and not self.trash_mode
+        self.sync_btn.setVisible(shown)
+        if not shown:
+            self._sync_spin.stop()
+            self._sync_tip_timer.stop()
+            return
+        self._sync_tip_timer.start()
+        problem = ctl.problem()
+        if problem is not None:
+            self._sync_spin.stop()
+            self.sync_btn.setIcon(QIcon(tinted_pixmap("triangle-alert.svg", theme_apply.current()["danger"], BAR_ICON)))
+            self.sync_btn.setToolTip(problem[1])
+            return
+        from sync.settings_tab import relative_time
+
+        tip = f"지금 동기화 · 마지막 동기화: {relative_time(ctl.last_ok_ms())}"
+        if ctl.status in ("network", "busy", "failed"):
+            tip += " · 인터넷이 돌아오면 이어서 맞출게요"
+        self.sync_btn.setToolTip(tip)
+        if ctl.running:
+            if not self._sync_spin.isActive():
+                self._sync_spin.start()
+        else:
+            self._sync_spin.stop()
+            self._sync_angle = 0
+            self._set_bar_icon(self.sync_btn, "refresh-cw.svg")
+
+    def _spin_sync_icon(self) -> None:
+        self._sync_angle = (self._sync_angle + 12) % 360
+        base = tinted_pixmap("refresh-cw.svg", theme_apply.current()["fg_secondary"], BAR_ICON)
+        rotated = QPixmap(base.size())
+        rotated.setDevicePixelRatio(base.devicePixelRatio())
+        rotated.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(rotated)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        center = BAR_ICON / 2
+        painter.translate(center, center)
+        painter.rotate(self._sync_angle)
+        painter.translate(-center, -center)
+        painter.drawPixmap(0, 0, base)
+        painter.end()
+        self.sync_btn.setIcon(QIcon(rotated))
+
+    def _on_sync_btn(self) -> None:
+        ctl = self.sync
+        if ctl is None:
+            return
+        if ctl.problem() is not None:
+            self._open_settings(tab="sync")
+        elif not ctl.running:  # 맞추는 중에 다시 눌러도 겹쳐 돌지 않는다
+            ctl.sync_now()
 
     def _after_sync(self, result: dict) -> None:
         if result.get("error") or result.get("skipped") or self._quitting:
@@ -3801,8 +3923,7 @@ class SlideMemoWindow(QWidget):
             self.images_arrived([Path(p) for p in result["arrived"]])
         self._show_sync_conflicts(result.get("conflicts", []))
         if result.get("notice"):
-            notify(self, "이 PC는 오랫동안 동기화하지 않았어요",
-                   f"다른 PC에 없는 메모 {result['notice']}개를 휴지통으로 옮겨 뒀어요. 필요하면 되살리면 돼요.")
+            self._add_notice("return", result["notice"])
 
     def _reload_after_sync(self, ids: set[int]) -> None:
         """다른 PC에서 바뀐 메모를 다시 그린다. 캐시된 문서는 버려야 옛 내용으로 덮어쓰지 않는다."""
@@ -3831,8 +3952,7 @@ class SlideMemoWindow(QWidget):
                     self.db.snapshot(cur.id, force=True)
                     self.current_memo = fresh
                     self.save_now()
-                    self._show_toast("다른 PC에서 고친 내용은 이전 버전에 남겼어요.",
-                                     lambda mid=cur.id: self._show_versions(mid), "보기")
+                    self._show_sync_conflicts([(fresh.uid, False)])
                 else:
                     pos = self.editor.textCursor().position()
                     old = self._doc_cache.pop(cur.id, None)
@@ -3847,19 +3967,17 @@ class SlideMemoWindow(QWidget):
         self._update_trash_btn()
 
     def _show_sync_conflicts(self, conflicts) -> None:
-        """충돌 토스트 (설계 6.3). 여러 개면 한 번만, 개수를 적는다."""
+        """충돌 알림 (설계 6.3, 9장 43). [보기]나 닫기(×)를 누를 때까지 남고, 그 사이 겹친 메모는 하나로 합친다.
+        동기화 탭의 "최근에 겹친 메모"(7일)에도 남긴다."""
         if not conflicts:
             return
-        uids = list(dict.fromkeys(uid for uid, _ in conflicts))
-        row = self.db.conn.execute("SELECT id FROM memos WHERE uid = ?", (uids[0],)).fetchone()
-        open_versions = (lambda mid=row[0]: self._show_versions(mid)) if row else None
-        if len(uids) > 1:
-            msg = f"다른 PC와 겹친 메모가 {len(uids)}개 있어요. 진 내용은 이전 버전에 남겼어요."
-        elif any(mine for _, mine in conflicts):
-            msg = "다른 PC에서 같은 메모를 고쳤어요. 이 PC에서 쓴 내용은 이전 버전에 남겼어요."
-        else:
-            msg = "다른 PC에서 고친 내용은 이전 버전에 남겼어요."
-        self._show_toast(msg, open_versions, "보기")
+        found: dict[str, bool] = {}
+        for uid, mine in conflicts:
+            found[uid] = found.get(uid, False) or mine
+        from sync.settings_tab import remember_conflicts
+
+        remember_conflicts(self.db, list(found))
+        self._add_notice("conflict", found)
 
     def images_arrived(self, paths) -> None:
         """동기화로 그림이 도착했다. 열려 있거나 캐시된 메모 문서의 자리 표시를 바꿔 끼운다."""
@@ -3906,11 +4024,15 @@ class SlideMemoWindow(QWidget):
         self.current_memo.content = memo_document.saved_html(self.editor.document())
         self._apply_memo_theme(memo.color)
         self._refresh_search_marks()
-        if self._too_big_local and memo.id not in self._too_big_told and any(
-            Path(p).as_posix() in memo.content for p in self._too_big_local
-        ):
-            self._too_big_told.add(memo.id)
-            QTimer.singleShot(0, lambda: self._show_toast("그림 하나가 너무 커서 다른 PC로 보내지 못했어요."))
+        if memo.id not in self._too_big_told and self._sync_connected():
+            if self._too_big_local and any(Path(p).as_posix() in memo.content for p in self._too_big_local):
+                self._too_big_told.add(memo.id)
+                QTimer.singleShot(0, lambda: self._add_notice("too_big_local"))
+            elif memo_document.too_big_images and memo_document.too_big_images & {
+                Path(m).stem for m in re.findall(r'<img[^>]*?src="([^"]+)"', memo.content or "")
+            }:
+                self._too_big_told.add(memo.id)
+                QTimer.singleShot(0, lambda: self._add_notice("too_big_remote"))
         # 메모 탭의 회전 텍스트도 그 메모의 family를 따라가도록 클래스 변수 갱신
         MemoTabButton.app_font_family = family
         self._update_pin_btn()
@@ -4405,7 +4527,7 @@ def make_tray_icon(window: SlideMemoWindow, icon: QIcon | None = None) -> QSyste
 
         dlg = SettingsDialog(window.db, window)
         dlg.exec()
-        window._update_sync_warning()
+        window._update_sync_button()
         window.apply_side_settings()
         window.apply_tab_geometry_settings()
         window.apply_display_mode_settings()

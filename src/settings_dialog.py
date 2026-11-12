@@ -132,7 +132,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._build_ai_tab(), "AI")
         from sync.settings_tab import SyncTab  # 동기화 탭은 따로 둔다 (설계 6장)
 
-        self._sync_tab = SyncTab(db, getattr(parent, "sync", None))
+        self._sync_tab = SyncTab(db, getattr(parent, "sync", None), open_versions=getattr(parent, "_show_versions", None))
         tabs.addTab(self._sync_tab, "동기화")
         tabs.addTab(self._build_info_tab(), "정보")
         for index, asset in enumerate(("sliders-horizontal.svg", "sparkles.svg", "refresh-cw.svg", "info.svg")):
