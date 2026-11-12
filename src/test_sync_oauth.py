@@ -181,7 +181,7 @@ for partial in (f"openid {SCOPE_EMAIL}", f"openid {SCOPE_DRIVE}"):
     flow = LoginFlow(client)
     out = run(flow, lambda: browser(flow))
     assert out["error"].code == "scope_missing", out
-    assert Fake.issued[-1] in Fake.revoked, "일부만 허용된 토큰을 철회해야 한다"
+    assert Fake.issued[-1] not in Fake.revoked, "철회는 보내지 않는다 (계정 권한 전체가 거둬져 다른 PC가 끊긴다)"
     assert "Drive 앱 공간 권한" in out["error"].message
 Fake.scope = f"openid {SCOPE_EMAIL} {SCOPE_DRIVE}"
 

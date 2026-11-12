@@ -185,15 +185,19 @@ labels = [w.text() for w in tab.findChildren(QLabel)]
 assert "me@example.com" in labels and any("계정으로 연결됐어요" in t for t in labels), labels
 print(f"  연결까지 {closed_at - t0:.1f}초, 단계: {' → '.join(dict.fromkeys(s.split(' (')[0] for s in seen))}")
 
-# ----- 단계 중 [취소]: Drive를 확인하는 동안 누르면 연결하지 않고 받은 토큰을 철회한다 -----
+# ----- 연결 끊기: 이 PC의 열쇠만 지우고 Google에 철회는 보내지 않는다 (다른 PC가 끊기지 않게, 9장 45) -----
+revoked.clear()
 ctl.run_job("disconnect", False)
-assert ctl and True
 for _ in range(50):
     app.processEvents()
     time.sleep(0.05)
 tab.render()
 assert not ctl.connected
-revoked.clear()
+assert revoked == [], "연결 끊기는 Google에 철회를 보내지 않는다"
+assert keyring.get_password(oauth.KEYRING_SERVICE, oauth.KEYRING_USER) is None, "이 PC의 열쇠는 지운다"
+assert any(n.startswith("dev_") for n in LocalFolderTransport(drive).list()), "Drive 메모는 남는다(체크 안 함)"
+
+# ----- 단계 중 [취소]: Drive를 확인하는 동안 누르면 연결하지 않고, 받은 토큰은 저장하지 않고 버린다 -----
 seen.clear()
 slow_probe = runner._Worker._job_probe
 runner._Worker._job_probe = lambda self, token: (time.sleep(1.0), slow_probe(self, token))[1]
@@ -209,11 +213,13 @@ def cancel_when_checking_drive():
 QTimer.singleShot(300, lambda: threading.Thread(target=browser, args=(tab._dlg.flow,), daemon=True).start())
 QTimer.singleShot(400, cancel_when_checking_drive)
 tab._connect()
-for _ in range(60):  # 철회는 작업 줄에서
+for _ in range(60):
     app.processEvents()
     time.sleep(0.05)
 assert not ctl.connected, "취소하면 연결하지 않는다"
-assert revoked, "받은 토큰은 철회한다"
+assert revoked == [], "취소해도 철회는 보내지 않는다 (다른 PC가 끊긴다)"
+assert keyring.get_password(oauth.KEYRING_SERVICE, oauth.KEYRING_USER) is None, "받은 토큰은 저장하지 않는다"
+assert tab._grant is None, "메모리에서도 버린다"
 assert "연결됐어요" not in seen
 
 ctl.shutdown()

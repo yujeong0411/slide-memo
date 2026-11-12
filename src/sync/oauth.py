@@ -214,7 +214,8 @@ class LoginFlow:
             raise OAuthError("failed")
         granted = frozenset(str(tok.get("scope", "")).split())
         if SCOPE_DRIVE not in granted or SCOPE_EMAIL not in granted:
-            revoke(refresh)  # 일부만 허용된 권한은 남겨 두지 않는다
+            # 받은 토큰은 쓰지 않고 버린다. 철회는 보내지 않는다 — Google 철회는 이 PC 열쇠 하나가 아니라
+            # 이 계정이 SlideMemo에 준 권한 전체를 거둬서, 이미 연결된 다른 PC까지 끊긴다 (9장 45)
             raise OAuthError("scope_missing")
         return Grant(refresh, access, time.time() + float(tok.get("expires_in", 3600)),
                      _email_from_id_token(tok.get("id_token", "")), granted)
@@ -233,6 +234,7 @@ def refresh_access(client: dict, refresh_token: str) -> tuple[str, float]:
 
 
 def revoke(token: str, uri: str | None = None) -> bool:
+    """앱은 이 함수를 부르지 않는다 (9장 45: 철회는 모든 PC의 연결을 끊는다). 시험 정리용으로만 남긴다."""
     """Google에 철회를 보낸다. 이미 무효인 토큰도 성공으로 본다. 인터넷이 안 되면 False."""
     try:
         _post(uri or REVOKE_URI, {"token": token})

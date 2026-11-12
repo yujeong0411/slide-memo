@@ -162,12 +162,6 @@ class _Worker(QObject):
         names = DriveTransport(lambda force: access_token).list()
         return {"others": any(n.startswith("dev_") for n in names)}
 
-    def _job_revoke(self, refresh_token: str) -> dict:
-        """연결하지 않기로 한 토큰(다른 계정 취소, 합치기 나중에)을 바로 철회한다."""
-        from sync import oauth
-
-        return {"revoked": oauth.revoke(refresh_token)}
-
     def _job_connect(self, email: str, refresh_token: str) -> dict:
         from sync import oauth
 
@@ -180,16 +174,16 @@ class _Worker(QObject):
     def _job_disconnect(self, wipe: bool) -> dict:
         from sync import oauth
 
-        token = oauth.load_refresh_token()
         if wipe:  # Drive의 메모도 지운다 (다른 PC도 더 이상 받을 수 없다)
             transport = self._syncer_for().transport
             for name in list(transport.list()):
                 transport.delete(name)
-        revoked = oauth.revoke(token) if token else True
+        # 이 PC의 열쇠만 지운다. Google에 철회는 보내지 않는다 — 철회는 계정의 SlideMemo 권한 전체를 거둬
+        # 다른 PC까지 끊는다 (9장 45). 모든 PC를 끊으려면 Google 계정의 보안 메뉴에서 SlideMemo를 지운다
         oauth.delete_refresh_token()
         self.store.disconnect(drive_wiped=wipe)
-        self._syncer = None
-        return {"revoked": revoked}
+        self._syncer = None  # 메모리의 access token(TokenSource)도 함께 버린다
+        return {}
 
 
 class SyncController(QObject):

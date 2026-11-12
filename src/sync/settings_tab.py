@@ -16,7 +16,6 @@ from sync.runner import STATUS_TEXT
 from theme import apply as A
 from theme.widgets import AppDialog, make_button, role_label
 
-GOOGLE_CONNECTIONS_URL = "https://myaccount.google.com/connections"
 RECENT_CONFLICTS_KEY = "sync_recent_conflicts"  # 이 PC 설정: [{"uid", "at"(UTC ms)}] 최근 7일
 RECENT_CONFLICT_DAYS = 7
 
@@ -321,13 +320,15 @@ class SyncTab(QWidget):
         self.ctl.run_job("connect", g.email, g.refresh_token)
 
     def _give_up(self, g: oauth.Grant, error: oauth.OAuthError | None = None) -> None:
-        """연결하지 않기로 했다: 받은 토큰을 바로 철회하고 창을 닫는다."""
-        self.ctl.run_job("revoke", g.refresh_token)
+        """연결하지 않기로 했다: 받은 토큰은 저장하지 않고 메모리에서도 버린 뒤 창을 닫는다.
+        Google에 철회는 보내지 않는다 (다른 PC까지 끊기 때문, 9장 45)."""
+        self._grant = None
         if self._dlg is not None:
+            self._dlg.grant = None
             self._dlg.fail(error)
 
     def _cancel_connect(self) -> None:
-        """단계 중 [취소]. 아직 연결 전이면 토큰을 철회하고, 첫 동기화 중이면 끝난 뒤 연결을 끊는다."""
+        """단계 중 [취소]. 아직 연결 전이면 받은 토큰을 버리고, 첫 동기화 중이면 끝난 뒤 이 PC의 연결을 끊는다."""
         if self._connecting:
             self._cancel_after_connect = True
             return
@@ -349,7 +350,10 @@ class SyncTab(QWidget):
             self.ctl.run_job("remove", dev["device"])
 
     def _disconnect(self) -> None:
-        ask = _Ask("동기화를 끊을까요?", "이 PC의 메모는 그대로 남아요. Drive에 올린 메모는 남겨 둬요.",
+        ask = _Ask("동기화를 끊을까요?",
+                   "이 PC의 메모는 그대로 남아요. Drive에 올린 메모는 남겨 둬요.\n\n"
+                   "이 PC의 연결만 끊어요. 다른 PC는 계속 동기화돼요. 모든 PC의 연결을 한꺼번에 끊으려면 "
+                   "Google 계정의 보안 메뉴에서 SlideMemo를 지워 주세요.",
                    "끊기", "취소", self, check="Drive에 올린 메모도 지우기 (다른 PC도 더 이상 받을 수 없어요)")
         ask.check.toggled.connect(ask.set_danger)  # Drive 메모까지 지우면 되돌릴 수 없다
         if ask.exec():
@@ -394,9 +398,3 @@ class SyncTab(QWidget):
                 self._status(STATUS_TEXT.get(result["error"], STATUS_TEXT["failed"]), error=True)
                 return
             self.render()
-            if not result.get("revoked"):
-                ask = _Ask("Google에 알리지 못했어요",
-                           "Google에 연결을 끊었다고 알리지 못했어요. Google 계정 → 보안 → 타사 앱 연결에서 "
-                           "직접 지울 수 있어요.", "열기", "닫기", self)
-                if ask.exec():
-                    QDesktopServices.openUrl(QUrl(GOOGLE_CONNECTIONS_URL))
