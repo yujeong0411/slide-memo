@@ -39,12 +39,22 @@ def demo():
     for key in T.MEMO_PRESETS:
         for mode in MODES:
             t = M.memo_tokens(key, mode)
-            assert M.contrast(t["memo_band"], t["memo_face"]) >= 4.1, (key, mode)
+            # 띠: 밝은 화면 4.1:1. 어두운 화면은 메모 면(띠 색 7% 섞임)과 3:1(비텍스트), 탭 면과 4.1:1 (9장 37)
+            if mode == "light":
+                assert M.contrast(t["memo_band"], t["memo_face"]) >= 4.1, (key, mode)
+            else:
+                assert M.contrast(t["memo_band"], t["memo_face"]) >= T.BAND_MIN_CONTRAST, (key, mode)
+                assert M.contrast(t["memo_band"], t["memo_tab_face"]) >= 4.1, (key, mode)
             assert M.contrast(t["memo_fg"], t["memo_face"]) >= 12, (key, mode)
             assert M.contrast(t["memo_fg_secondary"], t["memo_face"]) >= 7, (key, mode)
         assert M.memo_tokens(key, "light")["memo_fg"] == T.INK_DARK
         assert M.memo_tokens(key, "dark")["memo_fg"] == T.WHITE
-        assert M.memo_tokens(key, "dark")["memo_face"] == T.DARK_MEMO_FACE
+        dark = M.memo_tokens(key, "dark")
+        assert dark["memo_face"] == M.dark_memo_face(dark["memo_band"]) != T.DARK_MEMO_FACE, "띠 색을 7% 섞는다"
+        assert M.contrast(T.DARK["fg"], dark["memo_face"]) >= 12, key
+        assert dark["memo_tab_face"] == T.DARK["bg_sunken"], "안 펼친 탭은 가라앉은 면"
+        light = M.memo_tokens(key, "light")
+        assert light["memo_tab_face"] == light["memo_face"] == T.MEMO_PRESETS[key][1], "밝은 화면은 그대로"
 
     # 3.2 기준: 프리셋과 직접 만든 색 모두
     for color in list(T.MEMO_PRESETS) + CUSTOM_SAMPLES:

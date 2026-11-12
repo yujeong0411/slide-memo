@@ -105,7 +105,19 @@ def face_and_band(color: str, mode: str) -> tuple[str, str]:
         _, face, band, dark_band = T.MEMO_PRESETS[color]
     else:
         face, band, dark_band = custom_tones(color)
-    return (T.DARK_MEMO_FACE, dark_band) if mode == "dark" else (face, band)
+    return (dark_memo_face(dark_band), dark_band) if mode == "dark" else (face, band)
+
+
+def dark_memo_face(dark_band: str) -> str:
+    """어두운 메모 면: 기본 면에 띠 색을 7% 섞는다. 글자와 12:1, 띠와 3:1(비텍스트)이 안 되면
+    섞는 비율을 1%씩 낮춘다 (9장 37)."""
+    ratio = T.DARK_MEMO_BAND_TINT
+    face = mix(dark_band, T.DARK_MEMO_FACE, ratio)
+    while ratio > 0 and (contrast(T.DARK["fg"], face) < T.DARK_MEMO_MIN_CONTRAST
+                         or contrast(dark_band, face) < T.BAND_MIN_CONTRAST):
+        ratio = round(ratio - 0.01, 2)
+        face = mix(dark_band, T.DARK_MEMO_FACE, ratio)
+    return face
 
 
 def legible_color(color: str, background: str, ink: str) -> str:
@@ -162,7 +174,12 @@ def memo_tokens(color: str, mode: str) -> dict[str, str]:
     link = T.MEMO_LINK_ON_LIGHT if black_ink else T.MEMO_LINK_ON_DARK
     if contrast(link, face) < TEXT_MIN_CONTRAST:
         link = ink  # 항상 밑줄이 함께 간다
+    # 세로 탭 면 (4.1). 어두운 화면에서는 안 펼친 탭을 bg_sunken으로 가라앉혀, 펼친 탭만 메모 창과 같은
+    # 밝은 면으로 이어지게 한다. 밝은 화면은 탭도 메모 면 그대로다.
+    tab_face = T.DARK["bg_sunken"] if mode == "dark" else face
     return {
+        "memo_tab_face": tab_face,
+        "memo_tab_hover": mix(ink, tab_face, 0.08),
         "memo_face": face,
         "memo_band": band,
         "memo_fg": ink,

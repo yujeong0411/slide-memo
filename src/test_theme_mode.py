@@ -40,7 +40,9 @@ win.apply_screen_mode()
 assert A.current_mode() == "dark"
 assert app.palette().window().color().name().upper() == T.DARK["bg_canvas"]
 assert shown_color() == RED_DARK, shown_color()
-assert T.DARK_MEMO_FACE in win.body.styleSheet()
+from theme.memo_tokens import memo_tokens as _memo_tokens  # noqa: E402
+
+assert _memo_tokens(memo.color, "dark")["memo_face"] in win.body.styleSheet(), "어두운 메모 면(띠 색 7%)"
 assert RED_LIGHT.lower() in db.get(memo.id).content.lower(), "어두운 화면에서도 저장은 밝은 값"
 assert RED_DARK.lower() not in db.get(memo.id).content.lower()
 

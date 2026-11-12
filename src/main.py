@@ -333,7 +333,9 @@ class MemoTabButton(QPushButton):
         painter.save()
         painter.setClipPath(shape)
         hovered = self.underMouse() and not self._selected
-        painter.fillRect(area, QColor(t["memo_hover"] if hovered else t["memo_face"]))
+        # 펼친 탭은 메모 창과 같은 면, 나머지는 탭 면(어두운 화면에서는 가라앉은 면, 4.1)
+        face = t["memo_face"] if self._selected else (t["memo_tab_hover"] if hovered else t["memo_tab_face"])
+        painter.fillRect(area, QColor(face))
         band_x = area.right() - self.BAND_WIDTH + 1 if side == "right" else area.left()
         painter.fillRect(QRectF(band_x, 0, self.BAND_WIDTH, area.height()), QColor(t["memo_band"]))
         painter.restore()
