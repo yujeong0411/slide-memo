@@ -50,7 +50,15 @@ def fake_exec(*_a):
 
 
 QApplication.exec = fake_exec
+from PyQt6.QtCore import Qt  # noqa: E402
+
+# 드롭다운·메뉴·툴팁 펼침 효과를 끄는지 (offscreen은 효과 값을 늘 끔으로 돌려주어, 부른 기록으로 본다)
+_EFFECTS = (Qt.UIEffect.UI_AnimateCombo, Qt.UIEffect.UI_AnimateMenu, Qt.UIEffect.UI_AnimateTooltip)
+_effect_calls = []
+_real_set_effect = QApplication.setEffectEnabled
+QApplication.setEffectEnabled = staticmethod(lambda e, on=True: (_effect_calls.append((e, on)), _real_set_effect(e, on))[1])
 assert M.main() == 0
+assert {e for e, on in _effect_calls if not on} >= set(_EFFECTS), f"펼침 효과를 끄지 않았다: {_effect_calls}"
 assert os.environ.get("LITELLM_LOCAL_MODEL_COST_MAP") == "True", "앱이 가격표 받기를 끄지 않았다"
 assert "litellm" not in sys.modules, "AI를 쓰지 않았는데 LiteLLM을 불러왔다"
 assert "ai_provider" not in sys.modules, "AI를 쓰지 않았는데 ai_provider를 불러왔다"

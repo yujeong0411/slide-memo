@@ -91,6 +91,9 @@ QPushButton#textBtn:hover { background: $overlay_hover; }
 QPushButton#textBtn:focus { border-color: $focus; }
 QProgressBar#splashBar { background: $bg_muted; border: none; border-radius: 2px; }
 QProgressBar#splashBar::chunk { background: $accent; border-radius: 2px; }
+/* Google 계정 연결 창의 진행 막대 (4.6): 시작 화면 막대와 같은 accent 막대 */
+QDialog QProgressBar#syncProgress { background: $bg_muted; border: none; border-radius: 2px; }
+QDialog QProgressBar#syncProgress::chunk { background: $accent; border-radius: 2px; }
 
 /* ----- 작은 단추(sm): 팝업, 말풍선, 카드 안 ----- */
 QFrame#popupCard QPushButton[variant], QFrame#floatCard QPushButton[variant] {

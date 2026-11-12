@@ -75,6 +75,7 @@ class _Worker(QObject):
     (QThread는 도는 중에 지워지면 앱이 비정상 종료된다). 끊겨도 DB 트랜잭션은 되돌려진다."""
 
     done = pyqtSignal(str, object)  # (일 종류, 결과 dict) — 화면 줄에서 받는다
+    progress = pyqtSignal(int, int)  # (끝낸 수, 전체 수) — 연결 창의 "메모를 맞추고 있어요 (12/30)"
 
     def __init__(self, db_path: Path, make_transport: Callable) -> None:
         super().__init__()
@@ -118,6 +119,7 @@ class _Worker(QObject):
 
         if self._syncer is None or self._syncer.store.device != self._device:
             self._syncer = Syncer(self.store, self.make_transport(self.store))
+            self._syncer.progress = lambda done, total: self.progress.emit(done, total)
         self._syncer.name = default_pc_name()
         return self._syncer
 
@@ -196,6 +198,7 @@ class SyncController(QObject):
     about_to_sync = pyqtSignal()         # 동기화 직전 (창이 편집 중인 내용을 저장한다)
     cycle_finished = pyqtSignal(object)  # 결과 dict
     job_finished = pyqtSignal(str, object)
+    progress = pyqtSignal(int, int)
     status_changed = pyqtSignal()
 
     def __init__(self, db, make_transport: Callable | None = None, *, available: bool | None = None,
@@ -221,6 +224,7 @@ class SyncController(QObject):
         self._data_version = self._dv()
         self.worker = _Worker(db.db_path, make_transport or drive_transport)
         self.worker.done.connect(self._on_done)
+        self.worker.progress.connect(lambda d, t: None if self._closed else self.progress.emit(d, t))
         self.worker.start()
         self._tick = QTimer(self)
         self._tick.setInterval(1000)

@@ -80,6 +80,10 @@ class SyncTab(QWidget):
         super().__init__(parent)
         self.db, self.ctl = db, controller
         self._grant: oauth.Grant | None = None
+        self._dlg = None
+        self._connecting = False
+        self._cancel_after_connect = False
+        self._pending_email = ""
         self.outer = QVBoxLayout(self)
         self.outer.setContentsMargins(24, 20, 24, 20)
         self.outer.setSpacing(12)
@@ -205,6 +209,7 @@ class SyncTab(QWidget):
         self.sync_now_btn.setEnabled(False)
         self.ctl.sync_now()
 
+    # ----- 연결 (연결 창을 첫 동기화가 끝날 때까지 열어 둔다, 9장 40) -----
     def _connect(self) -> None:
         from sync.login_dialog import LoginDialog
 
@@ -212,32 +217,41 @@ class SyncTab(QWidget):
         if client is None:
             self._status(oauth.MESSAGES["no_client"], error=True)
             return
-        dlg = LoginDialog(client, self)
+        dlg = LoginDialog(client, self, working=True)
+        self._dlg, self._grant, self._connecting = dlg, None, False
+        dlg.granted.connect(self._on_granted)
+        dlg.cancel_requested.connect(self._cancel_connect)
+        self.ctl.progress.connect(dlg.set_progress)
         dlg.exec()
-        if dlg.grant is None:
-            self._status(dlg.error.message if dlg.error else oauth.MESSAGES["failed"], error=True)
-            return
-        g = dlg.grant
+        self.ctl.progress.disconnect(dlg.set_progress)
+        self._dlg = None
+        if dlg.result():
+            self.render()
+            self._status(f"{self._pending_email} 계정으로 연결됐어요.")
+        elif dlg.error is not None:
+            self._status(dlg.error.message, error=True)
+
+    def _on_granted(self, g: oauth.Grant) -> None:
+        """브라우저에서 허용했다. 1) Google 계정 확인 → 2) Drive 확인 → 3) 메모 맞추기."""
         previous = self.db.get_setting_str(oauth.ACCOUNT_EMAIL_KEY, "")
         if oauth.is_other_account(previous, g.email):
             ask = _Ask("다른 계정이에요",
                        f"전에 연결한 계정: {previous}\n지금 고른 계정: {g.email}\n\n"
                        "다른 계정으로 연결하면 다른 PC의 메모와 따로 보관돼요.",
-                       "이 계정으로 연결", "취소", self)
+                       "이 계정으로 연결", "취소", self._dlg)
             if not ask.exec():
-                self.ctl.run_job("revoke", g.refresh_token)
+                self._give_up(g)
                 return
         self._grant = g
-        self._status("Drive를 확인하는 중이에요")
+        self._dlg.set_stage("Drive를 확인하고 있어요")
         self.ctl.run_job("probe", g.access_token)
 
     def _after_probe(self, result: dict) -> None:
         g, self._grant = self._grant, None
-        if g is None:
-            return
+        if g is None or self._dlg is None:
+            return  # 그 사이 취소했다 (토큰은 _cancel_connect가 철회)
         if "error" in result:
-            self.ctl.run_job("revoke", g.refresh_token)
-            self._status(STATUS_TEXT.get(result["error"], STATUS_TEXT["failed"]), error=True)
+            self._give_up(g, oauth.OAuthError("network" if result["error"] == "network" else "failed"))
             return
         mine = self.db.conn.execute(
             "SELECT COUNT(*) FROM memos WHERE title != '' OR content NOT IN ('', '<p></p>')").fetchone()[0]
@@ -245,15 +259,31 @@ class SyncTab(QWidget):
             ask = _Ask("합칠까요?",
                        f"Drive에 다른 PC의 메모가 있어요. 이 PC의 메모 {mine}개와 합칠게요. "
                        "다른 PC의 메모와 이 PC의 메모를 함께 보여 줘요. 합치기 전에 이 PC의 메모를 백업해 둘게요.",
-                       "합치기", "나중에", self)
+                       "합치기", "나중에", self._dlg)
             if not ask.exec():
-                self.ctl.run_job("revoke", g.refresh_token)  # 연결을 끝내지 않고 토큰도 남기지 않는다
-                self._status("")
+                self._give_up(g)  # 연결을 끝내지 않고 토큰도 남기지 않는다
                 return
         self.db._backup_db(f".bak-sync-{datetime.now():%Y%m%d}")
-        self._status("연결하는 중이에요")
+        self._dlg.set_stage("메모를 맞추고 있어요")
         self._pending_email = g.email
+        self._connecting = True
         self.ctl.run_job("connect", g.email, g.refresh_token)
+
+    def _give_up(self, g: oauth.Grant, error: oauth.OAuthError | None = None) -> None:
+        """연결하지 않기로 했다: 받은 토큰을 바로 철회하고 창을 닫는다."""
+        self.ctl.run_job("revoke", g.refresh_token)
+        if self._dlg is not None:
+            self._dlg.fail(error)
+
+    def _cancel_connect(self) -> None:
+        """단계 중 [취소]. 아직 연결 전이면 토큰을 철회하고, 첫 동기화 중이면 끝난 뒤 연결을 끊는다."""
+        if self._connecting:
+            self._cancel_after_connect = True
+            return
+        g = self._grant or (self._dlg.grant if self._dlg is not None else None)
+        self._grant = None
+        if g is not None:
+            self._give_up(g)
 
     def _remove(self, dev: dict) -> None:
         ask = _Ask("이 PC를 목록에서 뺄까요?",
@@ -279,11 +309,19 @@ class SyncTab(QWidget):
         if kind == "probe":
             self._after_probe(result)
         elif kind == "connect":
-            if "error" in result:
+            self._connecting = False
+            dlg = getattr(self, "_dlg", None)
+            if getattr(self, "_cancel_after_connect", False):
+                self._cancel_after_connect = False
+                self.ctl.run_job("disconnect", False)  # 첫 동기화 중에 취소했다: 끊고 토큰도 철회
+                if dlg is not None:
+                    dlg.fail(None)
+            elif "error" in result:
+                if dlg is not None:
+                    dlg.fail(None)
                 self._status(STATUS_TEXT.get(result["error"], STATUS_TEXT["failed"]), error=True)
-                return
-            self.render()
-            self._status(f"{getattr(self, '_pending_email', '')} 계정으로 연결됐어요.")
+            elif dlg is not None:
+                dlg.finish_ok()  # "연결됐어요"를 1초 보여 준 뒤 닫힌다
         elif kind == "devices" and hasattr(self, "devices_box"):
             if "error" in result:
                 _clear(self.devices_box)

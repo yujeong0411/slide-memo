@@ -4687,6 +4687,9 @@ def main() -> int:
         # DirectWrite는 NoSubpixelAntialias를 무시해 글자에 색 번짐이 남는다 (2.1)
         os.environ.setdefault("QT_QPA_PLATFORM", "windows:fontengine=freetype")
     app = QApplication(sys.argv)
+    # 드롭다운·메뉴·툴팁은 펼칠 때 바로 제 크기로 (크기가 자라거나 미끄러지는 효과를 끈다, 9장 41)
+    for effect in (Qt.UIEffect.UI_AnimateCombo, Qt.UIEffect.UI_AnimateMenu, Qt.UIEffect.UI_AnimateTooltip):
+        QApplication.setEffectEnabled(effect, False)
     install_tooltips(app)
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("SlideMemo")

@@ -36,6 +36,23 @@ class Syncer:
     def __init__(self, store: SyncStore, transport, name: str = "PC") -> None:
         self.store, self.transport, self.name = store, transport, name
         self.arrived: list[Path] = []  # 마지막 받기에서 새로 받은 그림 (열린 메모를 다시 그릴 때)
+        # 진행 알림 progress(끝낸 수, 전체 수). 단위는 '주고받는 메모 + 그림 한 장'. 연결 대기 창이 쓴다
+        self.progress = None
+        self._done = self._total = 0
+
+    def _grow(self, n: int) -> None:
+        if n:
+            self._total += n
+            self._report()
+
+    def _advance(self, n: int = 1) -> None:
+        if n:
+            self._done += n
+            self._report()
+
+    def _report(self) -> None:
+        if self.progress is not None:
+            self.progress(self._done, self._total)
 
     def sync(self) -> list[tuple[str, bool]]:
         """차이 맞추기 → 받기 → (돌아온 PC면 정리) → 올리기 → 잊기·압축 → (하루 한 번) 그림 정리.
@@ -43,6 +60,7 @@ class Syncer:
         st = self.store
         if not st.connected:
             return []
+        self._done = self._total = 0
         st.reconcile()
         files = self.transport.list()
         returning = self._returning(files)
@@ -101,7 +119,10 @@ class Syncer:
             data = ("\n".join(lines) + "\n").encode("utf-8")
             segs[-1]["last"] = Op.from_json(lines[-1]).seq
             segs[-1]["size"] = len(data)
+            sending = len({op.uid for op in st.pending()})  # 이번에 보내는 메모 수
+            self._grow(sending)
             self.transport.write(f"log_{dev}_{segs[-1]['n']}.jsonl", data)
+            self._advance(sending)
         if alive_key != st._get("alive_sent"):
             self.transport.write(f"alive_{dev}.json", json.dumps(alive).encode("utf-8"))
         self.transport.write(f"dev_{dev}.json", self._dev_info(segs, too_big, now))
@@ -206,6 +227,8 @@ class Syncer:
                 top = max([top] + [o.seq for o in ops])
             cursors[dev] = (top, version if complete else None)  # 덜 읽었으면 다음에 다시 읽는다
         conflicts: list[tuple[str, bool]] = []
+        received = len({op.uid for op in new_ops})
+        self._grow(received)
         with st.conn:
             if new_ops or cursors:
                 conflicts = st.apply_remote(new_ops)
@@ -215,6 +238,7 @@ class Syncer:
             st.set_json("remote_cursors", seen_me)
             st.refresh_pending_purges()
             st._set("last_pull_at", st.wall())
+        self._advance(received)
         self.arrived = self._download_images(files)
         return conflicts
 
@@ -311,7 +335,7 @@ class Syncer:
     def _upload_images(self, files: dict[str, str]) -> list[str]:
         """이 PC 메모가 쓰는 그림 중 Drive에 없는 것을 올린다. 기록에 새로 쓴 그림만이 아니라 전부 본다 —
         다른 PC가 안 쓰는 그림으로 보고 지웠어도 여기서 다시 올라간다. 너무 커서 못 올린 해시 목록을 돌려준다."""
-        too_big = []
+        too_big, todo = [], []
         with self.store.conn:  # 해시 기억(sync_image)을 저장
             refs = self.store.local_image_refs()
         for sha, path in sorted(refs.items()):
@@ -321,8 +345,12 @@ class Syncer:
             if size > images.MAX_IMAGE_BYTES:
                 too_big.append(sha)
                 continue
+            todo.append((sha, path, size))
+        self._grow(len(todo))
+        for sha, path, size in todo:
             write = self.transport.write_large if size > images.LARGE_UPLOAD_BYTES else self.transport.write
             write(f"img_{sha}.png", path.read_bytes())
+            self._advance()
         return too_big
 
     # ----- 받기 -----
@@ -332,23 +360,25 @@ class Syncer:
 
     def _download_images(self, files: dict[str, str]) -> list[Path]:
         """메모가 쓰는데 이 PC에 아직 없는 그림을 받는다. Drive에 아직 없으면 다음 받기에서 다시."""
-        arrived = []
+        arrived, todo = [], {}
         for (html,) in self.store.conn.execute("SELECT content FROM memos").fetchall():
             for path in images.local_paths_in(html, database.IMAGES_DIR):
                 sha = images.named_sha(path)
-                if sha is None or path.exists() or f"img_{sha}.png" not in files:
-                    continue
-                try:
-                    data = self.transport.read(f"img_{sha}.png")
-                except FileNotFoundError:
-                    continue  # 방금 지워졌다 (쓰는 PC가 다시 올린다)
-                if hashlib.sha256(data).hexdigest() != sha:
-                    continue  # 손상된 파일은 쓰지 않는다
+                if sha is not None and not path.exists() and f"img_{sha}.png" in files:
+                    todo[path] = sha
+        self._grow(len(todo))
+        for path, sha in todo.items():
+            try:
+                data = self.transport.read(f"img_{sha}.png")
+            except FileNotFoundError:
+                data = None  # 방금 지워졌다 (쓰는 PC가 다시 올린다)
+            if data is not None and hashlib.sha256(data).hexdigest() == sha:  # 손상된 파일은 쓰지 않는다
                 path.parent.mkdir(parents=True, exist_ok=True)
                 tmp = path.with_name(path.name + ".part")
                 tmp.write_bytes(data)
                 os.replace(tmp, path)  # 열린 메모가 반쯤 쓴 파일을 읽지 않게
                 arrived.append(path)
+            self._advance()
         if arrived:
             with self.store.conn:
                 for p in arrived:
