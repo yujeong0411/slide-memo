@@ -5,6 +5,10 @@
 - [GitHub CLI](https://cli.github.com/) 설치 (`C:\Program Files\GitHub CLI\gh.exe`)
 - [Inno Setup 6](https://jrsoftware.org/isinfo.php) 설치 (`C:\Program Files (x86)\Inno Setup 6\ISCC.exe`)
 - `gh auth login` 으로 GitHub 로그인 완료
+- **(2.1.0부터) Google 동기화용 OAuth 클라이언트 파일** `secrets\google_oauth_client.json`
+  - Google Cloud 콘솔에서 받은 데스크톱 앱 클라이언트 JSON이에요. 빌드할 때 설치본에 들어가요(`SlideMemo.spec`).
+  - 이 파일이 없으면 배포용 빌드가 **멈춰요**. 동기화가 안 되는 설치본이 나가지 않게 하려는 것이에요.
+  - **커밋하지 않아요.** `.gitignore`의 `secrets/`로 빠져 있어요. 올리기 전에 `git ls-files secrets`가 비어 있는지 확인해요.
 
 ---
 
