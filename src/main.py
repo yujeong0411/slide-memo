@@ -347,8 +347,8 @@ class MemoTabButton(QPushButton):
         stroke = area.adjusted(0.5, 0.5, -0.5, -0.5)
         if self._selected:
             # 펼친 탭 테두리 (9장 47): 위·아래·바깥쪽 3면만 2px. 메모 창 쪽은 열어 두어 창과 이어진다.
-            # memo_border는 메모 면 대비 3:1을 맞춘 색이라 밝은·어두운 화면 모두 보인다
-            painter.setPen(QPen(QColor(t["memo_border"]), self.SELECTED_BORDER))
+            # 메모 색(띠와 같은 memo_band). 면과 3:1 이상이라 밝은·어두운 화면 모두 보인다
+            painter.setPen(QPen(QColor(t["memo_band"]), self.SELECTED_BORDER))
             b = area.adjusted(1, 1, -1, -1)
             inner_x, outer_x = (area.left(), b.right()) if side == "right" else (area.right(), b.left())
             painter.drawPolyline(QPolygonF([QPointF(inner_x, b.top()), QPointF(outer_x, b.top()),

@@ -51,19 +51,19 @@ for side, outer_x, inner_x in (("right", W - 2, 0), ("left", 1, W - 1)):
     assert img.pixelColor(inner_x, 0).alpha() > 200, (side, "열린 탭 모서리")
     assert img.pixelColor(inner_x, H // 2).name().upper() == tokens["memo_face"], (side, "열린 탭 안쪽 선")
     # 펼친 탭 테두리 (9장 47): 위·아래·모니터 쪽 2px, 메모 창 쪽은 열려 있다
-    border = tokens["memo_border"]
+    border = tokens["memo_band"]  # 메모 색
     for x, y, what in ((W // 2, 1, "위"), (W // 2, H - 2, "아래"), (W - 2 if side == "right" else 1, H // 2, "모니터 쪽")):
         assert img.pixelColor(x, y).name().upper() == border, (side, what, img.pixelColor(x, y).name())
     assert render(Tab(memo())).pixelColor(W // 2, 1).name().upper() != border, (side, "안 펼친 탭은 테두리 없음")
 Tab.side = "right"
-# 테두리 색은 밝은·어두운 화면 모두 메모 면과 3:1 이상, 어두운 화면의 안 펼친 탭 면과도 구분된다
+# 테두리(메모 색)는 밝은·어두운 화면 모두 메모 면과 3:1 이상, 어두운 화면의 안 펼친 탭 면과도 구분된다
 from theme.memo_tokens import BORDER_MIN_CONTRAST, contrast  # noqa: E402
 
 for _mode in ("light", "dark"):
     for _c in ("blue", "yellow", "#202020", "#F0F0F0"):
         _t = memo_tokens(_c, _mode)
-        assert contrast(_t["memo_border"], _t["memo_face"]) >= BORDER_MIN_CONTRAST, (_mode, _c)
-        assert contrast(_t["memo_border"], _t["memo_tab_face"]) >= 1.5, (_mode, _c, "옆 탭과 구분")
+        assert contrast(_t["memo_band"], _t["memo_face"]) >= BORDER_MIN_CONTRAST, (_mode, _c)
+        assert contrast(_t["memo_band"], _t["memo_tab_face"]) >= 1.5, (_mode, _c, "옆 탭과 구분")
 
 # 탭 폭은 컬럼이 정한다 (기본 정책이면 크기 힌트가 하한이 되어 밀린다)
 _probe = Tab(memo())
