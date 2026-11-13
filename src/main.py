@@ -87,6 +87,7 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QSplashScreen,
     QStyle,
+    QStyleOption,
     QSystemTrayIcon,
     QTextBrowser,
     QTextEdit,
@@ -316,6 +317,9 @@ class MemoTabButton(QPushButton):
     def update_style(self, selected: bool) -> None:
         self._selected = selected
         self.update()
+        body = getattr(self.window(), "body", None)
+        if isinstance(body, BodyPanel):
+            body.update()  # 탭 쪽 테두리의 빈자리를 옮긴다
 
     def paintEvent(self, _event) -> None:  # noqa: N802
         t = self._tokens
@@ -375,6 +379,33 @@ class MemoTabButton(QPushButton):
         for index, line in enumerate(lines):
             rect = QRectF(0, block_top + index * self.LINE_HEIGHT, length, self.LINE_HEIGHT)
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, line)
+        painter.end()
+
+
+class BodyPanel(QWidget):
+    """펼친 메모 창. 테두리(memo.qss, 2px 메모 색)는 탭 쪽 면이 없다. 그 면은 여기서 그리되,
+    펼친 탭과 맞닿는 자리만 비워 탭 테두리와 한 줄로 이어지게 한다 (9장 48)."""
+
+    def __init__(self, parent: QWidget, gap) -> None:
+        super().__init__(parent)
+        self.gap = gap  # () → 펼친 탭이 닿는 (위 y, 아래 y) 본문 좌표, 안 보이면 None
+        self.color: str | None = None  # 메모 색 (_apply_memo_theme이 넣는다)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        opt = QStyleOption()
+        opt.initFrom(self)
+        self.style().drawPrimitive(QStyle.PrimitiveElement.PE_Widget, opt, painter, self)  # qss 면·테두리
+        if self.color is None:
+            return
+        w, h, b = self.width(), self.height(), MemoTabButton.SELECTED_BORDER
+        x = w - b if MemoTabButton.side == "right" else 0
+        gap = self.gap()
+        # 빈자리 위아래는 탭의 위·아래 테두리(2px)까지 채워 모서리가 맞물리게 한다
+        spans = [(0, h)] if gap is None else [(0, gap[0] + b), (gap[1] - b, h)]
+        for top, bottom in spans:
+            if bottom > top:
+                painter.fillRect(QRect(x, top, b, bottom - top), QColor(self.color))
         painter.end()
 
 
@@ -2077,7 +2108,7 @@ class SlideMemoWindow(QWidget):
         root.setSpacing(0)
 
         # ---- 본문 (좌측, 펼친 상태에서만 보임) ----
-        self.body = QWidget(self.container)
+        self.body = BodyPanel(self.container, self._selected_tab_gap)
         self.body.setObjectName("bodyPanel")
         self.body.setMinimumWidth(0)  # 폭 0까지 줄어들 수 있어야 슬라이드 가능
         body_layout = QVBoxLayout(self.body)
@@ -2282,7 +2313,7 @@ class SlideMemoWindow(QWidget):
         col_layout.addWidget(self.tab_down_btn)
         _tab_bar = self.tab_scroll.verticalScrollBar()
         _tab_bar.rangeChanged.connect(lambda *_a: self._update_tab_arrows())
-        _tab_bar.valueChanged.connect(lambda *_a: self._update_tab_arrows())
+        _tab_bar.valueChanged.connect(lambda *_a: (self._update_tab_arrows(), self.body.update()))  # 탭 쪽 테두리 빈자리
 
         col_layout.addSpacing(4)
 
@@ -4055,9 +4086,25 @@ class SlideMemoWindow(QWidget):
         self._apply_memo_theme(DEFAULT_COLOR)
         self._update_pin_btn()
 
+    def _selected_tab_gap(self) -> tuple[int, int] | None:
+        """펼친 탭이 본문 가장자리와 맞닿는 (위 y, 아래 y). 탭 목록에서 보이는 부분만, 없으면 None."""
+        view = self.tab_scroll.viewport()
+        shown = QRect(view.mapToGlobal(QPoint(0, 0)), view.size())
+        for i in range(self.tabs_layout.count()):
+            tab = self.tabs_layout.itemAt(i).widget()
+            if isinstance(tab, MemoTabButton) and tab._selected and tab.isVisible():
+                rect = QRect(tab.mapToGlobal(QPoint(0, 0)), tab.size()).intersected(shown)
+                if rect.isEmpty():
+                    return None
+                top = self.body.mapFromGlobal(rect.topLeft()).y()
+                return top, top + rect.height()
+        return None
+
     def _apply_memo_theme(self, color_name: str | None) -> None:
         """선택된 메모 색을 메모 창에 반영한다. 저장값은 신뢰 경계라 정규화를 거친다."""
         tokens = theme_apply.apply_memo(self.body, normalize_color(color_name), self.side)
+        self.body.color = tokens["memo_band"]
+        self.body.update()
         self._memo_icon_color = tokens["memo_fg_secondary"]
         for button, asset in self.format_toolbar.memo_icons + [(self.export_btn, "file-output.svg")]:
             button.setIcon(QIcon(tinted_pixmap(asset, self._memo_icon_color, 16)))

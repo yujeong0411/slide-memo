@@ -154,6 +154,38 @@ _app.processEvents()
 assert _bar.value() > 0, "펼친 메모의 탭으로 스크롤되지 않았다"
 _many.close()
 
+# ----- 펼친 탭 테두리가 메모 창 테두리로 이어진다 (9장 48) -----
+import time  # noqa: E402
+
+_jdb = MemoDatabase(Path(tempfile.mkdtemp()) / "join.db")
+for _i in range(3):
+    _jdb.create(title=f"j{_i}", content="x")
+_join = m.SlideMemoWindow(_jdb)
+_join.show()
+_join.select_memo(_jdb.list_all()[1].id)
+_join.expand()
+_t0 = time.monotonic()
+while time.monotonic() - _t0 < 1.5:  # 펼침 움직임
+    _app.processEvents()
+for _side in ("right", "left"):
+    _join.side = _side
+    _join._apply_side_layout()
+    _join._apply_memo_theme(_join.current_memo.color)
+    _app.processEvents()
+    _gap = _join._selected_tab_gap()
+    assert _gap is not None, (_side, "펼친 탭이 안 보임")
+    _img = _join.body.grab().toImage()
+    _bw, _bh = _img.width(), _img.height()
+    _band = _join.body.color.lower()
+    _near = _bw - 1 if _side == "right" else 0
+    _far = 0 if _side == "right" else _bw - 1
+    _mid = (_gap[0] + _gap[1]) // 2
+    assert _img.pixelColor(_near, _mid).name() != _band, (_side, "펼친 탭 자리는 열려 있다")
+    assert _img.pixelColor(_near, _gap[0] - 3).name() == _band, (_side, "탭 위쪽은 메모 색 선")
+    assert _img.pixelColor(_near, _gap[1] + 3).name() == _band, (_side, "탭 아래쪽은 메모 색 선")
+    assert _img.pixelColor(_far, _bh // 2).name() == _band and _img.pixelColor(_bw // 2, 0).name() == _band, (_side, "바깥 테두리")
+_join.close()
+
 # ----- 좁은 창: 정렬 콤보가 아이콘이 된다 -----
 _win.resize(520, 500)
 _win._fit_top_row()
