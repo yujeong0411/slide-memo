@@ -2,7 +2,7 @@
 
 #bodyPanel {
     background: $memo_face;
-    border: 1px solid $memo_edge;
+    border: 2px solid $memo_band; /* 펼친 탭 테두리와 이어진다. 탭 쪽 면은 BodyPanel이 그린다 (9장 48) */
     $body_corners
 }
 QFrame#bodyDivider { background: $memo_divider; border: none; }

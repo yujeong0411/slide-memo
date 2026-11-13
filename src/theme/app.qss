@@ -78,6 +78,12 @@ QPushButton#toastAction {
     font-weight: 500;
     padding: 0;
 }
+QPushButton#toastClose {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 0;
+}
 QPushButton#textBtn {
     background: transparent;
     color: $accent_text;
@@ -91,6 +97,9 @@ QPushButton#textBtn:hover { background: $overlay_hover; }
 QPushButton#textBtn:focus { border-color: $focus; }
 QProgressBar#splashBar { background: $bg_muted; border: none; border-radius: 2px; }
 QProgressBar#splashBar::chunk { background: $accent; border-radius: 2px; }
+/* Google 계정 연결 창의 진행 막대 (4.6): 시작 화면 막대와 같은 accent 막대 */
+QDialog QProgressBar#syncProgress { background: $bg_muted; border: none; border-radius: 2px; }
+QDialog QProgressBar#syncProgress::chunk { background: $accent; border-radius: 2px; }
 
 /* ----- 작은 단추(sm): 팝업, 말풍선, 카드 안 ----- */
 QFrame#popupCard QPushButton[variant], QFrame#floatCard QPushButton[variant] {
@@ -262,6 +271,28 @@ QDialog QPushButton[variant="icon"]:hover { background: $overlay_hover; }
 QDialog QPushButton[variant="icon"]:pressed { background: $overlay_press; }
 QDialog QPushButton[variant="icon"]:focus { border-color: $focus; }
 
+/* ghost(4.8): 투명 면 + fg_secondary. 동기화 탭의 "목록에서 빼기" */
+QDialog QPushButton[variant="ghost"] {
+    background: transparent;
+    color: $fg_secondary;
+    border-color: transparent;
+}
+QDialog QPushButton[variant="ghost"]:hover { background: $overlay_hover; }
+QDialog QPushButton[variant="ghost"]:pressed { background: $overlay_press; }
+QDialog QPushButton[variant="ghost"]:focus { border-color: $focus; }
+
+/* text(4.8): 투명 면 + accent_text 밑줄. 동기화 탭의 "개인정보처리방침" */
+QDialog QPushButton[variant="text"] {
+    background: transparent;
+    color: $accent_text;
+    border-color: transparent;
+    text-decoration: underline;
+    padding: 0 4px;
+}
+QDialog QPushButton[variant="text"]:hover { background: $overlay_hover; }
+QDialog QPushButton[variant="text"]:pressed { background: $overlay_press; }
+QDialog QPushButton[variant="text"]:focus { border-color: $focus; }
+
 /* ----- 입력 ----- */
 QDialog QLineEdit, QDialog QSpinBox, QDialog QComboBox, QFrame#popupCard QComboBox {
     background: $bg_canvas;
@@ -333,6 +364,8 @@ QDialog QCheckBox:focus::indicator { border-color: $focus; }
 QDialog QCheckBox::indicator:disabled { background: $bg_muted; border-color: $line_strong; }
 
 /* ----- 슬라이더 ----- */
+/* 손잡이(14 + 테두리 1×2 = 16px 원)가 잘리지 않게 슬라이더 높이를 손잡이보다 크게 둔다 */
+QDialog QSlider { min-height: 18px; }
 QDialog QSlider::groove:horizontal { height: 4px; border-radius: 2px; background: $line_strong; }
 QDialog QSlider::sub-page:horizontal { background: $accent; border-radius: 2px; }
 QDialog QSlider::add-page:horizontal { background: $line_strong; border-radius: 2px; }

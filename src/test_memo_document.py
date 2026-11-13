@@ -162,7 +162,7 @@ with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
     fresh = D.MemoDatabase(Path(d) / "fresh.db")
     assert fresh.is_fresh_install()
     assert fresh.get_setting_int(D.PAPER_NOTICE_KEY, 0) == 0
-    assert fresh.conn.execute("PRAGMA user_version").fetchone()[0] == 3
+    assert fresh.conn.execute("PRAGMA user_version").fetchone()[0] == D._SCHEMA_VERSION
     fresh.close()
 
 A._mode = "light"

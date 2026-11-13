@@ -50,7 +50,20 @@ for side, outer_x, inner_x in (("right", W - 2, 0), ("left", 1, W - 1)):
     img = render(opened)
     assert img.pixelColor(inner_x, 0).alpha() > 200, (side, "열린 탭 모서리")
     assert img.pixelColor(inner_x, H // 2).name().upper() == tokens["memo_face"], (side, "열린 탭 안쪽 선")
+    # 펼친 탭 테두리 (9장 47): 위·아래·모니터 쪽 2px, 메모 창 쪽은 열려 있다
+    border = tokens["memo_band"]  # 메모 색
+    for x, y, what in ((W // 2, 1, "위"), (W // 2, H - 2, "아래"), (W - 2 if side == "right" else 1, H // 2, "모니터 쪽")):
+        assert img.pixelColor(x, y).name().upper() == border, (side, what, img.pixelColor(x, y).name())
+    assert render(Tab(memo())).pixelColor(W // 2, 1).name().upper() != border, (side, "안 펼친 탭은 테두리 없음")
 Tab.side = "right"
+# 테두리(메모 색)는 밝은·어두운 화면 모두 메모 면과 3:1 이상, 어두운 화면의 안 펼친 탭 면과도 구분된다
+from theme.memo_tokens import BORDER_MIN_CONTRAST, contrast  # noqa: E402
+
+for _mode in ("light", "dark"):
+    for _c in ("blue", "yellow", "#202020", "#F0F0F0"):
+        _t = memo_tokens(_c, _mode)
+        assert contrast(_t["memo_band"], _t["memo_face"]) >= BORDER_MIN_CONTRAST, (_mode, _c)
+        assert contrast(_t["memo_band"], _t["memo_tab_face"]) >= 1.5, (_mode, _c, "옆 탭과 구분")
 
 # 탭 폭은 컬럼이 정한다 (기본 정책이면 크기 힌트가 하한이 되어 밀린다)
 _probe = Tab(memo())
@@ -140,6 +153,38 @@ _many.select_memo(_last.id)
 _app.processEvents()
 assert _bar.value() > 0, "펼친 메모의 탭으로 스크롤되지 않았다"
 _many.close()
+
+# ----- 펼친 탭 테두리가 메모 창 테두리로 이어진다 (9장 48) -----
+import time  # noqa: E402
+
+_jdb = MemoDatabase(Path(tempfile.mkdtemp()) / "join.db")
+for _i in range(3):
+    _jdb.create(title=f"j{_i}", content="x")
+_join = m.SlideMemoWindow(_jdb)
+_join.show()
+_join.select_memo(_jdb.list_all()[1].id)
+_join.expand()
+_t0 = time.monotonic()
+while time.monotonic() - _t0 < 1.5:  # 펼침 움직임
+    _app.processEvents()
+for _side in ("right", "left"):
+    _join.side = _side
+    _join._apply_side_layout()
+    _join._apply_memo_theme(_join.current_memo.color)
+    _app.processEvents()
+    _gap = _join._selected_tab_gap()
+    assert _gap is not None, (_side, "펼친 탭이 안 보임")
+    _img = _join.body.grab().toImage()
+    _bw, _bh = _img.width(), _img.height()
+    _band = _join.body.color.lower()
+    _near = _bw - 1 if _side == "right" else 0
+    _far = 0 if _side == "right" else _bw - 1
+    _mid = (_gap[0] + _gap[1]) // 2
+    assert _img.pixelColor(_near, _mid).name() != _band, (_side, "펼친 탭 자리는 열려 있다")
+    assert _img.pixelColor(_near, _gap[0] - 3).name() == _band, (_side, "탭 위쪽은 메모 색 선")
+    assert _img.pixelColor(_near, _gap[1] + 3).name() == _band, (_side, "탭 아래쪽은 메모 색 선")
+    assert _img.pixelColor(_far, _bh // 2).name() == _band and _img.pixelColor(_bw // 2, 0).name() == _band, (_side, "바깥 테두리")
+_join.close()
 
 # ----- 좁은 창: 정렬 콤보가 아이콘이 된다 -----
 _win.resize(520, 500)

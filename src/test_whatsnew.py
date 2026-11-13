@@ -6,7 +6,7 @@ os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 import main as m
 
-assert m._ver_tuple("v1.2.0") == (1, 2, 0)
+assert m._ver_tuple("v1.2.0") == m._ver_tuple("1.2.0") > m._ver_tuple("1.1.9")
 assert m._ver_tuple("1.10.0") > m._ver_tuple("1.9.0")
 assert m._ver_tuple("2.0.0") > m._ver_tuple("1.4.1")  # 업데이트 확인도 이 비교를 쓴다
 assert m._ver_tuple("10.0.0") > m._ver_tuple("2.0.0")
@@ -16,7 +16,7 @@ assert m._ver_tuple("") == () and m._ver_tuple("dev") == ()  # 깨진 값도 죽
 assert m._whats_new_since("") == m.WHATS_NEW
 # 기록이 있으면 그 뒤 것만
 assert [v for v, _ in m._whats_new_since("1.2.0")] == [
-    v for v, _ in m.WHATS_NEW if m._ver_tuple(v) > (1, 2, 0)
+    v for v, _ in m.WHATS_NEW if m._ver_tuple(v) > m._ver_tuple("1.2.0")
 ]
 # 현재 버전까지 다 본 사용자에겐 안 뜬다 = 목록에 미래 버전이 섞여 있지 않다
 assert m._whats_new_since(m.APP_VERSION) == [], "APP_VERSION 미반영 항목이 있음"

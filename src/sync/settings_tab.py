@@ -1,0 +1,422 @@
+"""설정 창의 "동기화" 탭 (설계 6장, 디자인 md 4.6). 네트워크가 필요한 일은 SyncController의 작업 줄에 맡긴다."""
+from __future__ import annotations
+
+import json
+import time
+from datetime import datetime
+
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtWidgets import QCheckBox, QFormLayout, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+
+import links
+from sync import oauth
+from sync import runner
+from sync.runner import STATUS_TEXT
+from theme import apply as A
+from theme.widgets import AppDialog, make_button, role_label
+
+RECENT_CONFLICTS_KEY = "sync_recent_conflicts"  # 이 PC 설정: [{"uid", "at"(UTC ms)}] 최근 7일
+RECENT_CONFLICT_DAYS = 7
+
+
+def remember_conflicts(db, uids: list[str], now: float | None = None) -> None:
+    """겹친 메모를 동기화 탭의 "최근에 겹친 메모"에 남긴다 (같은 메모는 최근 시각 하나만, 7일 지나면 지움)."""
+    now_ms = int((now or time.time()) * 1000)
+    cutoff = now_ms - RECENT_CONFLICT_DAYS * 86_400_000
+    try:
+        items = json.loads(db.get_setting_str(RECENT_CONFLICTS_KEY, "[]") or "[]")
+    except ValueError:
+        items = []
+    kept = {i["uid"]: int(i["at"]) for i in items if isinstance(i, dict) and int(i.get("at", 0)) >= cutoff}
+    for uid in uids:
+        kept[uid] = now_ms
+    db.set_setting_str(RECENT_CONFLICTS_KEY, json.dumps(
+        [{"uid": u, "at": a} for u, a in sorted(kept.items(), key=lambda x: -x[1])]))
+
+
+def recent_conflicts(db, now: float | None = None) -> list[tuple[int, str, int]]:
+    """(메모 id, 제목, 시각 ms) 최근 것부터. 지워진 메모와 7일 지난 것은 뺀다."""
+    cutoff = int((now or time.time()) * 1000) - RECENT_CONFLICT_DAYS * 86_400_000
+    try:
+        items = json.loads(db.get_setting_str(RECENT_CONFLICTS_KEY, "[]") or "[]")
+    except ValueError:
+        return []
+    out = []
+    for i in items:
+        if not isinstance(i, dict) or int(i.get("at", 0)) < cutoff:
+            continue
+        row = db.conn.execute("SELECT id, title FROM memos WHERE uid = ?", (i.get("uid"),)).fetchone()
+        if row is not None:
+            out.append((row[0], row[1] or "제목 없음", int(i["at"])))
+    return out
+
+
+IDLE_CLEANUP_DAYS = 7  # 이만큼 넘게 동기화하지 않은 다른 PC에만 "쓰지 않는 PC로 정리"를 보인다
+
+
+def idle_days(d: dict, now: float | None = None) -> int:
+    """다른 PC가 하루 넘게 동기화하지 않았으면 그 날수(1~), 아니면 0. 이 PC와 시각이 없는 PC는 0.
+    다른 PC의 열쇠가 막혔는지는 여기서 알 수 없어서, 마지막 동기화 시각만 본다 (9장 46)."""
+    if d["is_self"] or not d["last_sync"]:
+        return 0
+    sec = (now or time.time()) - d["last_sync"] / 1000
+    return int(sec // 86400) if sec > 86400 else 0
+
+
+_LABEL_WIDTH = 112
+
+
+def relative_time(ms: int, now: float | None = None) -> str:
+    if not ms:
+        return "아직 없어요"
+    sec = max(0, int((now or time.time()) - ms / 1000))
+    if sec < 60:
+        return "방금"
+    if sec < 3600:
+        return f"{sec // 60}분 전"
+    if sec < 86400:
+        return f"{sec // 3600}시간 전"
+    return f"{sec // 86400}일 전"
+
+
+def _clear(layout) -> None:
+    while layout.count():
+        item = layout.takeAt(0)
+        if item.widget() is not None:
+            item.widget().deleteLater()
+        elif item.layout() is not None:
+            _clear(item.layout())
+
+
+def _row(form: QFormLayout, text: str, field) -> None:
+    label = QLabel(text)
+    label.setFixedWidth(_LABEL_WIDTH)
+    form.addRow(label, field)
+
+
+class _Ask(AppDialog):
+    """확인 창 (4.7): 제목 + 설명 + 주된 동작."""
+
+    def __init__(self, head: str, body: str, action: str, cancel: str, parent=None, check: str = "") -> None:
+        super().__init__(head, parent)
+        text = role_label(body, "description")
+        text.setWordWrap(True)
+        self.body.addWidget(text)
+        self.check = QCheckBox(check) if check else None
+        if self.check is not None:
+            self.body.addSpacing(4)
+            self.body.addWidget(self.check)
+        # 오른쪽 끝이 주된 동작, 바로 왼쪽이 취소 (4.7)
+        self.cancel_btn = self.add_button(cancel)
+        self.cancel_btn.clicked.connect(self.reject)
+        self.action_btn = self.add_button(action, "primary")
+        self.action_btn.clicked.connect(self.accept)
+        self.action_btn.setDefault(True)
+
+    def set_danger(self, danger: bool) -> None:
+        """되돌릴 수 없게 되면 빨간 위험 단추로 바꾸고 기본 포커스를 취소에 둔다 (4.7)."""
+        self.action_btn.setProperty("variant", "danger" if danger else "primary")
+        A.repolish(self.action_btn)
+        self.action_btn.setDefault(not danger)
+        self.cancel_btn.setDefault(danger)
+        (self.cancel_btn if danger else self.action_btn).setFocus()
+
+
+class SyncTab(QWidget):
+    def __init__(self, db, controller, parent=None, *, open_versions=None) -> None:
+        super().__init__(parent)
+        self.db, self.ctl = db, controller
+        self.open_versions = open_versions  # 메모 id → 그 메모의 이전 버전 창 (최근에 겹친 메모)
+        self._grant: oauth.Grant | None = None
+        self._dlg = None
+        self._connecting = False
+        self._cancel_after_connect = False
+        self._pending_email = ""
+        self.outer = QVBoxLayout(self)
+        self.outer.setContentsMargins(24, 20, 24, 20)
+        self.outer.setSpacing(12)
+        if self.ctl is not None:
+            self.ctl.job_finished.connect(self._on_job)
+            self.ctl.cycle_finished.connect(lambda _r: self._refresh_status())
+        self.render()
+
+    # ----- 그리기 -----
+    def render(self) -> None:
+        _clear(self.outer)
+        self.status_lbl = role_label("", "hint")
+        self.status_lbl.setWordWrap(True)
+        self.status_lbl.hide()
+        if self.ctl is None or not self.ctl.available:
+            self.outer.addWidget(role_label(oauth.MESSAGES["no_client"], "hint"))
+        elif not self.ctl.connected:
+            self._render_disconnected()
+        else:
+            self._render_connected()
+        self.outer.addStretch(1)
+
+    def _render_disconnected(self) -> None:
+        text = role_label("메모를 내 Google Drive에 보관하고 다른 PC와 맞춰요. "
+                          "메모는 내 Drive의 앱 전용 공간에만 저장돼요.", "description")
+        text.setWordWrap(True)
+        self.outer.addWidget(text)
+        row = QHBoxLayout()
+        self.connect_btn = make_button("Google 계정 연결", "primary")
+        self.connect_btn.clicked.connect(self._connect)
+        row.addWidget(self.connect_btn)
+        privacy = make_button("개인정보처리방침", "text")
+        privacy.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(links.PRIVACY_URL)))
+        row.addWidget(privacy)
+        row.addStretch(1)
+        self.outer.addLayout(row)
+        self.outer.addWidget(self.status_lbl)
+
+    def _render_connected(self) -> None:
+        form = QFormLayout()
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setHorizontalSpacing(12)
+        form.setVerticalSpacing(12)
+        _row(form, "계정", QLabel(self.db.get_setting_str(oauth.ACCOUNT_EMAIL_KEY, "")))
+        last = QHBoxLayout()
+        self.last_lbl = QLabel(relative_time(self.ctl.last_ok_ms()))
+        A.set_tabular(self.last_lbl)
+        last.addWidget(self.last_lbl)
+        last.addStretch(1)
+        self.sync_now_btn = make_button("지금 동기화")
+        self.sync_now_btn.clicked.connect(self._sync_now)
+        last.addWidget(self.sync_now_btn)
+        holder = QWidget()
+        holder.setLayout(last)
+        last.setContentsMargins(0, 0, 0, 0)
+        _row(form, "마지막 동기화", holder)
+        # PC 이름은 Windows 컴퓨터 이름을 그대로 쓴다 (바꾸지 않는다, 9장 39)
+        self.pc_name_lbl = QLabel(runner.default_pc_name())
+        _row(form, "PC 이름", self.pc_name_lbl)
+        self.outer.addLayout(form)
+        self.outer.addWidget(self.status_lbl)
+        self.reconnect_btn = make_button("다시 연결하기", "primary")
+        self.reconnect_btn.clicked.connect(self._connect)
+        self.reconnect_btn.hide()
+        self.outer.addWidget(self.reconnect_btn, 0, Qt.AlignmentFlag.AlignLeft)
+        self.outer.addSpacing(12)
+        self.outer.addWidget(role_label("연결된 PC", "group"))
+        self.devices_box = QVBoxLayout()
+        self.devices_box.setSpacing(8)
+        self.devices_box.addWidget(role_label("PC 목록을 읽는 중이에요", "hint"))
+        self.outer.addLayout(self.devices_box)
+        recent = recent_conflicts(self.db)
+        if recent:  # 없으면 이 칸은 숨긴다 (9장 43)
+            self.outer.addSpacing(12)
+            self.outer.addWidget(role_label("최근에 겹친 메모", "group"))
+            for memo_id, title, at in recent:
+                row = QHBoxLayout()
+                link = make_button(title, "text")
+                link.setToolTip("이전 버전 보기")
+                link.clicked.connect(lambda _c=False, mid=memo_id: self.open_versions and self.open_versions(mid))
+                row.addWidget(link)
+                when = role_label(relative_time(at), "hint")
+                A.set_tabular(when)
+                row.addWidget(when)
+                row.addStretch(1)
+                self.outer.addLayout(row)
+        self.outer.addSpacing(12)
+        off = make_button("연결 끊기")
+        off.clicked.connect(self._disconnect)
+        self.outer.addWidget(off, 0, Qt.AlignmentFlag.AlignLeft)
+        self._refresh_status()
+        self.ctl.run_job("devices")
+
+    def _refresh_status(self) -> None:
+        if not hasattr(self, "status_lbl"):
+            return
+        if self.ctl is not None and self.ctl.connected and hasattr(self, "last_lbl"):
+            try:
+                self.last_lbl.setText(relative_time(self.ctl.last_ok_ms()))
+            except RuntimeError:  # 다시 그리는 중 지워진 라벨
+                return
+            self.sync_now_btn.setEnabled(not self.ctl.running)
+            bad = self.ctl.status not in ("ok", "syncing")
+            self._status(STATUS_TEXT.get(self.ctl.status, "") if bad else "", error=bad)
+            self.reconnect_btn.setVisible(self.ctl.status == "reconnect")
+
+    def _status(self, text: str, error: bool = False) -> None:
+        try:
+            self.status_lbl.setProperty("state", "error" if error else "")
+            A.repolish(self.status_lbl)
+            self.status_lbl.setText(text)
+            self.status_lbl.setVisible(bool(text))
+        except RuntimeError:
+            pass
+
+    def _fill_devices(self, devices: list[dict]) -> None:
+        _clear(self.devices_box)
+        for d in devices:
+            row = QHBoxLayout()
+            idle = idle_days(d)
+            name = QLabel(d["name"] or "이름 없는 PC")
+            if idle:  # 하루 넘게 동기화하지 않은 다른 PC는 흐리게 (9장 46)
+                name.setProperty("role", "description")
+            row.addWidget(name)
+            if d["is_self"]:
+                row.addWidget(role_label("이 PC", "badge"))
+            when = role_label(relative_time(d["last_sync"]), "hint")
+            A.set_tabular(when)
+            row.addWidget(when)
+            row.addStretch(1)
+            if idle >= IDLE_CLEANUP_DAYS:  # 7일을 넘었다 (7일째부터)
+                out = make_button("쓰지 않는 PC로 정리", "ghost")
+                out.clicked.connect(lambda _c=False, dev=d: self._remove(dev))
+                row.addWidget(out)
+            self.devices_box.addLayout(row)
+            if idle:
+                note = role_label(f"{idle}일 동안 동기화하지 않았어요. "
+                                  "그 PC에서 '다시 연결해 주세요'가 떠 있을 수 있어요.", "hint")
+                note.setWordWrap(True)
+                self.devices_box.addWidget(note)
+        if not devices:
+            self.devices_box.addWidget(role_label("아직 연결된 PC가 없어요", "hint"))
+
+    # ----- 동작 -----
+    def _sync_now(self) -> None:
+        self.sync_now_btn.setEnabled(False)
+        self.ctl.sync_now()
+
+    # ----- 연결 (연결 창을 첫 동기화가 끝날 때까지 열어 둔다, 9장 40) -----
+    def _connect(self) -> None:
+        from sync.login_dialog import LoginDialog
+
+        client = oauth.load_client()
+        if client is None:
+            self._status(oauth.MESSAGES["no_client"], error=True)
+            return
+        dlg = LoginDialog(client, self, working=True)
+        self._dlg, self._grant, self._connecting = dlg, None, False
+        dlg.granted.connect(self._on_granted)
+        dlg.cancel_requested.connect(self._cancel_connect)
+        self.ctl.progress.connect(dlg.set_progress)
+        dlg.exec()
+        self.ctl.progress.disconnect(dlg.set_progress)
+        self._dlg = None
+        if dlg.result():
+            self.render()
+            self._status(f"{self._pending_email} 계정으로 연결됐어요.")
+        elif dlg.error is not None:
+            self._status(dlg.error.message, error=True)
+
+    def _on_granted(self, g: oauth.Grant) -> None:
+        """브라우저에서 허용했다. 1) Google 계정 확인 → 2) Drive 확인 → 3) 메모 맞추기."""
+        previous = self.db.get_setting_str(oauth.ACCOUNT_EMAIL_KEY, "")
+        if oauth.is_other_account(previous, g.email):
+            ask = _Ask("다른 계정이에요",
+                       f"전에 연결한 계정: {previous}\n지금 고른 계정: {g.email}\n\n"
+                       "다른 계정으로 연결하면 다른 PC의 메모와 따로 보관돼요.",
+                       "이 계정으로 연결", "취소", self._dlg)
+            if not ask.exec():
+                self._give_up(g)
+                return
+        self._grant = g
+        self._dlg.set_stage("Drive를 확인하고 있어요")
+        self.ctl.run_job("probe", g.access_token)
+
+    def _after_probe(self, result: dict) -> None:
+        g, self._grant = self._grant, None
+        if g is None or self._dlg is None:
+            return  # 그 사이 취소했다 (받은 토큰은 _cancel_connect가 버렸다)
+        if "error" in result:
+            self._give_up(g, oauth.OAuthError("network" if result["error"] == "network" else "failed"))
+            return
+        mine = self.db.conn.execute(
+            "SELECT COUNT(*) FROM memos WHERE title != '' OR content NOT IN ('', '<p></p>')").fetchone()[0]
+        if result.get("others") and mine:
+            ask = _Ask("합칠까요?",
+                       f"Drive에 다른 PC의 메모가 있어요. 이 PC의 메모 {mine}개와 합칠게요. "
+                       "다른 PC의 메모와 이 PC의 메모를 함께 보여 줘요. 합치기 전에 이 PC의 메모를 백업해 둘게요.",
+                       "합치기", "나중에", self._dlg)
+            if not ask.exec():
+                self._give_up(g)  # 연결을 끝내지 않고 토큰도 남기지 않는다
+                return
+        self.db._backup_db(f".bak-sync-{datetime.now():%Y%m%d}")
+        self._dlg.set_stage("메모를 맞추고 있어요")
+        self._pending_email = g.email
+        self._connecting = True
+        self.ctl.run_job("connect", g.email, g.refresh_token)
+
+    def _give_up(self, g: oauth.Grant, error: oauth.OAuthError | None = None) -> None:
+        """연결하지 않기로 했다: 받은 토큰은 저장하지 않고 메모리에서도 버린 뒤 창을 닫는다.
+        Google에 철회는 보내지 않는다 (다른 PC까지 끊기 때문, 9장 45)."""
+        self._grant = None
+        if self._dlg is not None:
+            self._dlg.grant = None
+            self._dlg.fail(error)
+
+    def _cancel_connect(self) -> None:
+        """단계 중 [취소]. 아직 연결 전이면 받은 토큰을 버리고, 첫 동기화 중이면 끝난 뒤 이 PC의 연결을 끊는다."""
+        if self._connecting:
+            self._cancel_after_connect = True
+            return
+        g = self._grant or (self._dlg.grant if self._dlg is not None else None)
+        self._grant = None
+        if g is not None:
+            self._give_up(g)
+
+    def _remove(self, dev: dict) -> None:
+        name = dev["name"] or "이름 없는 PC"
+        # 이름 뒤에 조사를 붙이지 않는다: 제목은 고정 문구, PC 이름은 아래 줄에 따로 (9장 44)
+        ask = _Ask("이 PC를 정리할까요?",
+                   f"PC 이름: {name}\n\n"
+                   "더 이상 쓰지 않는 PC를 목록에서 정리해요. 그 PC가 마지막으로 고친 메모는 이 PC가 넘겨받아서 "
+                   "잃지 않아요. 그 PC에서 동기화를 멈추려면 그 PC에서 '연결 끊기'를 눌러 주세요.",
+                   "정리하기", "취소", self)
+        if ask.exec():
+            self._status("정리하고 있어요")
+            self.ctl.run_job("remove", dev["device"])
+
+    def _disconnect(self) -> None:
+        ask = _Ask("동기화를 끊을까요?",
+                   "이 PC의 메모는 그대로 남아요. Drive에 올린 메모는 남겨 둬요.\n\n"
+                   "이 PC의 연결만 끊어요. 다른 PC는 계속 동기화돼요. 모든 PC의 연결을 한꺼번에 끊으려면 "
+                   "Google 계정의 보안 메뉴에서 SlideMemo를 지워 주세요.",
+                   "끊기", "취소", self, check="Drive에 올린 메모도 지우기 (다른 PC도 더 이상 받을 수 없어요)")
+        ask.check.toggled.connect(ask.set_danger)  # Drive 메모까지 지우면 되돌릴 수 없다
+        if ask.exec():
+            self._status("연결을 끊는 중이에요")
+            self.ctl.run_job("disconnect", bool(ask.check.isChecked()))
+
+    def _on_job(self, kind: str, result: dict) -> None:
+        try:
+            self.isVisible()
+        except RuntimeError:  # 설정 창이 이미 닫혔다
+            return
+        if kind == "probe":
+            self._after_probe(result)
+        elif kind == "connect":
+            self._connecting = False
+            dlg = getattr(self, "_dlg", None)
+            if getattr(self, "_cancel_after_connect", False):
+                self._cancel_after_connect = False
+                self.ctl.run_job("disconnect", False)  # 첫 동기화 중에 취소했다: 이 PC의 연결만 끊는다 (철회 없음)
+                if dlg is not None:
+                    dlg.fail(None)
+            elif "error" in result:
+                if dlg is not None:
+                    dlg.fail(None)
+                self._status(STATUS_TEXT.get(result["error"], STATUS_TEXT["failed"]), error=True)
+            elif dlg is not None:
+                dlg.finish_ok()  # "연결됐어요"를 1초 보여 준 뒤 닫힌다
+        elif kind == "devices" and hasattr(self, "devices_box"):
+            if "error" in result:
+                _clear(self.devices_box)
+                self.devices_box.addWidget(role_label(STATUS_TEXT.get(result["error"], STATUS_TEXT["failed"]), "hint"))
+            else:
+                self._fill_devices(result["devices"])
+        elif kind == "remove":
+            if "error" in result or not result.get("removed"):
+                self._status("그 PC의 기록을 아직 다 받지 못했어요. 잠시 뒤 다시 해 주세요.", error=True)
+            else:
+                self._status("정리했어요.")
+            self.ctl.run_job("devices")
+        elif kind == "disconnect":
+            if "error" in result:
+                self._status(STATUS_TEXT.get(result["error"], STATUS_TEXT["failed"]), error=True)
+                return
+            self.render()

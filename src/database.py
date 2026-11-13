@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -25,7 +26,8 @@ DEFAULT_COLOR = T.DEFAULT_MEMO_COLOR
 USER_SLOTS_KEY = "user_slots"
 PAPER_NOTICE_KEY = "paper_notice_pending"  # 색을 옮긴 뒤 안내를 한 번 띄운다
 _LEGACY_SLOT_KEYS = ("user_slot_1", "user_slot_2", "user_slot_3")
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4  # 4: 메모마다 전역 ID(uid) — PC끼리 동기화할 때 로컬 id는 겹친다
+_PAPER_SCHEMA = 3    # 종이 톤 색 이주가 끝난 버전
 
 # 사용자 지정 색상: #RGB 또는 #RRGGBB hex 코드
 _HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
@@ -88,6 +90,7 @@ class Memo:
     deleted_at: str | None = None
     font_family: str = ""  # 빈 문자열이면 글로벌 default 사용
     font_size: int = 0     # 0이면 글로벌 default 사용
+    uid: str = ""          # 전역 ID (동기화용). 로컬 id는 PC마다 1, 2, 3…이라 겹친다
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Memo":
@@ -103,6 +106,7 @@ class Memo:
             deleted_at=row["deleted_at"] if "deleted_at" in keys else None,
             font_family=(row["font_family"] or "") if "font_family" in keys else "",
             font_size=int(row["font_size"] or 0) if "font_size" in keys else 0,
+            uid=(row["uid"] or "") if "uid" in keys else "",
         )
 
 
@@ -133,7 +137,9 @@ class MemoDatabase:
         self.conn = sqlite3.connect(str(self.db_path))
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
-        self._backed_up = False
+        # 지우거나 고친 내용이 DB 파일 빈 공간에 남지 않게 0으로 덮어쓴다 (동기화와 상관없이)
+        self.conn.execute("PRAGMA secure_delete = ON")
+        self._backed_up: set[str] = set()
         self._init_schema()
         self._migrate()
 
@@ -153,6 +159,7 @@ class MemoDatabase:
                 font_family TEXT NOT NULL DEFAULT '',
                 font_size INTEGER NOT NULL DEFAULT 0,
                 color_before_v2 TEXT DEFAULT NULL,
+                uid TEXT DEFAULT NULL,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -174,12 +181,12 @@ class MemoDatabase:
         )
         self.conn.commit()
 
-    def _backup_db(self) -> None:
-        """마이그레이션 직전 1회만 .bak 백업 생성."""
-        if self._backed_up:
+    def _backup_db(self, suffix: str = ".bak") -> None:
+        """마이그레이션 직전 이름(suffix)마다 1회만 백업 생성."""
+        if suffix in self._backed_up:
             return
-        self._backed_up = True
-        bak = Path(str(self.db_path) + ".bak")
+        self._backed_up.add(suffix)
+        bak = Path(str(self.db_path) + suffix)
         try:
             bak_conn = sqlite3.connect(str(bak))
             with bak_conn:
@@ -221,13 +228,14 @@ class MemoDatabase:
             self.conn.commit()
             print(f"[migrate] memos 테이블에 컬럼 추가: {', '.join(added)}")
         self._migrate_paper_colors()
+        self._migrate_uid()
         self.conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         self.conn.commit()
 
     def _migrate_paper_colors(self) -> None:
         """메모 색을 종이 톤으로 한 번 옮긴다. 이전 값은 color_before_v2에 남긴다."""
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
-        if version >= _SCHEMA_VERSION:
+        if version >= _PAPER_SCHEMA:
             return
         cols = {row[1] for row in self.conn.execute("PRAGMA table_info(memos)").fetchall()}
         rows = self.conn.execute("SELECT id, color FROM memos").fetchall()
@@ -257,6 +265,21 @@ class MemoDatabase:
                     "ON CONFLICT(key) DO UPDATE SET value = '1'",
                     (PAPER_NOTICE_KEY,),
                 )
+
+    def _migrate_uid(self) -> None:
+        """v4: 메모마다 전역 ID(uid). 2.0.x로 되돌렸다가 다시 올리면 2.0.x가 만든
+        메모는 uid가 비어 있고 user_version도 3으로 돌아가 있다. 그래서 버전이 아니라
+        열과 빈 값을 보고, 켤 때마다 빈 uid를 채운다."""
+        cols = {row[1] for row in self.conn.execute("PRAGMA table_info(memos)").fetchall()}
+        with self.conn:
+            if "uid" not in cols:
+                self._backup_db(".bak-v3")  # 2.0.0 이주 백업(.bak)은 덮어쓰지 않는다
+                self.conn.execute("ALTER TABLE memos ADD COLUMN uid TEXT DEFAULT NULL")
+            missing = self.conn.execute("SELECT id FROM memos WHERE uid IS NULL OR uid = ''").fetchall()
+            self.conn.executemany(
+                "UPDATE memos SET uid = ? WHERE id = ?", [(uuid.uuid4().hex, r["id"]) for r in missing]
+            )
+            self.conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_memos_uid ON memos(uid)")
 
     def _paper_color_slots(self) -> str | None:
         """직접 만든 색 슬롯 중 단색만 남긴다. 그라데이션·예전 프리셋 자리는 없앤다 (9장 18).
@@ -317,9 +340,9 @@ class MemoDatabase:
         color = normalize_color(color)
         now = self._now()
         cur = self.conn.execute(
-            "INSERT INTO memos (title, content, color, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?, ?)",
-            (title, content, color, now, now),
+            "INSERT INTO memos (title, content, color, created_at, updated_at, uid)"
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (title, content, color, now, now, uuid.uuid4().hex),
         )
         self.conn.commit()
         return self.get(cur.lastrowid)
@@ -374,6 +397,11 @@ class MemoDatabase:
         """완전 삭제 (hard delete). 휴지통 영구 삭제 / 자동 정리에서 사용."""
         self.conn.execute("DELETE FROM memos WHERE id = ?", (memo_id,))
         self.conn.commit()
+
+    def delete_many(self, memo_ids: list[int]) -> None:
+        """여러 메모를 한 번에 완전 삭제 (휴지통 비우기). 한 트랜잭션이라 수백 개도 금방 끝난다."""
+        with self.conn:
+            self.conn.executemany("DELETE FROM memos WHERE id = ?", [(i,) for i in memo_ids])
 
     def soft_delete(self, memo_id: int) -> None:
         """휴지통으로 이동 (deleted_at 기록)."""

@@ -1,7 +1,7 @@
 """메모 창의 자체 팝업과 떠 있는 카드. SlideMemo-design.md 4.2, 4.4."""
 from __future__ import annotations
 
-from PyQt6.QtCore import QDate, QPropertyAnimation, QPoint, QRectF, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QDate, QPropertyAnimation, QPoint, QRectF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractButton,
@@ -253,10 +253,18 @@ class DatePopup(PopupPanel):
         self.adjustSize()
 
 
+def toast_duration_ms(text: str) -> int:
+    """알려 주는 토스트가 머무는 시간: 최소 4초, 글자마다 0.06초를 더해 최대 10초 (9장 43)."""
+    return max(T.TOAST_MS, min(T.TOAST_MAX_MS, T.TOAST_MS + T.TOAST_MS_PER_CHAR * len(text)))
+
+
 class Toast(QFrame):
-    """창 위쪽 가운데에서 내려오는 안내. 동작 단추는 하나만 둔다 (4.2)."""
+    """창 위쪽 가운데에서 내려오는 안내. 동작 단추는 하나만 둔다 (4.2).
+    sticky=True(확인이 필요한 알림)면 저절로 사라지지 않고 오른쪽에 닫기(×)를 둔다."""
 
     clicked = pyqtSignal()
+    closed = pyqtSignal()   # 닫기(×)를 눌렀다
+    expired = pyqtSignal()  # 알려 주는 토스트가 시간이 다 되어 사라졌다
 
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
@@ -273,25 +281,47 @@ class Toast(QFrame):
         self.action.setCursor(Qt.CursorShape.PointingHandCursor)
         self.action.clicked.connect(self.clicked)
         layout.addWidget(self.action)
+        self.close_btn = QPushButton()
+        self.close_btn.setObjectName("toastClose")
+        self.close_btn.setFixedSize(20, 20)
+        self.close_btn.setIconSize(QSize(16, 16))
+        self.close_btn.setToolTip("닫기")
+        self.close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.close_btn.clicked.connect(self._close)
+        self.close_btn.hide()
+        layout.addWidget(self.close_btn)
+        self.sticky = False
         self._drop = QPropertyAnimation(self, b"pos", self)
         self._drop.setDuration(T.MOTION_FAST_MS)
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
         self.timer.setInterval(T.TOAST_MS)
-        self.timer.timeout.connect(self.hide)
+        self.timer.timeout.connect(self._expire)
+
+    def _expire(self) -> None:
+        self.hide()
+        self.expired.emit()
+
+    def _close(self) -> None:
+        self.hide()
+        self.closed.emit()
 
     def enterEvent(self, _event) -> None:  # noqa: N802
         self.timer.stop()  # 되돌리기를 누르기 전에 사라지지 않게 한다
 
     def leaveEvent(self, _event) -> None:  # noqa: N802
-        if self.isVisible():
+        if self.isVisible() and not self.sticky:
             self.timer.start()
 
-    def show_message(self, text: str, action_text: str, top: int) -> None:
+    def show_message(self, text: str, action_text: str, top: int, *, sticky: bool = False) -> None:
+        self.sticky = sticky
         self.message.setText(text)
         self.action.setText(action_text)
         self.action.setVisible(bool(action_text))
-        action_width = self.action.sizeHint().width() + 16 if action_text else 0
+        self.close_btn.setVisible(sticky)
+        if sticky:
+            self.close_btn.setIcon(QIcon(A.tinted_pixmap("x.svg", T.WHITE, 16)))
+        action_width = (self.action.sizeHint().width() + 16 if action_text else 0) + (36 if sticky else 0)
         room = max(80, self.parentWidget().width() - 24 - 32 - action_width)
         # 글자 폭에 맞추고, 창보다 길 때만 줄바꿈한다
         self.message.setFixedWidth(min(room, self.message.fontMetrics().horizontalAdvance(text) + 2))
@@ -303,7 +333,11 @@ class Toast(QFrame):
         self._drop.setStartValue(QPoint(x, top - 8))
         self._drop.setEndValue(QPoint(x, top))
         self._drop.start()
-        self.timer.start()
+        if sticky:
+            self.timer.stop()  # 확인이 필요한 알림은 [보기]나 닫기(×)를 누를 때까지 남는다
+        else:
+            self.timer.setInterval(toast_duration_ms(text))
+            self.timer.start()
 
     def finish_animation(self) -> None:
         self._drop.setCurrentTime(self._drop.duration())

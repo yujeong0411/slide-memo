@@ -112,7 +112,9 @@ SHADOW: dict[str, tuple[int, int, float]] = {
 MOTION_FAST_MS = 150
 MOTION_BASE_MS = 240
 EASING_BEZIER = (0.4, 0.0, 0.2, 1.0)
-TOAST_MS = 4000
+TOAST_MS = 4000          # 알려 주는 토스트의 최소 시간 (4.2, 9장 43)
+TOAST_MS_PER_CHAR = 60   # 글자마다 더하는 시간
+TOAST_MAX_MS = 10000     # 최대 시간
 
 # 설정 창과 앱이 같은 값을 읽는다 (6.3의 5번)
 TAB_WIDTH_DEFAULT = 40
@@ -120,6 +122,10 @@ TAB_HEIGHT_DEFAULT = 112
 
 # ----- 3. 메모 색 -----
 DARK_MEMO_FACE = "#282828"
+# 어두운 화면의 메모 면 = DARK_MEMO_FACE 위에 그 메모의 띠 색을 7% 섞은 색 (3.1, 9장 37).
+# 글자(DARK fg)와 면 대비가 DARK_MEMO_MIN_CONTRAST 아래로 내려가면 섞는 비율을 1%씩 줄인다(아주 밝은 직접 만든 색).
+DARK_MEMO_BAND_TINT = 0.07
+DARK_MEMO_MIN_CONTRAST = 12.0
 CUSTOM_LIGHT_FACE_L = 0.975
 CUSTOM_FACE_CHROMA_RATIO = 0.15
 CUSTOM_FACE_CHROMA_MAX = 0.022

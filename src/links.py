@@ -5,3 +5,8 @@
 
 BLOG_URL = "https://nursecoder.vercel.app"
 PRIVACY_URL = BLOG_URL + "/tools/slide-memo/privacy"
+
+# 업데이트 확인과 설치 파일을 받는 배포 저장소 (2.1.0부터). 소스 저장소와 나눈다 — RELEASE.md
+UPDATE_REPO = "yujeong0411/slide-memo-releases"
+RELEASES_URL = f"https://github.com/{UPDATE_REPO}/releases"
+SETUP_URL = f"https://github.com/{UPDATE_REPO}/releases/latest/download/SlideMemo-Setup.exe"

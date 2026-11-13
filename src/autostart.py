@@ -146,7 +146,7 @@ _LINUX_DESKTOP_PATH = (
 
 _LINUX_DESKTOP_TEMPLATE = """[Desktop Entry]
 Type=Application
-Name=Slide Memo
+Name=SlideMemo
 Exec={exec_cmd}
 X-GNOME-Autostart-enabled=true
 """
