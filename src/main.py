@@ -234,6 +234,7 @@ class MemoTabButton(QPushButton):
     button_height = MEMO_TAB_HEIGHT  # 클래스 변수: 설정에서 조절 시 갱신
 
     BAND_WIDTH = 4
+    SELECTED_BORDER = 2  # 펼친 탭 테두리 두께 (9장 47)
     TEXT_PADDING = 8  # 글자 줄의 앞뒤 여백
     SIDE_PADDING = 8  # 줄 수 계산에서 빼는 안쪽 여백
     LINE_HEIGHT = T.TYPE["label"][1]
@@ -345,7 +346,13 @@ class MemoTabButton(QPushButton):
         painter.setBrush(Qt.BrushStyle.NoBrush)
         stroke = area.adjusted(0.5, 0.5, -0.5, -0.5)
         if self._selected:
-            painter.drawLine(stroke.bottomLeft(), stroke.bottomRight())
+            # 펼친 탭 테두리 (9장 47): 위·아래·바깥쪽 3면만 2px. 메모 창 쪽은 열어 두어 창과 이어진다.
+            # memo_border는 메모 면 대비 3:1을 맞춘 색이라 밝은·어두운 화면 모두 보인다
+            painter.setPen(QPen(QColor(t["memo_border"]), self.SELECTED_BORDER))
+            b = area.adjusted(1, 1, -1, -1)
+            inner_x, outer_x = (area.left(), b.right()) if side == "right" else (area.right(), b.left())
+            painter.drawPolyline(QPolygonF([QPointF(inner_x, b.top()), QPointF(outer_x, b.top()),
+                                            QPointF(outer_x, b.bottom()), QPointF(inner_x, b.bottom())]))
         else:
             painter.drawPath(_inner_edge_path(stroke, radius, side))
 
