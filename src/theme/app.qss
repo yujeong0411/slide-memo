@@ -364,6 +364,8 @@ QDialog QCheckBox:focus::indicator { border-color: $focus; }
 QDialog QCheckBox::indicator:disabled { background: $bg_muted; border-color: $line_strong; }
 
 /* ----- 슬라이더 ----- */
+/* 손잡이(14 + 테두리 1×2 = 16px 원)가 잘리지 않게 슬라이더 높이를 손잡이보다 크게 둔다 */
+QDialog QSlider { min-height: 18px; }
 QDialog QSlider::groove:horizontal { height: 4px; border-radius: 2px; background: $line_strong; }
 QDialog QSlider::sub-page:horizontal { background: $accent; border-radius: 2px; }
 QDialog QSlider::add-page:horizontal { background: $line_strong; border-radius: 2px; }

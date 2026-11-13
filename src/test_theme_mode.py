@@ -75,4 +75,22 @@ dlg._save_and_accept()
 assert db.get_setting_str(A.THEME_MODE_KEY) == "dark"
 
 A.apply_theme(app, "light")
+
+# 설정 창 슬라이더 손잡이(16px 원)가 슬라이더 안에 다 들어간다 — 15px 높이면 위아래 1px이 잘렸다
+from PyQt6.QtWidgets import QSlider, QStyle, QStyleOptionSlider  # noqa: E402
+
+for _mode in ("light", "dark"):
+    A.apply_theme(app, _mode)
+    _dlg = SD.SettingsDialog(db, win)
+    _dlg.show()
+    app.processEvents()
+    for _s in _dlg.findChildren(QSlider):
+        for _v in (_s.minimum(), _s.maximum()):  # 값은 바꾸지 않는다 (닫을 때 '저장할까요?'가 뜬다)
+            _o = QStyleOptionSlider()
+            _s.initStyleOption(_o)
+            _o.sliderPosition = _o.sliderValue = _v
+            _h = _s.style().subControlRect(QStyle.ComplexControl.CC_Slider, _o, QStyle.SubControl.SC_SliderHandle, _s)
+            assert _s.rect().contains(_h), (_mode, _v, _h, _s.size())
+    _dlg.hide()
+A.apply_theme(app, "light")
 print("theme mode OK")
