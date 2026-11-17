@@ -70,3 +70,11 @@ cd <프로젝트 폴더>
 # 2.1.0만: 지금 저장소에도
 & "C:\Program Files\GitHub CLI\gh.exe" release upload v2.1.0 -R yujeong0411/slide-memo installer\SlideMemo-Setup.exe
 ```
+
+---
+
+## 덮어 설치 시험 (Windows Sandbox, 선택)
+
+- 시험 도구는 `tools\sandbox\`에 있다. 쓰던 버전 설치본은 GitHub 릴리스(예: `slide-memo-releases`의 v2.0.0)에서 받고, 새 설치본은 빌드한 `installer\SlideMemo-Setup.exe`를 쓴다.
+- 저장소 폴더에서 `.\tools\sandbox\make_wsb.ps1 -OldSetup <받은 설치본>`을 실행하면 `build\sandbox\`에 시험 폴더와 `slidememo-test.wsb`가 생긴다. 이 파일을 열면 덮어 설치와 제거를 저절로 시험하고 결과를 `build\sandbox\out\result.txt`에 남긴다(Windows 기능에서 "Windows 샌드박스"가 켜져 있어야 한다).
+esult.txt`에 남긴다(Windows 기능에서 "Windows 샌드박스"가 켜져 있어야 한다).
