@@ -4,7 +4,8 @@
 - 인터넷 접속은 소켓 단계에서 모두 막는다. 동기화는 연결하지 않고, 업데이트 확인도 하지 않는다.
 - 자격 증명 관리자(keyring)는 읽지도 쓰지도 않는다. AI 키 칸에는 가짜 키(DEMO_KEY)를 넣는다.
 - 창은 화면에 띄우지 않고(WA_DontShowOnScreen) Qt로 직접 그려(QWidget.grab) PNG로 저장한다.
-- 크기는 블로그의 지금 그림에 맞춘다: 메모 패널 520×840을 1.5배(780×1260), 설정 창은 1배.
+- 가로·배율은 블로그의 지금 그림에 맞춘다(메모 패널 가로 520을 1.5배 = 780px, 설정 창은 1배).
+  메모 패널 높이는 탭 줄과 본문이 스크롤 없이 들어가는 가장 낮은 높이에 여유를 더해 잰다.
 
 실행 (저장소 폴더에서): uv run python tools/demo/blog_shots.py [출력 폴더]   기본: build/blog-shots
 """
@@ -21,6 +22,8 @@ OUT = Path(sys.argv[1]) if len(sys.argv) > 1 and not sys.argv[1].startswith("--"
 DEMO_KEY = "sk-ant-demo-0000-0000-0000-not-a-real-key"  # 점으로 가려져 보이는 가짜 키
 DESK = "#ECEEF2"  # 지금 블로그 그림의 창 바깥 색
 PANEL = ("card", "dark-mode", "search", "ai-toolbar")
+DESK_DARK = "#1F1F1F"  # 어두운 화면의 바깥 색 = 앱 어두운 토큰 bg_sunken (탭 아래 빈 자리가 밝게 튀지 않게)
+MEASURE_H, MARGIN_H = 840, 16  # 높이를 잴 때의 창 높이, 잰 높이에 더하는 여유 (1배 기준)
 FONT_PT = 12  # 본문 글자 크기 = 앱 기본값 (지금 블로그 그림의 줄 간격 53.5px@1.5배와 맞다)
 
 
@@ -116,7 +119,7 @@ MEMOS = [  # 탭 순서대로 (고정 → 수정일 최근순)
 TRASH = [("지난 장보기", "gray", "<p>휴지통 시연용 메모</p>"), ("빈 메모", "gray", "<p>휴지통 시연용 메모 2</p>")]
 
 
-def seed(db, M, theme: str, ai: bool) -> dict[str, int]:
+def seed(db, M, theme: str, ai: bool, height: int = MEASURE_H) -> dict[str, int]:
     from PyQt6.QtGui import QTextDocument
 
     import memo_document
@@ -149,7 +152,7 @@ def seed(db, M, theme: str, ai: bool) -> dict[str, int]:
         db.set_setting_str(key, value)
     for key, value in {
         M.GUIDE_BAR_KEY: 1, M.GUIDE_BODY_KEY: 1, "height_ratio_v2_migrated": 1, "window_width": 520,
-        "window_height": 840, "window_y": 0, "side": 0, "sort_mode": 0, M.PAPER_NOTICE_KEY: 0,
+        "window_height": height, "window_y": 0, "side": 0, "sort_mode": 0, M.PAPER_NOTICE_KEY: 0,
         "app_font_size": FONT_PT,
     }.items():
         db.set_setting_int(key, value)
@@ -192,12 +195,13 @@ def wait(ms: int = 400) -> None:
     QTest.qWait(ms)
 
 
-def on_desk(pm):
-    """반투명 창을 지금 블로그 그림처럼 바깥 색(DESK) 위에 얹는다. 알파 없는 RGB 그림."""
+def on_desk(pm, desk: str = DESK):
+    """반투명 창을 바깥 색 위에 얹는다. 알파 없는 RGB 그림.
+    탭 아래 빈 자리도 이 색으로 보여서, 어두운 화면은 어두운 바깥 색(DESK_DARK)을 쓴다."""
     from PyQt6.QtGui import QColor, QImage, QPainter
 
     img = QImage(pm.size(), QImage.Format.Format_RGB32)
-    img.fill(QColor(DESK))
+    img.fill(QColor(desk))
     p = QPainter(img)
     pm2 = pm.copy()
     pm2.setDevicePixelRatio(1.0)
@@ -221,48 +225,80 @@ def save_png(img, name: str) -> None:
 
 
 def panel_shots() -> None:
-    from PyQt6.QtWidgets import QApplication
+    import math
 
     tmp, M, app = setup_app()
+    # 1) 높은 창으로 띄워, 탭 줄과 본문(+AI 단추 줄)에 남는 높이를 잰다
+    need = 0
     for name in PANEL:
-        db_path = tmp / f"{name}.db"
-        db = M.MemoDatabase(db_path)
-        theme = "dark" if name == "dark-mode" else "light"
-        ids = seed(db, M, theme, ai=(name == "ai-toolbar"))
-        from theme import apply as A
-
-        A.request_color_scheme(theme)
-        A.apply_theme(app, A.resolve_mode(theme))
-        win = M.SlideMemoWindow(db)
-        win.show()
-        open_title = {"card": "주간 회의 준비", "search": "주간 회의 준비",
-                      "dark-mode": "여행 준비", "ai-toolbar": "김치찌개 레시피"}[name]
-        win.select_memo(ids[open_title])
-        win.expand()
-        wait(600)
-        if name == "search":
-            win.search_input.setFocus()
-            win.search_input.setText("회의")
-            win.search_input.end(False)
-        else:
-            win.setFocus()  # 검색 칸·본문에서 포커스를 빼 커서가 보이지 않게
-        wait(600)
+        win, db = open_panel(tmp, M, app, name, MEASURE_H)
+        tabs = win.tab_scroll
+        tab_slack = tabs.viewport().height() - tabs.widget().sizeHint().height()
+        doc_h = math.ceil(win.editor.document().size().height())
+        body_slack = win.editor.viewport().height() - doc_h
+        need = max(need, MEASURE_H - min(tab_slack, body_slack))
+        close_panel(win, db)
+    # 2) 가장 많이 필요한 높이 + 여유. 1.5배에서 픽셀이 딱 떨어지게 짝수로
+    height = need + MARGIN_H
+    height += height % 2
+    print(f"메모 패널 높이: 필요 {need} + 여유 {MARGIN_H} → {height} (그림 {int(height * 1.5)}px)")
+    for name in PANEL:
+        win, db = open_panel(tmp, M, app, name, height)
         check_panel(win, name)
-        save_png(on_desk(win.grab()), name)
-        win._quitting = True
-        win.close()
-        db.close()
-        QApplication.processEvents()
+        save_png(on_desk(win.grab(), DESK_DARK if name == "dark-mode" else DESK), name)
+        close_panel(win, db)
+
+
+def open_panel(tmp, M, app, name: str, height: int):
+    """시연용 DB를 새로 만들어 이 그림의 메모를 연 창을 띄운다."""
+    db = M.MemoDatabase(tmp / f"{name}-{height}.db")
+    theme = "dark" if name == "dark-mode" else "light"
+    ids = seed(db, M, theme, ai=(name == "ai-toolbar"), height=height)
+    from theme import apply as A
+
+    A.request_color_scheme(theme)
+    A.apply_theme(app, A.resolve_mode(theme))
+    win = M.SlideMemoWindow(db)
+    win.show()
+    open_title = {"card": "주간 회의 준비", "search": "주간 회의 준비",
+                  "dark-mode": "여행 준비", "ai-toolbar": "김치찌개 레시피"}[name]
+    win.select_memo(ids[open_title])
+    win.expand()
+    wait(600)
+    if name == "search":
+        win.search_input.setFocus()
+        win.search_input.setText("회의")
+        win.search_input.end(False)
+    else:
+        win.setFocus()  # 검색 칸·본문에서 포커스를 빼 커서가 보이지 않게
+    wait(600)
+    return win, db
+
+
+def close_panel(win, db) -> None:
+    from PyQt6.QtWidgets import QApplication
+
+    win._quitting = True
+    win.close()
+    db.close()
+    QApplication.processEvents()
 
 
 def check_panel(win, name: str) -> None:
     """탭 제목이 잘리거나 탭 바가 스크롤되면 멈춘다 (맞추지 않고 알린다)."""
     from PyQt6.QtWidgets import QAbstractScrollArea
 
-    for area in win.findChildren(QAbstractScrollArea):
+    for area in win.findChildren(QAbstractScrollArea):  # 탭 줄과 본문 모두
         bar = area.verticalScrollBar()
-        if area is not win.editor and bar.maximum() > 0 and area.isVisible():
+        if bar.maximum() > 0 and area.isVisible():
             raise SystemExit(f"{name}: {area.objectName() or type(area).__name__}이(가) 스크롤돼요 ({bar.maximum()})")
+    if name == "card":  # 블로그는 위쪽 500px만 보여 줄 때가 있다: 검색 칸·제목·툴바·본문 첫 줄이 그 안에
+        from PyQt6.QtGui import QTextCursor
+
+        first = win.editor.cursorRect(QTextCursor(win.editor.document()))
+        bottom = win.editor.viewport().mapTo(win, first.bottomLeft()).y() * 1.5
+        if bottom > 500:
+            raise SystemExit(f"card: 본문 첫 줄이 위쪽 500px 밖이에요 ({bottom:.0f}px)")
     if name == "ai-toolbar":
         bar = win._ai_bar
         assert bar.isVisible(), "AI 단추 줄이 안 보여요"
