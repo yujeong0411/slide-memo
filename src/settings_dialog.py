@@ -74,6 +74,19 @@ class _TestWorker(QThread):
         self.result_ready.emit(ok, msg)
 
 
+class _OllamaListWorker(QThread):
+    """내 PC의 Ollama가 받아 둔 모델을 뒤에서 받아 온다 (최대 1.5초). 그동안 설정 창이 멈추지 않는다."""
+
+    done = pyqtSignal(object)  # list[str] | None
+
+    def run(self) -> None:
+        self.done.emit(ollama_models())
+
+
+# 설정 창이 먼저 닫혀도 스레드가 끝날 때까지 붙잡아 둔다 (돌고 있는 QThread가 지워지면 앱이 죽는다)
+_ollama_workers: set[_OllamaListWorker] = set()
+
+
 def _form() -> QFormLayout:
     form = QFormLayout()
     form.setContentsMargins(0, 0, 0, 0)
@@ -507,27 +520,45 @@ class SettingsDialog(QDialog):
         # 모델 콤보: 추천 목록 + 직접 입력. current_model은 저장된(=이 제공자의) 모델이고,
         # 제공자를 바꿀 때는 빈 값으로 와서 그 제공자의 기본 모델이 된다 (_on_provider_changed)
         default = PROVIDERS.get(provider, {}).get("default_model", "")
-        models = PROVIDERS.get(provider, {}).get("models", [])
-        hint = "목록에 없는 새 모델도 이름을 직접 넣으면 쓸 수 있어요."
+        self._ollama_req = None  # 이전에 물은 Ollama 결과는 버린다
         if provider == "ollama":
-            # ponytail: 화면 스레드에서 localhost만 묻는다 (최대 1.5초). 느려지면 QThread로
-            local = ollama_models()
-            if local is None:
-                hint = "내 PC의 Ollama가 응답하지 않아요. Ollama를 켜면 받아 둔 모델이 여기에 나와요."
-            elif not local:
-                hint = "Ollama에 받아 둔 모델이 없어요. 모델을 받은 뒤 다시 열어 주세요."
-            else:
-                hint = "내 PC의 Ollama에 받아 둔 모델이에요. 이름을 직접 넣어도 돼요."
-                models, default = local, local[0]
-        self._model_hint_lbl.setText(hint)
+            # 받아 오는 동안은 추천 목록을 보여 주고, 결과가 오면 _on_ollama_models가 바꿔 넣는다
+            self._model_hint_lbl.setText("내 PC의 Ollama에 받아 둔 모델을 찾는 중이에요.")
+            worker = _OllamaListWorker()
+            _ollama_workers.add(worker)
+            worker.done.connect(self._on_ollama_models)
+            worker.finished.connect(lambda w=worker: (_ollama_workers.discard(w), w.deleteLater()))
+            self._ollama_req = worker
+            worker.start()
+        else:
+            self._model_hint_lbl.setText("목록에 없는 새 모델도 이름을 직접 넣으면 쓸 수 있어요.")
+        # 저장된 모델이 목록에 없어도(예전 이름·직접 넣은 이름) 칸에 그대로 둔다.
+        # 0번으로 떨어지면 고른 적 없는 모델로 조용히 바뀌어 요금까지 달라진다
+        self._fill_models(PROVIDERS.get(provider, {}).get("models", []), current_model or default)
+
+    def _fill_models(self, models: list[str], text: str) -> None:
         self._model_combo.blockSignals(True)
         self._model_combo.clear()
         for m in models:
             self._model_combo.addItem(m, m)
-        # 저장된 모델이 목록에 없어도(예전 이름·직접 넣은 이름) 칸에 그대로 둔다.
-        # 0번으로 떨어지면 고른 적 없는 모델로 조용히 바뀌어 요금까지 달라진다
-        self._model_combo.setEditText(current_model or default)
+        self._model_combo.setEditText(text)
         self._model_combo.blockSignals(False)
+        self._model_shown = text  # 사용자가 칸을 고쳤는지 알아보려고
+
+    def _on_ollama_models(self, local: list[str] | None) -> None:
+        if self.sender() is not self._ollama_req:  # 그새 제공자를 바꿨거나 다시 물었다
+            return
+        if local is None:
+            self._model_hint_lbl.setText("내 PC의 Ollama가 응답하지 않아요. Ollama를 켜면 받아 둔 모델이 여기에 나와요.")
+            return
+        if not local:
+            self._model_hint_lbl.setText("Ollama에 받아 둔 모델이 없어요. 모델을 받은 뒤 다시 열어 주세요.")
+            return
+        self._model_hint_lbl.setText("내 PC의 Ollama에 받아 둔 모델이에요. 이름을 직접 넣어도 돼요.")
+        text = self._model_name()
+        # 받아 오는 동안 사용자가 칸을 고쳤거나 저장된 모델이 받아 둔 목록에 있으면 그대로 둔다
+        keep = text != self._model_shown or text in local or text != PROVIDERS["ollama"]["default_model"]
+        self._fill_models(local, text if keep else local[0])
 
     def _model_name(self) -> str:
         """모델 칸의 값 (목록에서 고른 것이든 직접 넣은 것이든). 앞뒤 빈칸은 지운다."""

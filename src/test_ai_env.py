@@ -159,13 +159,33 @@ def demo():
             assert dlg._model_name() == AP.PROVIDERS[p]["default_model"], (p, dlg._model_name())
             assert dlg._model_combo.findText("claude-opus-5") == -1, "다른 제공자의 모델이 남았다"
             assert not dlg._key_edit.isHidden() and dlg._key_none_lbl.isHidden()
+        def ollama_reply() -> None:
+            """뒤에서 받아 온 목록이 화면에 들어올 때까지 기다린다."""
+            dlg._ollama_req.wait()
+            app.processEvents()
+
         dlg._provider_combo.setCurrentIndex(dlg._provider_combo.findData("ollama"))
+        assert "찾는 중" in dlg._model_hint_lbl.text(), "받아 오는 동안 창이 기다리면 안 된다"
+        ollama_reply()
         assert dlg._model_name() == "ollama/mine:latest", dlg._model_name()
         assert dlg._key_edit.isHidden() and dlg._eye_btn.isHidden(), "Ollama인데 빈 키 칸이 보인다"
         assert not dlg._key_none_lbl.isHidden() and dlg._test_btn.text() == "연결 확인"
-        SD.ollama_models = lambda: None
+        # 받아 오는 동안 사용자가 고친 이름은 덮어쓰지 않는다
         dlg._provider_combo.setCurrentIndex(dlg._provider_combo.findData("anthropic"))
         dlg._provider_combo.setCurrentIndex(dlg._provider_combo.findData("ollama"))
+        dlg._model_combo.setEditText("ollama/typed")
+        ollama_reply()
+        assert dlg._model_name() == "ollama/typed", dlg._model_name()
+        # 늦게 온 옛 결과는 버린다 (그새 다른 제공자로 바꿨다)
+        dlg._provider_combo.setCurrentIndex(dlg._provider_combo.findData("ollama"))
+        old = dlg._ollama_req
+        dlg._provider_combo.setCurrentIndex(dlg._provider_combo.findData("openai"))
+        old.wait()
+        app.processEvents()
+        assert dlg._model_name() == AP.PROVIDERS["openai"]["default_model"], dlg._model_name()
+        SD.ollama_models = lambda: None
+        dlg._provider_combo.setCurrentIndex(dlg._provider_combo.findData("ollama"))
+        ollama_reply()
         assert "응답하지 않아요" in dlg._model_hint_lbl.text() and dlg._model_name() == "ollama/llama3.2"
         dlg._provider_combo.setCurrentIndex(dlg._provider_combo.findData("anthropic"))
         dlg._model_combo.setEditText("  claude-new-model-10  ")
