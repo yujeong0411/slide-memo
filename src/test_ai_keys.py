@@ -69,8 +69,8 @@ def demo():
         # 5) 목록에서 빠진 구버전 모델을 쓰고 있었으면 그 선택이 유지돼야 한다
         db.set_setting_str("ai_model", "claude-sonnet-4-6")
         dlg = _dialog(db, "anthropic")
-        assert dlg._model_combo.currentData() == "claude-sonnet-4-6", (
-            f"고른 모델이 {dlg._model_combo.currentData()}로 바뀌었다"
+        assert dlg._model_name() == "claude-sonnet-4-6", (
+            f"고른 모델이 {dlg._model_name()}로 바뀌었다"
         )
         dlg._save_and_accept()
         assert db.get_setting_str("ai_model") == "claude-sonnet-4-6"
@@ -78,7 +78,7 @@ def demo():
         # 6) 저장된 모델이 아예 없으면 기본 모델(=가장 싼 쪽)로
         db.set_setting_str("ai_model", "")
         dlg = _dialog(db, "anthropic")
-        assert dlg._model_combo.currentData() == "claude-haiku-4-5"
+        assert dlg._model_name() == "claude-haiku-5-5"
 
         db.close()
     print("ai keys OK")
