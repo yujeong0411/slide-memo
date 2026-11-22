@@ -4630,7 +4630,7 @@ def _set_windows_app_user_model_id() -> None:
         pass  # 구버전 Windows 등 — 아이콘이 기본값으로 떨어지더라도 앱은 정상 동작
 
 
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.1.1"
 _GITHUB_REPO = links.UPDATE_REPO  # 배포 저장소 (links.py)
 
 
@@ -4689,6 +4689,10 @@ WHATS_NEW_KEY = "seen_whatsnew_version"
 # 업데이트 후 첫 실행에 보여줄 변경사항. 새 버전마다 맨 위에 한 덩어리씩 쌓는다.
 # (팝업으로 따로 안내한 색 팔레트 개편(1.1.1)은 _show_palette_notice가 담당)
 WHATS_NEW: list[tuple[str, list[str]]] = [
+    ("2.1.1", [
+        "AI 기능은 앱 설정에 넣은 키로만 동작해요. 키가 없으면 안내를 보여 줘요.",
+        "메모를 영구 삭제하면 붙어 있던 녹음 파일도 함께 지워요.",
+    ]),
     ("2.1.0", [
         "여러 PC에서 메모를 맞출 수 있어요. 설정 → 동기화에서 Google 계정을 연결하면 돼요."
         " 메모는 내 Google Drive의 앱 전용 공간에만 저장돼요.",
