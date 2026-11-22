@@ -2715,7 +2715,11 @@ class SlideMemoWindow(QWidget):
         # (커스텀 finished 시그널이 QThread.finished를 가려서 그쪽엔 못 붙인다)
         if self._ai_worker is not None:
             self._ai_worker.deleteLater()
-        self._ai_worker = workers.keep(AIWorker(feature_key, provider, model, text, parent=self))
+        from ai_provider import no_effort_models
+        self._ai_worker = workers.keep(AIWorker(
+            feature_key, provider, model, text, parent=self,
+            send_effort=model not in no_effort_models(self.db),
+        ))
         self._ai_worker.finished.connect(
             lambda k, r, t: self._on_ai_finished(k, r, t, show_preview)
         )
@@ -2730,9 +2734,17 @@ class SlideMemoWindow(QWidget):
         self._ai_status_lbl.hide()
         self._show_toast("AI 작업을 취소했어요.")
 
+    def _remember_ai_effort(self) -> None:
+        """모델이 생각 수준 값을 거절했으면 기억해서 다음부터는 처음부터 뺀다 (DB는 화면 스레드에서만)."""
+        worker = self._ai_worker
+        if worker is not None and worker.effort_rejected:
+            from ai_provider import remember_no_effort
+            remember_no_effort(self.db, worker._model)
+
     def _on_ai_finished(self, feature_key: str, result: str, tokens: int, show_preview: bool) -> None:
         self._ai_pending = None
         self._ai_status_lbl.hide()
+        self._remember_ai_effort()
 
         # 토큰 사용량 누적
         # get_setting_int는 값이 깨졌을 때 기본값으로 떨어진다. 문자열로 읽어
@@ -2748,6 +2760,7 @@ class SlideMemoWindow(QWidget):
     def _on_ai_error(self, feature_key: str, msg: str) -> None:
         self._ai_pending = None
         self._ai_status_lbl.hide()
+        self._remember_ai_effort()
         self._show_toast(f"AI가 답하지 못했어요: {msg}")
 
     def _show_ai_preview(self, feature_key: str, result: str) -> None:

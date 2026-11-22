@@ -79,13 +79,22 @@ class AIWorker(QThread):
         model: str,
         text: str,
         parent=None,
+        *,
+        send_effort: bool = True,
     ) -> None:
         super().__init__(parent)
+        self._send_effort = send_effort
+        self._ai = None
         self._feature_key = feature_key
         self._provider = provider
         self._model = model
         self._text = text
         self._cancelled = False
+
+    @property
+    def effort_rejected(self) -> bool:
+        """모델이 생각 수준 값을 거절했다 → 화면 스레드가 기억한다. 요청하는 순간 정해져 결과 신호보다 먼저다."""
+        return self._ai is not None and self._ai.effort_rejected
 
     def cancel(self) -> None:
         self._cancelled = True
@@ -102,7 +111,7 @@ class AIWorker(QThread):
 
         litellm = _litellm()
         api_key = load_api_key(self._provider)
-        ai = AIProvider(self._provider, self._model, api_key)
+        ai = self._ai = AIProvider(self._provider, self._model, api_key, send_effort=self._send_effort)
 
         user_msg = feature["user_template"].replace("{{text}}", self._text)
 
