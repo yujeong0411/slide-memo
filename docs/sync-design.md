@@ -265,7 +265,7 @@ PC마다 따로 날짜를 세면 한 PC에서 되살린 메모를 다른 PC가 �
 | 메모의 제목·본문·색·글꼴·고정·휴지통 상태·만든 시각 | 이전 버전(`memo_versions`), `color_before_v2` |
 | 이미지 | 바 방향(`side`), 바 너비(`tab_width`), 창 위치·크기(`window_y`, `window_width`, `window_height`, `memo_tab_height`), 로고 단추 위치(`edge_button_y`) |
 | 사용자 지정 색(`user_slots`) | 화면 모드(`theme_mode`), 투명도(`window_opacity`), 앱 글꼴(`app_font_family`, `app_font_size`), 표시 방식(`display_mode`), 정렬(`sort_mode`) |
-| | AI 설정 전부(`ai_*`), AI 키(keyring `memo_slide_ai`), 녹음 설정(`recording_*`), 녹음 파일 |
+| | AI 설정 전부(`ai_*`), AI 키(keyring `memo_slide_ai`), 2.1.x 이하에서 만든 녹음 파일(`audio/`, 녹음 기능은 2.2.0에서 뺌) |
 | | 안내·이주 표시(`guide_*`, `seen_whatsnew_version`, `paper_notice_pending`, `height_ratio_v2_migrated`), 자동 실행 |
 
 - 동기화하지 않는 것은 막는 방식이 아니라 **허용 목록**으로 관리한다. 새 설정을 추가해도 자동으로 올라가지 않게 하기 위해서다.

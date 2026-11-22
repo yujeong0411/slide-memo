@@ -60,14 +60,13 @@ QLabel#trashBadge {
     padding: 0 4px;
 }
 
-/* ----- 떠 있는 카드: 배너, 녹음 줄, AI 진행 ----- */
+/* ----- 떠 있는 카드: 배너, AI 진행 ----- */
 QFrame#floatCard {
     background: $bg_raised;
     border: 1px solid $line;
     border-radius: ${r_control}px;
 }
 QFrame#floatCard QLabel { color: $fg_secondary; background: transparent; }
-QLabel#recDot { background: $danger; border-radius: 4px; }
 QFrame#toast { background: $contrast; border: none; border-radius: ${r_control}px; }
 QFrame#toast QLabel { color: $white; background: transparent; }
 QPushButton#toastAction {
