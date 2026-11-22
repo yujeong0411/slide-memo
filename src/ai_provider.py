@@ -16,14 +16,24 @@ import keyring.errors
 
 def _litellm():
     """LiteLLM은 무겁고, 불러올 때 인터넷(GitHub)에서 모델 가격표를 받으려 한다.
-    AI 기능을 처음 쓸 때만 불러오고, 가격표는 설치본 안의 것을 쓴다."""
-    os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+    AI 기능을 처음 쓸 때만 불러오고, 가격표는 설치본 안의 것을 쓴다.
+
+    PC에 남은 설정이 요청을 다른 곳으로 돌리지 못하게 막는다 (개인정보처리방침:
+    직접 넣은 키로, 제공자에게만). 키와 주소는 _build_kwargs가 늘 직접 넘긴다.
+    """
+    os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] = "True"  # 가격표를 받으러 나가지 않기
+    os.environ["LITELLM_MODE"] = "PRODUCTION"  # 현재 폴더의 .env를 읽지 않기
+    for name in _BLOCKED_ENV:
+        os.environ.pop(name, None)
     import litellm
 
     litellm.suppress_debug_info = True
     litellm.set_verbose = False
     return litellm
 
+
+# 모든 요청을 LiteLLM 프록시로 돌리기, 인증서 확인 끄기, 추적 도구 켜기
+_BLOCKED_ENV = ("USE_LITELLM_PROXY", "SSL_VERIFY", "USE_DDTRACE", "USE_DDPROFILER")
 
 KEYRING_SERVICE = "memo_slide_ai"
 
@@ -35,6 +45,7 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "default_model": "claude-haiku-4-5",
         "key_format": "sk-ant-...",
         "needs_key": True,
+        "api_base": "https://api.anthropic.com",
     },
     "openai": {
         "name": "OpenAI",
@@ -42,6 +53,7 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "default_model": "gpt-4o-mini",
         "key_format": "sk-...",
         "needs_key": True,
+        "api_base": "https://api.openai.com/v1",
     },
     "gemini": {
         "name": "Google Gemini",
@@ -49,6 +61,7 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         "default_model": "gemini/gemini-2.5-flash",
         "key_format": "AIza...",
         "needs_key": True,
+        "api_base": "https://generativelanguage.googleapis.com/v1beta",
     },
     "ollama": {
         "name": "Ollama (로컬)",
@@ -102,6 +115,10 @@ def delete_api_key(provider: str) -> None:
 
 # ----- AIProvider 클래스 -----
 
+class MissingKeyError(Exception):
+    """앱에 저장된 키가 없다. 요청을 보내지 않는다."""
+
+
 class AIProvider:
     def __init__(
         self,
@@ -115,11 +132,15 @@ class AIProvider:
         self._info = PROVIDERS.get(provider, {})
 
     def _build_kwargs(self, max_tokens: int) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {"model": self.model, "max_tokens": max_tokens}
-        if self._info.get("needs_key") and self.api_key:
+        # 키와 주소를 늘 직접 넘긴다. 빠뜨리면 litellm이 환경 변수(ANTHROPIC_API_KEY,
+        # OPENAI_BASE_URL 등)에서 찾아 쓴다.
+        kwargs: dict[str, Any] = {
+            "model": self.model, "max_tokens": max_tokens, "api_base": self._info["api_base"],
+        }
+        if self._info.get("needs_key"):
+            if not self.api_key:
+                raise MissingKeyError("API 키를 넣어 주세요.")
             kwargs["api_key"] = self.api_key
-        if "api_base" in self._info:
-            kwargs["api_base"] = self._info["api_base"]
         return kwargs
 
     def call(
@@ -149,6 +170,8 @@ class AIProvider:
             if text.strip():
                 return True, f"연결됐어요. ({elapsed:.1f}초)"
             return False, "✗ 응답이 비어 있습니다"
+        except MissingKeyError as e:
+            return False, f"✗ {e}"
         except litellm.AuthenticationError:
             return False, "✗ 인증 실패: API 키를 확인하세요"
         except litellm.APIConnectionError:

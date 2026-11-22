@@ -2725,10 +2725,13 @@ class SlideMemoWindow(QWidget):
             self._show_toast("다듬을 글이 없어요. 글을 먼저 적어 주세요.")
             return
 
+        from ai_provider import PROVIDERS, load_api_key
         provider = self.db.get_setting_str("ai_provider", "anthropic")
+        if PROVIDERS.get(provider, {}).get("needs_key", True) and not load_api_key(provider):
+            self._show_toast("AI 키가 없어요. 설정 > AI에서 넣어 주세요.")
+            return
         model = self.db.get_setting_str("ai_model", "")
         if not model:
-            from ai_provider import PROVIDERS
             model = PROVIDERS.get(provider, {}).get("default_model", "")
 
         show_preview = self.db.get_setting_str("ai_show_preview", "0") == "1"
