@@ -36,35 +36,38 @@ def _litellm():
 _BLOCKED_ENV = ("USE_LITELLM_PROXY", "SSL_VERIFY", "USE_DDTRACE", "USE_DDPROFILER")
 
 KEYRING_SERVICE = "memo_slide_ai"
+MIN_CLOUD_MAX_TOKENS = 2048  # 클라우드 제공자의 응답 길이 한도 최소값 (_build_kwargs)
 
 PROVIDERS: dict[str, dict[str, Any]] = {
     "anthropic": {
         "name": "Anthropic",
-        "models": ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"],
-        # 기본값은 haiku 유지 — 사용자가 자기 키로 결제하므로 가장 싼 쪽에서 시작.
-        "default_model": "claude-haiku-4-5",
+        # models는 추천 목록이다. 설정에서 다른 이름을 직접 넣어도 된다 (새 모델이 나와도 앱 업데이트 없이).
+        "models": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+        # 사용자가 자기 키로 결제하므로 기본값은 가장 싼 쪽 (2026-11 가격표: Haiku 5.5 $0.10/$0.50)
+        "default_model": "claude-haiku-5-5",
         "key_format": "sk-ant-...",
         "needs_key": True,
         "api_base": "https://api.anthropic.com",
     },
     "openai": {
         "name": "OpenAI",
-        "models": ["gpt-4.1", "gpt-4o", "gpt-4o-mini", "o3-mini"],
-        "default_model": "gpt-4o-mini",
+        "models": ["gpt-6-luna", "gpt-5.6-sol"],
+        "default_model": "gpt-6-luna",  # 2026-11 가격표: $0.10/$0.50 (gpt-5.6-sol은 $4/$20)
         "key_format": "sk-...",
         "needs_key": True,
         "api_base": "https://api.openai.com/v1",
     },
     "gemini": {
         "name": "Google Gemini",
-        "models": ["gemini/gemini-2.5-pro", "gemini/gemini-2.5-flash"],
-        "default_model": "gemini/gemini-2.5-flash",
+        "models": ["gemini/gemini-3.8-flash", "gemini/gemini-3.5-flash-lite"],
+        "default_model": "gemini/gemini-3.5-flash-lite",
         "key_format": "AIza...",
         "needs_key": True,
         "api_base": "https://generativelanguage.googleapis.com/v1beta",
     },
     "ollama": {
         "name": "Ollama (로컬)",
+        # 설정 화면은 내 PC의 Ollama가 받아 둔 모델을 먼저 보여 준다 (ollama_models). 이건 Ollama가 꺼져 있을 때의 추천
         "models": ["ollama/llama3.2", "ollama/qwen2.5", "ollama/gemma2"],
         "default_model": "ollama/llama3.2",
         "key_format": "",
@@ -84,7 +87,7 @@ AI_KEY_SHOW_PREVIEW = "ai_show_preview"
 AI_DEFAULTS: dict[str, str] = {
     AI_KEY_ENABLED: "0",
     AI_KEY_PROVIDER: "anthropic",
-    AI_KEY_MODEL: "claude-haiku-4-5",
+    AI_KEY_MODEL: PROVIDERS["anthropic"]["default_model"],
     AI_KEY_USAGE_TOKENS: "0",
     AI_KEY_USAGE_RESET: "",
     AI_KEY_SHOW_PREVIEW: "0",
@@ -113,6 +116,23 @@ def delete_api_key(provider: str) -> None:
         pass
 
 
+# ----- 내 PC의 Ollama -----
+
+def ollama_models(timeout: float = 1.5) -> list[str] | None:
+    """내 PC의 Ollama가 받아 둔 모델 이름 (ollama/이름). 꺼져 있거나 없으면 None.
+    주소는 PROVIDERS의 localhost로 고정하고, 프록시 설정을 거치지 않는다 (이 PC 밖으로 나가지 않기)."""
+    import json
+    import urllib.request
+
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        with opener.open(PROVIDERS["ollama"]["api_base"] + "/api/tags", timeout=timeout) as resp:
+            data = json.loads(resp.read())
+    except Exception:
+        return None
+    return [f"ollama/{m['name']}" for m in data.get("models", []) if m.get("name")]
+
+
 # ----- AIProvider 클래스 -----
 
 class MissingKeyError(Exception):
@@ -134,9 +154,17 @@ class AIProvider:
     def _build_kwargs(self, max_tokens: int) -> dict[str, Any]:
         # 키와 주소를 늘 직접 넘긴다. 빠뜨리면 litellm이 환경 변수(ANTHROPIC_API_KEY,
         # OPENAI_BASE_URL 등)에서 찾아 쓴다.
+        # 제공자도 직접 넘긴다. 모델 이름만 주면 litellm이 설치본 안의 모델 목록에서 제공자를 찾는데,
+        # 목록에 없는 새 모델(claude-opus-5 등)은 "LLM Provider NOT provided"로 실패한다.
         kwargs: dict[str, Any] = {
-            "model": self.model, "max_tokens": max_tokens, "api_base": self._info["api_base"],
+            "model": self.model, "custom_llm_provider": self.provider, "api_base": self._info["api_base"],
         }
+        if self.provider != "ollama":
+            # 새 모델은 생각(thinking·reasoning)에 쓴 토큰도 이 한도에 들어간다. 너무 작으면 빈 응답이 온다.
+            # 쓴 만큼만 요금이 나가서 한도를 올려도 비용은 늘지 않는다
+            max_tokens = max(max_tokens, MIN_CLOUD_MAX_TOKENS)
+        # OpenAI 추론 모델은 max_tokens를 받지 않는다. litellm은 목록에 없는 모델에 max_tokens를 보낸다
+        kwargs["max_completion_tokens" if self.provider == "openai" else "max_tokens"] = max_tokens
         if self._info.get("needs_key"):
             if not self.api_key:
                 raise MissingKeyError("API 키를 넣어 주세요.")
@@ -161,7 +189,12 @@ class AIProvider:
         return text, int(tokens)
 
     def test_connection(self) -> tuple[bool, str]:
-        """(성공 여부, 메시지) 반환. 실제 짧은 호출로 확인."""
+        """(성공 여부, 메시지) 반환. 실제 짧은 호출로 확인. Ollama는 내 PC의 Ollama가 응답하는지만 본다."""
+        if self.provider == "ollama":
+            models = ollama_models()
+            if models is None:
+                return False, "✗ 내 PC의 Ollama가 응답하지 않아요. Ollama를 켜 주세요"
+            return True, f"내 PC의 Ollama가 응답해요. (받아 둔 모델 {len(models)}개)"
         litellm = _litellm()
         start = time.time()
         try:

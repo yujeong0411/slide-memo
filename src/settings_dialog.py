@@ -34,6 +34,7 @@ from ai_provider import (
     AIProvider,
     delete_api_key,
     load_api_key,
+    ollama_models,
     save_api_key,
 )
 from database import MemoDatabase
@@ -181,7 +182,7 @@ class SettingsDialog(QDialog):
             self._display_mode_combo.currentData(), self._tab_width_slider.value(),
             self._memo_tab_height_slider.value(), self._opacity_slider.value(),
             self._autostart_chk.isChecked(), self._ai_enabled_chk.isChecked(),
-            self._provider_combo.currentData(), self._model_combo.currentData(),
+            self._provider_combo.currentData(), self._model_name(),
             self._key_edit.text().strip(), self._preview_chk.isChecked(),
         )
 
@@ -313,6 +314,10 @@ class SettingsDialog(QDialog):
         row.setSpacing(8)
         row.addWidget(edit, 1)
         row.addWidget(eye)
+        # 키가 필요 없는 제공자(Ollama)일 때 키 칸 대신 보인다
+        self._key_none_lbl = role_label("필요 없어요 (내 PC에서 동작해요)", "hint")
+        self._key_none_lbl.hide()
+        row.addWidget(self._key_none_lbl, 1)
         row.addWidget(test)
         return row, eye, test
 
@@ -349,8 +354,14 @@ class SettingsDialog(QDialog):
         self._key_help_lbl.linkActivated.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
         form.addRow("", self._key_help_lbl)
 
+        # 목록은 추천이다. 새 모델이 나와도 앱 업데이트 없이 쓸 수 있게 이름을 직접 넣을 수도 있다
         self._model_combo = self._combo()
+        self._model_combo.setEditable(True)
+        self._model_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         _add_row(form, "모델", self._model_combo)
+        self._model_hint_lbl = role_label("", "hint")
+        self._model_hint_lbl.setWordWrap(True)
+        form.addRow("", self._model_hint_lbl)
         outer.addWidget(self._ai_body)
 
         outer.addSpacing(12)
@@ -478,7 +489,11 @@ class SettingsDialog(QDialog):
         """제공자에 맞게 키 필드/도움말/모델 콤보 갱신."""
         needs_key = PROVIDERS.get(provider, {}).get("needs_key", True)
 
-        self._key_row_widget.setVisible(needs_key)
+        # 키가 필요 없으면(Ollama) 빈 키 칸 대신 안내를 보이고, [키 확인하기]는 연결만 확인한다
+        self._key_edit.setVisible(needs_key)
+        self._eye_btn.setVisible(needs_key)
+        self._key_none_lbl.setVisible(not needs_key)
+        self._test_btn.setText("키 확인하기" if needs_key else "연결 확인")
         self._key_help_lbl.setVisible(needs_key)
 
         if needs_key:
@@ -489,23 +504,34 @@ class SettingsDialog(QDialog):
         else:
             self._original_key = None
 
-        # 모델 콤보
+        # 모델 콤보: 추천 목록 + 직접 입력. current_model은 저장된(=이 제공자의) 모델이고,
+        # 제공자를 바꿀 때는 빈 값으로 와서 그 제공자의 기본 모델이 된다 (_on_provider_changed)
+        default = PROVIDERS.get(provider, {}).get("default_model", "")
+        models = PROVIDERS.get(provider, {}).get("models", [])
+        hint = "목록에 없는 새 모델도 이름을 직접 넣으면 쓸 수 있어요."
+        if provider == "ollama":
+            # ponytail: 화면 스레드에서 localhost만 묻는다 (최대 1.5초). 느려지면 QThread로
+            local = ollama_models()
+            if local is None:
+                hint = "내 PC의 Ollama가 응답하지 않아요. Ollama를 켜면 받아 둔 모델이 여기에 나와요."
+            elif not local:
+                hint = "Ollama에 받아 둔 모델이 없어요. 모델을 받은 뒤 다시 열어 주세요."
+            else:
+                hint = "내 PC의 Ollama에 받아 둔 모델이에요. 이름을 직접 넣어도 돼요."
+                models, default = local, local[0]
+        self._model_hint_lbl.setText(hint)
         self._model_combo.blockSignals(True)
         self._model_combo.clear()
-        models = PROVIDERS.get(provider, {}).get("models", [])
         for m in models:
             self._model_combo.addItem(m, m)
-        # 이미 고른 모델이 목록에서 빠졌으면(구버전 ID 등) 항목으로 되살려 둔다.
-        # 그냥 두면 콤보가 0번으로 떨어져 사용자가 고른 적 없는 모델로 조용히
-        # 바뀐다 — 0번은 대개 가장 비싼 모델이라 요금까지 달라진다.
-        if current_model and current_model not in models:
-            self._model_combo.addItem(f"{current_model} (이전 버전)", current_model)
-            models = models + [current_model]
-        if current_model not in models:
-            current_model = PROVIDERS.get(provider, {}).get("default_model", "")
-        if current_model in models:
-            self._model_combo.setCurrentIndex(models.index(current_model))
+        # 저장된 모델이 목록에 없어도(예전 이름·직접 넣은 이름) 칸에 그대로 둔다.
+        # 0번으로 떨어지면 고른 적 없는 모델로 조용히 바뀌어 요금까지 달라진다
+        self._model_combo.setEditText(current_model or default)
         self._model_combo.blockSignals(False)
+
+    def _model_name(self) -> str:
+        """모델 칸의 값 (목록에서 고른 것이든 직접 넣은 것이든). 앞뒤 빈칸은 지운다."""
+        return self._model_combo.currentText().strip()
 
     def _check_monthly_reset(self) -> None:
         stored_ym = self.db.get_setting_str(AI_KEY_USAGE_RESET, "")
@@ -524,8 +550,7 @@ class SettingsDialog(QDialog):
     # ── 이벤트 핸들러 ─────────────────────────────────────────────
     def _on_provider_changed(self) -> None:
         provider = self._provider_combo.currentData()
-        current_model = self._model_combo.currentData() or ""
-        self._apply_provider_ui(provider, current_model)
+        self._apply_provider_ui(provider)  # 다른 제공자의 모델을 들고 가지 않는다 → 그 제공자의 기본 모델
         tokens = int(self.db.get_setting_str(AI_KEY_USAGE_TOKENS, "0") or "0")
         self._update_usage_lbl(tokens, provider)
         _status(self._test_result_lbl, "")
@@ -534,7 +559,7 @@ class SettingsDialog(QDialog):
         if self._test_worker and self._test_worker.isRunning():
             return
         provider = self._provider_combo.currentData()
-        model = self._model_combo.currentData() or ""
+        model = self._model_name()
         key = self._key_edit.text().strip() or None
 
         self._test_btn.setEnabled(False)
@@ -557,10 +582,7 @@ class SettingsDialog(QDialog):
     # ── 저장 ─────────────────────────────────────────────────────
     def _save_and_accept(self) -> None:
         provider = self._provider_combo.currentData()
-        model = (
-            self._model_combo.currentData()
-            or PROVIDERS.get(provider, {}).get("default_model", "")
-        )
+        model = self._model_name() or PROVIDERS.get(provider, {}).get("default_model", "")
 
         # API 키 — 변경된 경우만 keyring 갱신
         if PROVIDERS.get(provider, {}).get("needs_key"):
