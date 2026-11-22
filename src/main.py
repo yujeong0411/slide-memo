@@ -4438,7 +4438,7 @@ def _set_windows_app_user_model_id() -> None:
         pass  # 구버전 Windows 등 — 아이콘이 기본값으로 떨어지더라도 앱은 정상 동작
 
 
-APP_VERSION = "2.1.1"
+APP_VERSION = "2.2.0"
 _GITHUB_REPO = links.UPDATE_REPO  # 배포 저장소 (links.py)
 
 
@@ -4497,7 +4497,9 @@ WHATS_NEW_KEY = "seen_whatsnew_version"
 # 업데이트 후 첫 실행에 보여줄 변경사항. 새 버전마다 맨 위에 한 덩어리씩 쌓는다.
 # (팝업으로 따로 안내한 색 팔레트 개편(1.1.1)은 _show_palette_notice가 담당)
 WHATS_NEW: list[tuple[str, list[str]]] = [
-    ("2.1.1", [
+    ("2.2.0", [
+        "음성 녹음 기능을 뺐어요. 이미 붙여 둔 녹음 파일은 .memo_slide\\audio 폴더에 그대로 있어요."
+        " 말로 입력하려면 Windows 음성 입력(Win+H)을 쓰면 돼요.",
         "AI 기능은 앱 설정에 넣은 키로만 동작해요. 키가 없으면 안내를 보여 줘요.",
         "메모를 영구 삭제하면 붙어 있던 녹음 파일도 함께 지워요.",
     ]),
