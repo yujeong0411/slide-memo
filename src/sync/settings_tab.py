@@ -232,6 +232,9 @@ class SyncTab(QWidget):
         if self.ctl is not None and self.ctl.connected and hasattr(self, "last_lbl"):
             try:
                 self.last_lbl.setText(relative_time(self.ctl.last_ok_ms()))
+                if getattr(self, "_self_when", None) is not None:  # 목록의 "이 PC" 줄도 같이
+                    lbl, dev = self._self_when
+                    lbl.setText(relative_time(self._self_sync_ms(dev)))
             except RuntimeError:  # 다시 그리는 중 지워진 라벨
                 return
             self.sync_now_btn.setEnabled(not self.ctl.running)
@@ -248,8 +251,12 @@ class SyncTab(QWidget):
         except RuntimeError:
             pass
 
+    def _self_sync_ms(self, d: dict) -> int:
+        return (self.ctl.last_ok_ms() if self.ctl is not None else 0) or d["last_sync"]
+
     def _fill_devices(self, devices: list[dict]) -> None:
         _clear(self.devices_box)
+        self._self_when = None
         for d in devices:
             row = QHBoxLayout()
             idle = idle_days(d)
@@ -259,9 +266,12 @@ class SyncTab(QWidget):
             row.addWidget(name)
             if d["is_self"]:
                 row.addWidget(role_label("이 PC", "badge"))
-            when = role_label(relative_time(d["last_sync"]), "hint")
+            # 이 PC는 Drive에 올린 기록 대신 실제로 마지막에 동기화를 끝낸 시각 (위 "마지막 동기화"와 같은 값)
+            when = role_label(relative_time(self._self_sync_ms(d) if d["is_self"] else d["last_sync"]), "hint")
             A.set_tabular(when)
             row.addWidget(when)
+            if d["is_self"]:
+                self._self_when = (when, d)
             row.addStretch(1)
             if idle >= IDLE_CLEANUP_DAYS:  # 7일을 넘었다 (7일째부터)
                 out = make_button("쓰지 않는 PC로 정리", "ghost")
