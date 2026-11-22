@@ -2725,10 +2725,13 @@ class SlideMemoWindow(QWidget):
             self._show_toast("다듬을 글이 없어요. 글을 먼저 적어 주세요.")
             return
 
+        from ai_provider import PROVIDERS, load_api_key
         provider = self.db.get_setting_str("ai_provider", "anthropic")
+        if PROVIDERS.get(provider, {}).get("needs_key", True) and not load_api_key(provider):
+            self._show_toast("AI 키가 없어요. 설정 > AI에서 넣어 주세요.")
+            return
         model = self.db.get_setting_str("ai_model", "")
         if not model:
-            from ai_provider import PROVIDERS
             model = PROVIDERS.get(provider, {}).get("default_model", "")
 
         show_preview = self.db.get_setting_str("ai_show_preview", "0") == "1"
@@ -2883,6 +2886,7 @@ class SlideMemoWindow(QWidget):
         self._load_memo(memo)
         self.title_input.setText(title)
         self.editor.setPlainText(body)
+        self.save_now()  # 녹음 표시를 바로 DB에 — 저장 전에 정리가 돌면 새 녹음이 지워진다
         self._refresh_memo_tabs()
         self._update_tabs_selected()
         self.expand()
@@ -3651,6 +3655,7 @@ class SlideMemoWindow(QWidget):
         self.db.delete_many([m.id for m in trashed])  # 한 트랜잭션 (수백 개도 금방)
         for memo in trashed:
             self._purge_images(memo.content)
+        self.db.remove_unused_recordings()
         self._trash_preview_id = None
         self._exit_trash_mode()
         self._show_toast(f"휴지통을 비웠어요. ({n}개)")
@@ -3682,6 +3687,7 @@ class SlideMemoWindow(QWidget):
                     neighbor = trashed[1]
             self._purge_images(memo.content)
             self.db.delete(memo_id)
+            self.db.remove_unused_recordings()
             self._trash_preview_id = None
             self._after_trash_change()
             # 휴지통이 비어있으면 _after_trash_change가 일반 모드로 복귀 → 그땐 패스
@@ -3800,6 +3806,7 @@ class SlideMemoWindow(QWidget):
                     neighbor = trashed[1]
             self._purge_images(memo.content)
             self.db.delete(memo_id)
+            self.db.remove_unused_recordings()
             if self._trash_preview_id == memo_id:
                 self._trash_preview_id = None
             self._after_trash_change()
@@ -4913,6 +4920,8 @@ def main() -> int:
         for removed in db.cleanup_old_trash(days=30):
             _delete_memo_images(removed.content)
     _cleanup_old_recordings(days=30)
+    # 이전 버전까지 [🎤 …] 표시가 사라진 녹음 정리. 동기화로 영구 삭제된 메모의 녹음도 여기서 지운다
+    db.remove_unused_recordings()
     # 활성 메모가 하나도 없으면 빈 메모 1개를 자동 생성 (첫 실행 / 모두 삭제 직후 모두 포함)
     # 메모 개수만 보면 "다 지운 사용자"가 신규 설치로 오인돼 업데이트 안내를
     # 못 받는다 → 이 DB를 방금 만든 경우만 신규 설치로 본다.
