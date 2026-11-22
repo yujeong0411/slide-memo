@@ -25,7 +25,7 @@ audio.mkdir()
 
 
 def body(name: str) -> str:
-    """앱과 같은 길: setPlainText → 저장용 HTML (main._on_whisper_finished)."""
+    """2.1.x 녹음이 만든 메모와 같은 길: setPlainText → 저장용 HTML."""
     doc = QTextDocument()
     doc.setPlainText(f"변환된 글\n\n[🎤 {name}]")
     return memo_document.saved_html(doc)

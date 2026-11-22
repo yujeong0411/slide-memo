@@ -72,39 +72,10 @@ def demo():
         assert name not in os.environ, name
     assert os.environ["LITELLM_MODE"] == "PRODUCTION"
 
-    # 4) Whisper도 OPENAI_BASE_URL을 따라가지 않는다
-    import tempfile
-    from pathlib import Path
-    from audio_recorder import WhisperWorker
-
-    with tempfile.TemporaryDirectory() as d:
-        wav = Path(d) / "a.wav"
-        wav.write_bytes(b"RIFF0000WAVE")
-        sent.clear()
-        w = WhisperWorker(wav, "app-key")
-        w.run()  # 스레드 없이 바로 실행
-        assert sent and str(sent[-1].url).startswith("https://api.openai.com/v1/"), sent
-
-    # 5) 설정의 녹음용 [키 확인하기]도 공식 주소로
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    from PyQt6.QtWidgets import QApplication
-    import settings_dialog as SD
-    from database import MemoDatabase
-
-    app = QApplication.instance() or QApplication(sys.argv)
-    SD.load_api_key = lambda p: None  # OS 키링은 건드리지 않는다
-    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
-        db = MemoDatabase(Path(d) / "t.db")
-        dlg = SD.SettingsDialog(db)
-        dlg._whisper_key_edit.setText("app-key")
-        sent.clear()
-        dlg._run_whisper_test()
-        assert sent, "키 확인 요청이 안 만들어짐"
-        req = sent[-1]
-        assert str(req.url).startswith("https://api.openai.com/v1/"), req.url
-        assert req.headers.get("authorization") == "Bearer app-key", req.headers.get("authorization")
-        dlg.deleteLater()
-        db.close()
+    # 4) 설정의 [키 확인하기]도 같은 길 (OpenAI를 골라도 공식 주소로)
+    sent.clear()
+    ok, _ = AIProvider("openai", "gpt-4o-mini", api_key="app-key").test_connection()
+    assert not ok and sent and str(sent[-1].url).startswith("https://api.openai.com/v1/"), sent
     print("test_ai_env OK")
 
 

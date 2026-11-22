@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSlider,
-    QSpinBox,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -184,8 +183,6 @@ class SettingsDialog(QDialog):
             self._autostart_chk.isChecked(), self._ai_enabled_chk.isChecked(),
             self._provider_combo.currentData(), self._model_combo.currentData(),
             self._key_edit.text().strip(), self._preview_chk.isChecked(),
-            self._recording_enabled_chk.isChecked(), self._recording_keep_chk.isChecked(),
-            self._recording_max_spin.value(), self._whisper_key_edit.text().strip(),
         )
 
     def has_unsaved_changes(self) -> bool:
@@ -376,54 +373,6 @@ class SettingsDialog(QDialog):
         self._test_result_lbl.hide()
         outer.addWidget(self._test_result_lbl)
 
-        outer.addSpacing(12)
-        outer.addWidget(role_label("음성 녹음 (Whisper)", "group"))
-        self._recording_enabled_chk = QCheckBox("음성 녹음 기능 사용 (마이크 단추 켜기)")
-        outer.addWidget(self._recording_enabled_chk)
-        self._recording_keep_chk = QCheckBox("녹음 파일을 메모에 첨부")
-        outer.addWidget(self._recording_keep_chk)
-
-        rec_form = _form()
-        self._recording_max_spin = QSpinBox()
-        self._recording_max_spin.setRange(60, 600)
-        self._recording_max_spin.setSingleStep(30)
-        self._recording_max_spin.setValue(300)
-        self._recording_max_spin.setFixedWidth(112)
-        A.set_tabular(self._recording_max_spin)
-        _add_row(rec_form, "최대 녹음 시간(초)", self._recording_max_spin)
-        outer.addLayout(rec_form)
-
-        # Whisper용 OpenAI 키. AI 제공자가 OpenAI면 keyring 항목이 같아서
-        # 칸이 두 개면 서로 덮어쓴다 → 그때는 이 칸을 숨기고 안내만 띄운다.
-        self._whisper_key_widget = QWidget()
-        wk_col = QVBoxLayout(self._whisper_key_widget)
-        wk_col.setContentsMargins(0, 0, 0, 0)
-        wk_col.setSpacing(8)
-        self._whisper_key_edit = QLineEdit()
-        whisper_row, self._whisper_eye_btn, self._whisper_test_btn = self._key_row(
-            self._whisper_key_edit, "Whisper용 OpenAI API 키", self._run_whisper_test
-        )
-        wk_col.addLayout(whisper_row)
-        self._whisper_test_lbl = role_label("", "hint")
-        self._whisper_test_lbl.setWordWrap(True)
-        self._whisper_test_lbl.hide()
-        wk_col.addWidget(self._whisper_test_lbl)
-        whisper_key_help = role_label(
-            '<a href="https://platform.openai.com/api-keys">OpenAI API 키 발급 페이지 →</a>', "hint"
-        )
-        whisper_key_help.setOpenExternalLinks(False)
-        whisper_key_help.linkActivated.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
-        wk_col.addWidget(whisper_key_help)
-        outer.addWidget(self._whisper_key_widget)
-
-        self._whisper_shared_lbl = role_label("AI 제공자가 OpenAI라서 위에 넣은 키를 그대로 써요.", "hint")
-        self._whisper_shared_lbl.setWordWrap(True)
-        outer.addWidget(self._whisper_shared_lbl)
-
-        rec_note = role_label("Whisper API 비용은 분당 약 $0.006이에요. 마이크 권한이 필요해요.", "hint")
-        rec_note.setWordWrap(True)
-        outer.addWidget(rec_note)
-
         outer.addStretch(1)
 
         self._ai_enabled_chk.toggled.connect(self._ai_body.setEnabled)
@@ -521,19 +470,6 @@ class SettingsDialog(QDialog):
         self._ai_body.setEnabled(enabled)
         self._preview_chk.setChecked(show_preview)
 
-        # 음성 녹음 설정
-        self._recording_enabled_chk.setChecked(
-            self.db.get_setting_int("recording_enabled", 0) == 1
-        )
-        self._recording_keep_chk.setChecked(
-            self.db.get_setting_int("recording_keep_audio", 0) == 1
-        )
-        max_s = self.db.get_setting_int("recording_max_seconds", 300)
-        self._recording_max_spin.setValue(max(60, min(max_s, 600)))
-        # Whisper용 OpenAI 키 (provider가 openai면 같은 항목을 공유)
-        self._whisper_original_key = load_api_key("openai") or ""
-        self._whisper_key_edit.setText(self._whisper_original_key)
-
         self._check_monthly_reset()
         tokens = int(self.db.get_setting_str(AI_KEY_USAGE_TOKENS, "0") or "0")
         self._update_usage_lbl(tokens, provider)
@@ -544,12 +480,6 @@ class SettingsDialog(QDialog):
 
         self._key_row_widget.setVisible(needs_key)
         self._key_help_lbl.setVisible(needs_key)
-
-        # provider가 openai면 Whisper도 같은 keyring 항목을 쓴다.
-        # 칸을 따로 두면 한쪽 저장이 다른 쪽을 덮어쓰므로 안내로 대체한다.
-        shared_openai = provider == "openai"
-        self._whisper_key_widget.setVisible(not shared_openai)
-        self._whisper_shared_lbl.setVisible(shared_openai)
 
         if needs_key:
             url = _KEY_HELP_URLS.get(provider, "")
@@ -618,23 +548,6 @@ class SettingsDialog(QDialog):
         self._test_btn.setEnabled(True)
         _status(self._test_result_lbl, msg, error=not ok)
 
-    def _run_whisper_test(self) -> None:
-        key = self._whisper_key_edit.text().strip()
-        if not key:
-            _status(self._whisper_test_lbl, "키를 먼저 넣어 주세요.")
-            return
-        self._whisper_test_btn.setEnabled(False)
-        _status(self._whisper_test_lbl, "확인하는 중이에요")
-        try:
-            from ai_provider import openai_client
-            client = openai_client(key)
-            client.models.list()
-            _status(self._whisper_test_lbl, "OpenAI 키가 정상이에요.")
-        except Exception as e:
-            _status(self._whisper_test_lbl, f"확인하지 못했어요: {type(e).__name__}: {e}", error=True)
-        finally:
-            self._whisper_test_btn.setEnabled(True)
-
     def _reset_usage(self) -> None:
         self.db.set_setting_str(AI_KEY_USAGE_TOKENS, "0")
         self.db.set_setting_str(AI_KEY_USAGE_RESET, datetime.now().strftime("%Y-%m"))
@@ -686,26 +599,5 @@ class SettingsDialog(QDialog):
                 ok, msg = autostart.set_enabled(want)
                 if not ok:
                     notify(self, "자동 실행을 바꾸지 못했어요", msg, warning=True)
-
-        # 음성 녹음
-        self.db.set_setting_int(
-            "recording_enabled",
-            1 if self._recording_enabled_chk.isChecked() else 0,
-        )
-        self.db.set_setting_int(
-            "recording_keep_audio",
-            1 if self._recording_keep_chk.isChecked() else 0,
-        )
-        self.db.set_setting_int(
-            "recording_max_seconds", self._recording_max_spin.value()
-        )
-        # Whisper 키 — 변경됐을 때만 keyring 갱신.
-        # provider가 openai면 같은 항목이라 위 블록이 이미 처리했다 (덮어쓰기 방지).
-        whisper_key = self._whisper_key_edit.text().strip()
-        if provider != "openai" and whisper_key != self._whisper_original_key:
-            if self._whisper_original_key:
-                delete_api_key("openai")
-            if whisper_key:
-                save_api_key("openai", whisper_key)
 
         self.accept()

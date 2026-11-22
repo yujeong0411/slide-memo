@@ -59,8 +59,9 @@ _win = m.SlideMemoWindow(_up)
 _win._force_topmost = lambda: None
 m._show_palette_notice(_win, _up, True)
 m._show_whats_new(_win, _up, True)
-assert len(shown) == 1 and "2.1.1" in shown[0] and "2.1.0" in shown[0], shown  # 그동안의 안내를 한 창에 함께
-assert [v for v, _ in m._whats_new_since("1.4.1")][:3] == ["2.1.1", "2.1.0", "2.0.0"]
+assert len(shown) == 1 and "2.2.0" in shown[0], shown  # 그동안의 안내를 한 창에 함께 (제목에는 지금 버전만)
+assert [v for v, _ in m._whats_new_since("1.4.1")][:3] == ["2.2.0", "2.1.0", "2.0.0"]
+assert r".memo_slide\audio 폴더" in m.WHATS_NEW[0][1][0], "경로의 \\a가 특수 문자로 바뀌면 안 된다"
 assert _up.get_setting_int(m.PAPER_NOTICE_KEY, 1) == 0, "다음에 켤 때 색 안내가 다시 뜨면 안 된다"
 
 # 새로 설치: 둘 다 뜨지 않는다

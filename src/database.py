@@ -13,7 +13,7 @@ from theme.memo_tokens import nearest_preset
 
 APP_DIR = Path.home() / ".memo_slide"
 DB_PATH = APP_DIR / "memos.db"
-# 메모 본문의 녹음 표시 [🎤 recording_YYYYMMDD_HHMMSS.wav] (main._on_whisper_finished)
+# 메모 본문의 녹음 표시 [🎤 recording_YYYYMMDD_HHMMSS.wav]. 녹음은 2.2.0에서 뺐지만 2.1.x가 붙인 파일은 남아 있다
 _RECORDING_REF = re.compile(r"🎤 (recording_\d{8}_\d{6}\.wav)")
 IMAGES_DIR = APP_DIR / "images"
 

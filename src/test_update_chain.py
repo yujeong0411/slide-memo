@@ -93,9 +93,9 @@ assert check("2.1.0-beta.1", NEW) == ["2.1.0"], "정식 2.1.0이 나오면 알�
 latest[NEW] = "2.1.0-beta.2"
 assert check("2.1.0-beta.1", NEW) == ["2.1.0-beta.2"]
 # 새 기능 안내: 베타를 쓰던 PC는 정식 2.1.0부터의 안내를 한 번 보고, 본 뒤에는 다시 뜨지 않는다
-assert [v for v, _ in M._whats_new_since("2.1.0-beta.6")] == ["2.1.1", "2.1.0"]
-assert [v for v, _ in M._whats_new_since("2.1.0")] == ["2.1.1"]
-assert M._whats_new_since("2.1.1") == [] and M._whats_new_since("1.4.1") != []
+assert [v for v, _ in M._whats_new_since("2.1.0-beta.6")] == ["2.2.0", "2.1.0"]
+assert [v for v, _ in M._whats_new_since("2.1.0")] == ["2.2.0"]
+assert M._whats_new_since("2.2.0") == [] and M._whats_new_since("1.4.1") != []
 
 # 응답이 망가져도 조용히 넘어간다 (업데이트 확인이 앱을 멈추지 않는다)
 latest[NEW] = ""
