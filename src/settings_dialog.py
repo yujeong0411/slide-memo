@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
 )
 
 import autostart
+import workers
 from ai_provider import (
     AI_KEY_ENABLED,
     AI_KEY_MODEL,
@@ -81,10 +82,6 @@ class _OllamaListWorker(QThread):
 
     def run(self) -> None:
         self.done.emit(ollama_models())
-
-
-# 설정 창이 먼저 닫혀도 스레드가 끝날 때까지 붙잡아 둔다 (돌고 있는 QThread가 지워지면 앱이 죽는다)
-_ollama_workers: set[_OllamaListWorker] = set()
 
 
 def _form() -> QFormLayout:
@@ -524,10 +521,9 @@ class SettingsDialog(QDialog):
         if provider == "ollama":
             # 받아 오는 동안은 추천 목록을 보여 주고, 결과가 오면 _on_ollama_models가 바꿔 넣는다
             self._model_hint_lbl.setText("내 PC의 Ollama에 받아 둔 모델을 찾는 중이에요.")
-            worker = _OllamaListWorker()
-            _ollama_workers.add(worker)
+            # 설정 창이 먼저 닫혀도 끝날 때까지 붙잡아 둔다 (workers)
+            worker = workers.keep(_OllamaListWorker())
             worker.done.connect(self._on_ollama_models)
-            worker.finished.connect(lambda w=worker: (_ollama_workers.discard(w), w.deleteLater()))
             self._ollama_req = worker
             worker.start()
         else:
@@ -596,7 +592,8 @@ class SettingsDialog(QDialog):
         self._test_btn.setEnabled(False)
         _status(self._test_result_lbl, "확인하는 중이에요")
 
-        self._test_worker = _TestWorker(provider, model, key)
+        # 확인하는 중에 설정 창을 닫아도 끝날 때까지 붙잡아 둔다 (workers)
+        self._test_worker = workers.keep(_TestWorker(provider, model, key))
         self._test_worker.result_ready.connect(self._on_test_result)
         self._test_worker.start()
 

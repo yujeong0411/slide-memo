@@ -240,3 +240,7 @@ _win.setGeometry(_g.x(), _g.y(), _g.width(), _g.height() - 80)
 assert _win._collapsed_mask_region().boundingRect().height() == _g.height() - 80
 
 print("tabs OK")
+
+import testkit  # noqa: E402  창을 만든 시험은 마지막에 정리한다 (끝날 때 꺼지는 일 방지)
+
+testkit.finish()
