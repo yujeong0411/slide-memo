@@ -13,6 +13,8 @@ from theme.memo_tokens import nearest_preset
 
 APP_DIR = Path.home() / ".memo_slide"
 DB_PATH = APP_DIR / "memos.db"
+# 메모 본문의 녹음 표시 [🎤 recording_YYYYMMDD_HHMMSS.wav] (main._on_whisper_finished)
+_RECORDING_REF = re.compile(r"🎤 (recording_\d{8}_\d{6}\.wav)")
 IMAGES_DIR = APP_DIR / "images"
 
 # 버전 히스토리 — 자동저장이 덮어쓰기 직전 내용을 스냅샷으로 남긴다.
@@ -565,6 +567,29 @@ class MemoDatabase:
             )
             self.conn.commit()
         return old
+
+    def remove_unused_recordings(self) -> list[str]:
+        """audio/의 녹음 중 어떤 메모(휴지통 포함)의 본문에도, 이전 버전에도 [🎤 이름] 표시가
+        없는 것을 지운다. 영구 삭제 직후와 앱 시작 때 부른다. 지운 파일 이름 반환.
+
+        폴더는 DB 파일 옆이다 (실제로는 APP_DIR/audio). 시험이 임시 DB를 쓰면 임시 폴더만 본다.
+        """
+        # ponytail: 부를 때마다 본문·이전 버전 전체를 훑는다. 수천 개까지는 순간이라 색인은 두지 않는다
+        used: set[str] = set()
+        for sql in ("SELECT content FROM memos", "SELECT content FROM memo_versions"):
+            for (html,) in self.conn.execute(sql):
+                used.update(_RECORDING_REF.findall(html or ""))
+        removed: list[str] = []
+        for p in (self.db_path.parent / "audio").glob("recording_*.wav"):
+            if p.name in used or not _RECORDING_REF.fullmatch(f"🎤 {p.name}"):
+                continue
+            try:
+                p.unlink()
+                removed.append(p.name)
+                print(f"[audio] 연결된 메모가 없어 녹음 삭제: {p.name}")
+            except OSError as e:
+                print(f"[audio] 녹음 삭제 실패: {p.name} ({e})")
+        return removed
 
     def close(self) -> None:
         try:
