@@ -626,8 +626,8 @@ class SettingsDialog(QDialog):
         self._whisper_test_btn.setEnabled(False)
         _status(self._whisper_test_lbl, "확인하는 중이에요")
         try:
-            from openai import OpenAI
-            client = OpenAI(api_key=key)
+            from ai_provider import openai_client
+            client = openai_client(key)
             client.models.list()
             _status(self._whisper_test_lbl, "OpenAI 키가 정상이에요.")
         except Exception as e:

@@ -91,6 +91,14 @@ AI_DEFAULTS: dict[str, str] = {
 }
 
 
+def openai_client(api_key: str):
+    """녹음 변환과 녹음용 키 확인이 쓰는 OpenAI 클라이언트. base_url을 정하지 않으면
+    OPENAI_BASE_URL 환경 변수를 따라가서, 이 한 곳에서만 만든다."""
+    from openai import OpenAI
+
+    return OpenAI(api_key=api_key, base_url=PROVIDERS["openai"]["api_base"])
+
+
 # ----- 키링 헬퍼 -----
 
 def save_api_key(provider: str, key: str) -> None:

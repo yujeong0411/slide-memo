@@ -84,6 +84,27 @@ def demo():
         w = WhisperWorker(wav, "app-key")
         w.run()  # 스레드 없이 바로 실행
         assert sent and str(sent[-1].url).startswith("https://api.openai.com/v1/"), sent
+
+    # 5) 설정의 녹음용 [키 확인하기]도 공식 주소로
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import QApplication
+    import settings_dialog as SD
+    from database import MemoDatabase
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    SD.load_api_key = lambda p: None  # OS 키링은 건드리지 않는다
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
+        db = MemoDatabase(Path(d) / "t.db")
+        dlg = SD.SettingsDialog(db)
+        dlg._whisper_key_edit.setText("app-key")
+        sent.clear()
+        dlg._run_whisper_test()
+        assert sent, "키 확인 요청이 안 만들어짐"
+        req = sent[-1]
+        assert str(req.url).startswith("https://api.openai.com/v1/"), req.url
+        assert req.headers.get("authorization") == "Bearer app-key", req.headers.get("authorization")
+        dlg.deleteLater()
+        db.close()
     print("test_ai_env OK")
 
 

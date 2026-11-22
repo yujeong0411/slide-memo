@@ -118,9 +118,8 @@ class WhisperWorker(QThread):
         if self._cancelled:
             return
         try:
-            from openai import OpenAI
-            # base_url을 정하지 않으면 OPENAI_BASE_URL 환경 변수를 따라간다
-            client = OpenAI(api_key=self._api_key, base_url="https://api.openai.com/v1")
+            from ai_provider import openai_client
+            client = openai_client(self._api_key)
             with open(self._audio_path, "rb") as f:
                 transcript = client.audio.transcriptions.create(
                     model="whisper-1",
