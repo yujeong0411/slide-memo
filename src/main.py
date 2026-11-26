@@ -4480,7 +4480,7 @@ def _set_windows_app_user_model_id() -> None:
         pass  # 구버전 Windows 등 — 아이콘이 기본값으로 떨어지더라도 앱은 정상 동작
 
 
-APP_VERSION = "2.2.1"
+APP_VERSION = "2.2.2"
 _GITHUB_REPO = links.UPDATE_REPO  # 배포 저장소 (links.py)
 
 
@@ -4539,6 +4539,11 @@ WHATS_NEW_KEY = "seen_whatsnew_version"
 # 업데이트 후 첫 실행에 보여줄 변경사항. 새 버전마다 맨 위에 한 덩어리씩 쌓는다.
 # (팝업으로 따로 안내한 색 팔레트 개편(1.1.1)은 _show_palette_notice가 담당)
 WHATS_NEW: list[tuple[str, list[str]]] = [
+    ("2.2.2", [
+        "가끔 앱이 저절로 꺼지던 문제를 고쳤어요. 문제가 생겨도 앱이 꺼지지 않고 메모를 저장해 둬요.",
+        "모니터를 연결하거나 끊으면 메모장이 남은 화면 가장자리에 다시 붙어요.",
+        "동기화 탭에서 \"이 PC\"의 마지막 동기화 시각이 바르게 보여요.",
+    ]),
     ("2.2.1", [
         "AI 기능에서 새 모델(예: Claude Opus 5)을 고르면 \"LLM Provider NOT provided\" 오류가 나던 문제를 고쳤어요.",
         "모델 목록을 최신 모델로 바꿨어요. 목록에 없는 모델도 이름을 직접 넣어 쓸 수 있어요.",
