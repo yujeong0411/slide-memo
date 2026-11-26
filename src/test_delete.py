@@ -54,3 +54,7 @@ assert db.count_trashed() == 1
 assert win.trash_btn.isVisibleTo(win)
 
 print("delete/undo OK")
+
+import testkit  # noqa: E402  창을 만든 시험은 마지막에 정리한다 (끝날 때 꺼지는 일 방지)
+
+testkit.finish()

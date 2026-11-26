@@ -207,6 +207,12 @@ notes = [w.text() for w in tab.findChildren(QLabel) if "동기화하지 않았�
 assert notes == ["3일 동안 동기화하지 않았어요. 그 PC에서 '다시 연결해 주세요'가 떠 있을 수 있어요.",
                  "8일 동안 동기화하지 않았어요. 그 PC에서 '다시 연결해 주세요'가 떠 있을 수 있어요."], notes
 assert [b.text() for b in tab.findChildren(QPushButton)].count("쓰지 않는 PC로 정리") == 1, "7일 넘은 PC에만"
+# "이 PC" 줄은 Drive 기록(30일 전) 대신 이 PC가 실제로 마지막에 동기화를 끝낸 시각
+self_lbl = tab._self_when[0]
+assert self_lbl.text() == relative_time(tab.ctl.last_ok_ms()) != relative_time(now_ms - 30 * D), self_lbl.text()
+db.set_setting_str(runner.LAST_OK_KEY, str(now_ms - 2 * H))
+tab._refresh_status()
+assert self_lbl.text() == relative_time(now_ms - 2 * H), "마지막 동기화가 바뀌면 이 PC 줄도 같이 바뀐다"
 assert "최근에 겹친 메모" in labels and "처음 메모" in buttons, "최근 7일 겹친 메모 목록"
 # PC 이름은 Windows 컴퓨터 이름을 글자로만 보여 준다 (바꾸는 칸이 없다)
 from PyQt6.QtWidgets import QLineEdit  # noqa: E402

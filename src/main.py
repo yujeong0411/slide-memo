@@ -4,6 +4,9 @@ from __future__ import annotations
 import os
 import re
 import sys
+import threading
+import time
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -109,6 +112,7 @@ from database import (
 )
 import links
 import memo_document
+import workers
 from memo_color import MemoColorButton, MemoColorDialog, MemoColorPopup
 from memo_popups import (
     SORT_CRITERIA,
@@ -1879,6 +1883,7 @@ class SlideMemoWindow(QWidget):
         QApplication.instance().installEventFilter(self)
         theme_apply.release_on_quit(self, before=lambda win: win._stop_timers())
         self._register_hotkey()  # Ctrl+Shift+Z 전역 숨기기/복귀
+        self._watch_screens()
 
     def _stop_timers(self) -> None:
         for timer in (self._edge_timer, self.autosave_timer, self._guide_timer):
@@ -2710,7 +2715,7 @@ class SlideMemoWindow(QWidget):
         # (커스텀 finished 시그널이 QThread.finished를 가려서 그쪽엔 못 붙인다)
         if self._ai_worker is not None:
             self._ai_worker.deleteLater()
-        self._ai_worker = AIWorker(feature_key, provider, model, text, parent=self)
+        self._ai_worker = workers.keep(AIWorker(feature_key, provider, model, text, parent=self))
         self._ai_worker.finished.connect(
             lambda k, r, t: self._on_ai_finished(k, r, t, show_preview)
         )
@@ -3085,6 +3090,39 @@ class SlideMemoWindow(QWidget):
         MemoTabButton.button_height = self.memo_tab_height
         self._refresh_memo_tabs()
         self._update_tabs_selected()
+
+    # ----- 화면 변화 (모니터를 끊거나, 해상도·배율·작업 표시줄이 바뀜) -----
+    def _watch_screens(self) -> None:
+        self._screen_timer = QTimer(self)
+        self._screen_timer.setSingleShot(True)
+        self._screen_timer.setInterval(300)  # 바뀌는 동안 여러 번 오는 신호를 한 번으로 모은다
+        self._screen_timer.timeout.connect(self._fit_to_screen)
+        app = QGuiApplication.instance()
+        app.screenAdded.connect(self._watch_screen)
+        app.screenAdded.connect(self._on_screens_changed)
+        app.screenRemoved.connect(self._on_screens_changed)
+        app.primaryScreenChanged.connect(self._on_screens_changed)
+        for screen in app.screens():
+            self._watch_screen(screen)
+
+    def _watch_screen(self, screen) -> None:
+        screen.availableGeometryChanged.connect(self._on_screens_changed)
+
+    def _on_screens_changed(self, *_args) -> None:
+        self._screen_timer.start()
+
+    def _fit_to_screen(self) -> None:
+        """남은 화면 가장자리에 다시 붙인다. 그냥 두면 Windows가 옮겨 놓은 자리에 남아
+        가장자리에서 떨어지거나 화면 밖에 걸친다. 저장된 크기·위치는 바꾸지 않는다."""
+        self._load_user_size()  # 지금 화면 기준으로 크기·세로 위치를 다시 맞춘다 (화면 범위로 clamp)
+        self.setGeometry(self._expanded_geometry())
+        if self.is_expanded:
+            self.clearMask()
+        else:
+            self.setMask(self._collapsed_mask_region())
+        self._update_handles()
+        if self._edge_button.isVisible():
+            self._show_edge_button()
 
     def _expanded_geometry(self) -> QRect:
         rect = self._screen_rect()
@@ -4281,6 +4319,10 @@ class SlideMemoWindow(QWidget):
             if self.sync is not None:
                 self.sync.shutdown()
             self.db.close()
+            # 도는 스레드(AI 요청, 업데이트 확인 등)가 창과 함께 지워지면 Qt가 앱을 끈다.
+            # 잠깐 기다리고, 그래도 돌면 창에서 떼어 둔다 (main이 마무리를 건너뛰고 끝낸다)
+            if not workers.wait_all(3000):
+                workers.detach_running()
         event.accept()
         QApplication.instance().quit()
 
@@ -4681,6 +4723,70 @@ def _install_translator(app: QApplication) -> None:
             return
 
 
+# ----- 처리하지 않은 예외 (앱을 끄지 않기) -----
+# PyQt6는 신호 처리 함수 안에서 처리하지 않은 예외가 나면, sys.excepthook이 기본값일 때 qFatal로 앱을 끈다
+# (Windows 오류 기록: Qt6Core.dll c0000409). excepthook을 바꿔 두면 앱을 끄지 않고 이 함수를 부른다.
+# 오류 내용·경로는 화면에 보이지 않고, 배포 앱은 파일로도 남기지 않는다 (개인정보처리방침: 로그 파일 없음).
+EXCEPTION_LISTENERS: list = []  # (종류, 값, traceback)을 받는 함수. 진단용 빌드(tools/diag)만 붙인다
+ERROR_NOTICE_GAP_S = 60  # 같은 알림을 다시 띄우기까지 기다리는 시간
+
+
+class ExceptionGuard:
+    def __init__(self) -> None:
+        self.window: SlideMemoWindow | None = None
+        self._last_notice = -ERROR_NOTICE_GAP_S
+        self._handling = False
+
+    def __call__(self, etype, value, tb) -> None:
+        if issubclass(etype, KeyboardInterrupt):
+            sys.__excepthook__(etype, value, tb)
+            return
+        if sys.stderr is not None:  # 개발 실행의 콘솔에만 (배포 앱은 콘솔이 없다)
+            traceback.print_exception(etype, value, tb)
+        for listener in EXCEPTION_LISTENERS:
+            try:
+                listener(etype, value, tb)
+            except Exception:
+                pass
+        # 화면 작업은 화면 스레드에서만. 처리 중에 또 난 오류는 다시 처리하지 않는다 (꼬리 물기 방지)
+        if self._handling or threading.current_thread() is not threading.main_thread():
+            return
+        self._handling = True
+        try:
+            self._recover(tb)
+        except Exception:
+            pass
+        finally:
+            self._handling = False
+
+    def _recover(self, tb) -> None:
+        win = self.window
+        if win is None:
+            return
+        saved = False
+        # 저장하다 난 오류면 다시 저장하지 않는다. 평소 저장(save_now: 트랜잭션)만 쓴다
+        if not any(frame.f_code is SlideMemoWindow.save_now.__code__ for frame, _ in traceback.walk_tb(tb)):
+            try:
+                win.save_now()
+                saved = True
+            except Exception:
+                pass
+        now = time.monotonic()
+        if now - self._last_notice < ERROR_NOTICE_GAP_S:
+            return
+        self._last_notice = now
+        win._show_toast(
+            "문제가 생겨 방금 동작을 멈췄어요. 메모는 저장해 두었어요." if saved
+            else "문제가 생겨 방금 동작을 멈췄어요. 앱은 계속 쓸 수 있어요."
+        )
+
+
+def install_exception_guard() -> ExceptionGuard:
+    guard = ExceptionGuard()
+    sys.excepthook = guard
+    return guard
+
+
 def _register_fonts() -> None:
     fonts_dir = _resource_path("assets/fonts")
     if fonts_dir.exists():
@@ -4698,6 +4804,7 @@ def main() -> int:
         # DirectWrite는 NoSubpixelAntialias를 무시해 글자에 색 번짐이 남는다 (2.1)
         os.environ.setdefault("QT_QPA_PLATFORM", "windows:fontengine=freetype")
     app = QApplication(sys.argv)
+    guard = install_exception_guard()
     # 드롭다운·메뉴·툴팁은 펼칠 때 바로 제 크기로 (크기가 자라거나 미끄러지는 효과를 끈다, 9장 41)
     for effect in (Qt.UIEffect.UI_AnimateCombo, Qt.UIEffect.UI_AnimateMenu, Qt.UIEffect.UI_AnimateTooltip):
         QApplication.setEffectEnabled(effect, False)
@@ -4778,17 +4885,23 @@ def main() -> int:
             QTimer.singleShot(700, lambda: _show_welcome(window, db))
     _show_whats_new(window, db, is_upgrade)
 
-    _checker = UpdateChecker()
+    _checker = workers.keep(UpdateChecker())
     _checker.update_available.connect(
         lambda cur, lat: UpdateDialog(cur, lat, window).exec()
     )
     _checker.start()
     window._update_checker = _checker  # GC 방지
 
+    guard.window = window
     try:
-        return app.exec()
+        code = app.exec()
     finally:
         theme_apply.release_watchers()  # 앱 객체가 정리되기 전에 앱 전체 감시자부터 뗀다
+    if workers.any_running():
+        # 저장과 DB 닫기는 끝났다. 도는 스레드를 파이썬이 정리하다 지우면 Qt가 앱을 끄므로(qFatal) 정리를 건너뛴다
+        sys.stdout.flush()
+        os._exit(code)
+    return code
 
 
 if __name__ == "__main__":

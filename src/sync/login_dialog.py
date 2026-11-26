@@ -9,6 +9,7 @@ from __future__ import annotations
 from PyQt6.QtCore import QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLineEdit, QProgressBar, QWidget
 
+import workers
 from memo_popups import Spinner
 from sync.oauth import LOGIN_TIMEOUT_S, Grant, LoginFlow, OAuthError
 from theme.widgets import AppDialog, make_button, role_label
@@ -73,7 +74,7 @@ class LoginDialog(AppDialog):
         self.body.addWidget(self.url_box)
         self.cancel_button = self.add_button("취소")
         self.cancel_button.clicked.connect(self._cancel)
-        self._waiter = _Waiter(self.flow)
+        self._waiter = workers.keep(_Waiter(self.flow))  # 기다리는 중에 창을 닫아도 붙잡아 둔다
         self._waiter.done.connect(self._finished)
 
     def showEvent(self, event) -> None:  # noqa: N802
