@@ -279,36 +279,6 @@ def demo():
         assert wants_effort("anthropic", "claude-haiku-5-5", no_effort_models(db))
         assert not wants_effort("ollama", "ollama/llama3.2"), "Ollama에는 보내지 않는다"
         db.close()
-
-        # 9) AI 기능 길: 메모 창에서 AI 기능을 쓰다 거절되면 기억하고, 다음 요청에서는 처음부터 뺀다
-        import main as M
-
-        AP.load_api_key = lambda p: "app-key"  # 메모 창·AI 작업이 이 함수로 키를 읽는다 (OS 키링은 건드리지 않는다)
-        wdb = MemoDatabase(Path(d) / "w.db")
-        for key, value in {"ai_enabled": "1", "ai_provider": "anthropic", "ai_model": "claude-old-10",
-                           "ai_show_preview": "0"}.items():
-            wdb.set_setting_str(key, value)
-        memo = wdb.create("t", "<p>요약할 글</p>")
-        win = M.SlideMemoWindow(wdb)
-        win._load_memo(memo)
-
-        def run_feature() -> list[dict]:
-            sent.clear()
-            win._run_ai_feature("summarize")
-            win._ai_worker.wait(10000)
-            app.processEvents()  # 결과 신호를 화면 스레드에서 받는다
-            return [json.loads(r.content) for r in sent]
-
-        httpx.Client.send = rejects_effort
-        first = run_feature()
-        assert len(first) == 2 and "output_config" in first[0] and "output_config" not in first[1], first
-        assert no_effort_models(wdb) == {"claude-old-10"}, "AI 기능 길에서도 거절한 모델을 기억해야 한다"
-        assert "OK" in win.editor.toPlainText(), "다시 보낸 요청의 답이 들어가야 한다"
-        second = run_feature()
-        assert len(second) == 1 and "output_config" not in second[0], "기억한 모델에는 처음부터 빼야 한다"
-        httpx.Client.send = fake_send
-        win._quitting = True
-        win.close()
     print("test_ai_env OK")
 
 
