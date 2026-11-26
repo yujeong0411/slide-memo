@@ -1,9 +1,7 @@
 """AI 제공자 추상화 레이어 (litellm + keyring)."""
 from __future__ import annotations
 
-import json
 import os
-import re
 import time
 from typing import Any
 
@@ -141,64 +139,17 @@ class MissingKeyError(Exception):
     """앱에 저장된 키가 없다. 요청을 보내지 않는다."""
 
 
-# ----- 생각 수준 (effort) -----
-# AI 기능은 모두 짧은 작업(요약·번역·맞춤법·제목·키워드)이라 새 모델에 생각을 낮게(low) 요청한다.
-# 이 값을 받지 않는 모델은 400 오류를 낸다 → 확실한 이름은 미리 빼고, 나머지는 보내 본 뒤
-# 오류 내용에 값 이름이 나오면 빼고 한 번만 다시 보낸다 (400은 요금이 나가지 않는다).
-EFFORT_LEVEL = "low"
-AI_KEY_NO_EFFORT = "ai_no_effort_models"  # 값을 거절한 모델 이름 목록 (JSON). 다음부터는 처음부터 뺀다
-NO_EFFORT_PREFIXES = (  # 받지 않는 게 확실한 이름 (날짜가 붙은 이름도 앞부분으로 잡는다)
-    "claude-3", "claude-haiku-4-5", "claude-sonnet-4-5",
-    "gpt-4o", "gpt-4.1",
-    "gemini/gemini-2.", "gemini-2.",  # 2.x는 thinkingLevel 대신 thinkingBudget을 쓴다
-)
-_EFFORT_ERROR = re.compile(r"effort|output_config|reasoning|thinking", re.IGNORECASE)
-
-
-def effort_kwargs(provider: str) -> dict[str, Any]:
-    """제공자별 생각 수준 값. OpenAI·Gemini는 litellm이 목록에 없는 모델에 막아서 extra_body로 그대로 넘긴다."""
-    if provider == "anthropic":
-        return {"output_config": {"effort": EFFORT_LEVEL}}
-    if provider == "openai":
-        return {"extra_body": {"reasoning_effort": EFFORT_LEVEL}}
-    if provider == "gemini":
-        return {"extra_body": {"generationConfig": {"thinkingConfig": {"thinkingLevel": EFFORT_LEVEL}}}}
-    return {}  # Ollama: 보내지 않는다
-
-
-def wants_effort(provider: str, model: str, rejected: set[str] | frozenset[str] = frozenset()) -> bool:
-    name = model.strip().lower()
-    return bool(effort_kwargs(provider)) and not name.startswith(NO_EFFORT_PREFIXES) and model not in rejected
-
-
-def no_effort_models(db) -> set[str]:
-    """값을 거절한 적 있는 모델 이름. DB는 화면 스레드에서만 읽는다."""
-    try:
-        return set(json.loads(db.get_setting_str(AI_KEY_NO_EFFORT, "[]") or "[]"))
-    except (ValueError, TypeError):
-        return set()
-
-
-def remember_no_effort(db, model: str) -> None:
-    names = no_effort_models(db) | {model}
-    db.set_setting_str(AI_KEY_NO_EFFORT, json.dumps(sorted(names), ensure_ascii=False))
-
-
 class AIProvider:
     def __init__(
         self,
         provider: str,
         model: str,
         api_key: str | None = None,
-        *,
-        send_effort: bool = True,
     ) -> None:
         self.provider = provider
         self.model = model
         self.api_key = api_key if api_key is not None else load_api_key(provider)
         self._info = PROVIDERS.get(provider, {})
-        self.send_effort = send_effort
-        self.effort_rejected = False  # 이 모델이 생각 수준 값을 거절했다 → 부른 쪽이 remember_no_effort로 기억
 
     def _build_kwargs(self, max_tokens: int) -> dict[str, Any]:
         # 키와 주소를 늘 직접 넘긴다. 빠뜨리면 litellm이 환경 변수(ANTHROPIC_API_KEY,
@@ -232,16 +183,7 @@ class AIProvider:
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ]
-        litellm = _litellm()
-        effort = effort_kwargs(self.provider) if self.send_effort and wants_effort(self.provider, self.model) else {}
-        try:
-            response = litellm.completion(**kwargs, **effort)
-        except litellm.BadRequestError as e:
-            if not effort or not _EFFORT_ERROR.search(str(e)):
-                raise
-            # 이 모델은 생각 수준 값을 받지 않는다: 값을 빼고 한 번만 다시 보낸다
-            self.effort_rejected = True
-            response = litellm.completion(**kwargs)
+        response = _litellm().completion(**kwargs)
         text = response.choices[0].message.content or ""
         tokens = getattr(getattr(response, "usage", None), "total_tokens", 0) or 0
         return text, int(tokens)

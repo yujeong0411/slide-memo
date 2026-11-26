@@ -35,9 +35,7 @@ from ai_provider import (
     AIProvider,
     delete_api_key,
     load_api_key,
-    no_effort_models,
     ollama_models,
-    remember_no_effort,
     save_api_key,
 )
 from database import MemoDatabase
@@ -65,18 +63,15 @@ _LABEL_WIDTH = 112
 class _TestWorker(QThread):
     result_ready = pyqtSignal(bool, str)
 
-    def __init__(self, provider: str, model: str, key: str | None, *, send_effort: bool = True) -> None:
+    def __init__(self, provider: str, model: str, key: str | None) -> None:
         super().__init__()
         self._provider = provider
         self._model = model
         self._key = key
-        self._send_effort = send_effort
-        self.effort_rejected = False
 
     def run(self) -> None:
-        ai = AIProvider(self._provider, self._model, self._key, send_effort=self._send_effort)
+        ai = AIProvider(self._provider, self._model, self._key)
         ok, msg = ai.test_connection()
-        self.effort_rejected = ai.effort_rejected  # 결과 신호보다 먼저 정한다
         self.result_ready.emit(ok, msg)
 
 
@@ -598,17 +593,12 @@ class SettingsDialog(QDialog):
         _status(self._test_result_lbl, "확인하는 중이에요")
 
         # 확인하는 중에 설정 창을 닫아도 끝날 때까지 붙잡아 둔다 (workers)
-        self._test_worker = workers.keep(_TestWorker(
-            provider, model, key, send_effort=model not in no_effort_models(self.db),
-        ))
+        self._test_worker = workers.keep(_TestWorker(provider, model, key))
         self._test_worker.result_ready.connect(self._on_test_result)
         self._test_worker.start()
 
     def _on_test_result(self, ok: bool, msg: str) -> None:
         self._test_btn.setEnabled(True)
-        worker = self._test_worker
-        if worker is not None and worker.effort_rejected:  # 다음부터는 이 모델에 생각 수준 값을 보내지 않는다
-            remember_no_effort(self.db, worker._model)
         _status(self._test_result_lbl, msg, error=not ok)
 
     def _reset_usage(self) -> None:
